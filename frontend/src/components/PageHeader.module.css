@@ -1,0 +1,23 @@
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-5);
+  border-bottom: 3px solid var(--border);
+  padding-bottom: var(--sp-3);
+}
+.title {
+  font-size: var(--fs-36);
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.sub {
+  margin-top: var(--sp-2);
+  color: var(--fg-secondary);
+  font-size: var(--fs-14);
+}
+.actions {
+  display: flex;
+  gap: var(--sp-3);
+}

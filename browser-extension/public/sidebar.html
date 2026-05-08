@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Billing Rules — Pre-flight</title>
+  <link rel="stylesheet" href="sidebar.css" />
+</head>
+<body>
+  <header>
+    <h1>Pre-flight</h1>
+    <button id="refresh" type="button" aria-label="Re-scan and run pre-flight">Re-scan</button>
+  </header>
+  <section id="config">
+    <label>State <input id="state" maxlength="2" placeholder="OH" /></label>
+    <label>Payer ID <input id="payer-id" placeholder="uuid" /></label>
+    <label>Product line
+      <select id="product-line">
+        <option value="medicare_ffs">Medicare FFS</option>
+        <option value="medicare_advantage">Medicare Advantage</option>
+        <option value="medicaid_mco">Medicaid MCO</option>
+        <option value="commercial">Commercial</option>
+      </select>
+    </label>
+    <label>Date of service <input id="dos" type="date" /></label>
+  </section>
+  <section id="detected">
+    <h2>Codes detected on this page</h2>
+    <ul id="detected-codes"></ul>
+  </section>
+  <section id="findings" aria-live="polite">
+    <h2>Findings</h2>
+    <p id="status">Click <strong>Re-scan</strong> after entering payer + state.</p>
+    <ol id="findings-list"></ol>
+  </section>
+  <footer>
+    <small id="footer-info"></small>
+  </footer>
+  <script type="module" src="sidebar.js"></script>
+</body>
+</html>

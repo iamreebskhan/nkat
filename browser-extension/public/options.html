@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Billing Rules — Options</title>
+  <link rel="stylesheet" href="sidebar.css" />
+</head>
+<body>
+  <header><h1>Billing Rules — Options</h1></header>
+  <section>
+    <label>Backend base URL
+      <input id="backend-url" placeholder="http://localhost:3000" />
+    </label>
+    <label>Org ID (UUID)
+      <input id="org-id" placeholder="11111111-1111-4111-8111-111111111111" />
+    </label>
+    <label>User ID (optional)
+      <input id="user-id" placeholder="22222222-..." />
+    </label>
+    <label>Default state
+      <input id="default-state" maxlength="2" placeholder="OH" />
+    </label>
+    <button id="save" type="button">Save</button>
+    <p id="status"></p>
+  </section>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

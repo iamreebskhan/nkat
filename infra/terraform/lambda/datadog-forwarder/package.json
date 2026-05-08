@@ -1,0 +1,10 @@
+{
+  "name": "datadog-forwarder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CloudWatch Logs → Datadog forwarder with PHI scrubbing.",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.640.0"
+  }
+}

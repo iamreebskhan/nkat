@@ -1,0 +1,62 @@
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-5);
+}
+@media (max-width: 768px) { .kpis { grid-template-columns: 1fr 1fr; } }
+
+.kpi {
+  border: 1px solid var(--border);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.kpiLabel {
+  font-size: var(--fs-12);
+  color: var(--fg-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.kpiValue {
+  font-size: var(--fs-28);
+  letter-spacing: -0.02em;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.kpiSub {
+  font-size: var(--fs-12);
+  color: var(--fg-secondary);
+}
+
+.barRow {
+  display: grid;
+  grid-template-columns: 80px 1fr 90px;
+  gap: var(--sp-3);
+  align-items: center;
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.barRow:last-child { border-bottom: 0; }
+.barLabel {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  font-weight: 700;
+}
+.barTrack {
+  background: var(--bg-subtle);
+  height: 16px;
+  border: 1px solid var(--border-subtle);
+}
+.barFill {
+  display: block;
+  height: 100%;
+  background: var(--bg-inverse);
+}
+.barValue {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+}

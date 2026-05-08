@@ -1,0 +1,249 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  backend-typecheck-test:
+    name: backend / typecheck + lint + unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      - name: Install
+        run: npm ci || npm install
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test -- --ci
+      - name: Audit (high+ severity)
+        run: npm audit --audit-level=high || true     # advisory; don't block CI yet
+
+  backend-integration-tests:
+    name: backend / integration (real Postgres + pgvector)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: admin_dev_only_change_in_prod
+          POSTGRES_DB: billing_rules
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U admin -d billing_rules"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping | grep PONG"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      INTEGRATION: '0'   # default: testcontainers off (we use the service containers)
+      DOCKER_HOST: ''
+      REDIS_HOST: localhost
+      REDIS_PORT: '6379'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      - name: Install
+        run: npm ci || npm install
+      - name: Apply migrations + seeds
+        env:
+          PGPASSWORD: admin_dev_only_change_in_prod
+        run: |
+          set -euo pipefail
+          for f in ../db/migrations/*.sql; do
+            echo "== $f =="
+            psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$f"
+          done
+          for f in ../db/seed/*.sql; do
+            echo "== $f =="
+            psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$f"
+          done
+          for f in ../db/test/*.sql; do
+            echo "== $f =="
+            psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$f"
+          done
+      - name: Run integration tests (jest)
+        env:
+          INTEGRATION: '1'
+          DATABASE_URL: postgres://admin:admin_dev_only_change_in_prod@localhost:5432/billing_rules
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: admin
+          PGPASSWORD: admin_dev_only_change_in_prod
+          PGDATABASE: billing_rules
+          REDIS_HOST: localhost
+          REDIS_PORT: '6379'
+        run: npm run test:integration
+
+  schema-apply:
+    name: db / migrations apply cleanly
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: admin_dev_only_change_in_prod
+          POSTGRES_DB: billing_rules
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U admin -d billing_rules"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply migrations
+        env:
+          PGPASSWORD: admin_dev_only_change_in_prod
+        run: |
+          set -euo pipefail
+          for f in db/migrations/*.sql; do
+            echo "== $f =="
+            psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$f"
+          done
+      - name: Apply seed data
+        env:
+          PGPASSWORD: admin_dev_only_change_in_prod
+        run: |
+          set -euo pipefail
+          for f in db/seed/*.sql; do
+            echo "== $f =="
+            psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$f"
+          done
+      - name: Run schema tests
+        env:
+          PGPASSWORD: admin_dev_only_change_in_prod
+        run: |
+          set -euo pipefail
+          for f in db/test/*.sql; do
+            echo "== $f =="
+            psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+  lambda-scrubber-tests:
+    name: lambda / datadog forwarder PHI scrubber
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform/lambda/datadog-forwarder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Run node:test PHI scrubber suite
+        run: node --test index.test.js
+
+  extension-e2e:
+    name: extension / Playwright E2E
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: browser-extension
+    needs: extension-typecheck-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: browser-extension/package-lock.json
+      - name: Install
+        run: npm ci || npm install
+      - name: Build extension
+        run: npm run build
+      - name: Install Playwright + Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run E2E (xvfb wraps headed Chromium)
+        run: xvfb-run -a npm run test:e2e
+      - name: Upload Playwright traces (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: browser-extension/test-results
+          retention-days: 14
+
+  extension-typecheck-test:
+    name: extension / typecheck + unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: browser-extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: browser-extension/package-lock.json
+      - name: Install
+        run: npm ci || npm install
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test -- --ci
+      - name: Build (esbuild bundle)
+        run: npm run build
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-extension-dist
+          path: browser-extension/dist
+          retention-days: 30
+
+  openapi-export:
+    name: backend / openapi export drift check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      - name: Install
+        run: npm ci || npm install
+      - name: Re-export OpenAPI
+        run: npm run openapi:export
+      - name: Fail on uncommitted drift
+        run: |
+          if ! git diff --quiet docs/openapi.json; then
+            echo "::error::docs/openapi.json is out of date — run 'npm run openapi:export' and commit"
+            git diff docs/openapi.json
+            exit 1
+          fi

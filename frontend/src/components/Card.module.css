@@ -1,0 +1,36 @@
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-subtle);
+}
+.title {
+  font-size: var(--fs-16);
+  font-weight: 700;
+  margin: 0;
+}
+.meta {
+  font-size: var(--fs-12);
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+}
+.body {
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* Severity stripes — left border weight only. No color. */
+.sev_info  { border-left-width: var(--border-w-info); }
+.sev_warn  { border-left-width: var(--border-w-warn); }
+.sev_error { border-left-width: var(--border-w-error); }

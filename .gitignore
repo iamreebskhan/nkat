@@ -1,0 +1,64 @@
+# --- dependencies / build artifacts ---
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# --- env / secrets — NEVER commit ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# --- runtime data ---
+db/data/
+db/.pgdata/
+*.pgdump
+backend/var/
+backend/uploads/
+public/status-history.json
+
+# --- editor / OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# --- python (none today, but defensive) ---
+.pytest_cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- logs ---
+*.log
+logs/
+
+# --- test outputs ---
+test-results/
+playwright-report/
+.cache/
+.code-review-graph/
+
+# --- terraform ---
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# --- npm / pnpm caches ---
+.npm
+.pnpm-store

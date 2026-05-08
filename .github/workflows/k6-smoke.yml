@@ -1,0 +1,59 @@
+name: k6 / staging smoke
+
+# Runs after every successful staging deploy. Hits the public surface
+# (smoke.k6.js) and fails the deploy if any threshold is missed.
+#
+# Trigger: workflow_dispatch (manual) + repository_dispatch
+# (programmatic from the staging deploy pipeline). The deploy
+# workflow should fire `repository_dispatch` with event_type
+# `staging-deployed` once ECS tasks are STEADY-STATE.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Target API base URL (https://staging-api.example.com)'
+        required: true
+        default: 'https://staging-api.example.com'
+      org_id:
+        description: 'Org UUID to send smoke traffic as'
+        required: true
+  repository_dispatch:
+    types: [staging-deployed]
+
+concurrency:
+  group: k6-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: smoke (60s, 5 VUs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install k6
+        run: |
+          set -euo pipefail
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+      - name: Run smoke
+        env:
+          BASE_URL: ${{ github.event.inputs.base_url || 'https://staging-api.example.com' }}
+          ORG_ID: ${{ github.event.inputs.org_id || secrets.K6_STAGING_ORG_ID }}
+          AUTH: ${{ secrets.K6_STAGING_BEARER }}
+        run: |
+          k6 run loadtest/smoke.k6.js \
+            -e BASE_URL=$BASE_URL \
+            -e ORG_ID=$ORG_ID \
+            -e AUTH=$AUTH \
+            --summary-export=k6-smoke-summary.json
+      - name: Upload k6 summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-smoke-summary
+          path: k6-smoke-summary.json
+          retention-days: 30

@@ -1,0 +1,2422 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/v1/auth/mode": {
+      "get": {
+        "operationId": "AuthController_mode",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Reveal the active auth mode (dev_header / jwt) — public, no PII.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/sso/start": {
+      "get": {
+        "operationId": "AuthController_ssoStart",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Begin OIDC flow to the configured IdP. 503 when IdP is not configured.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/sso/callback": {
+      "get": {
+        "operationId": "AuthController_ssoCallback",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "OIDC authorization-code-flow callback. Exchanges `code` for the IdP's ID token, verifies it via OIDC_JWKS_URL, mints OUR session JWT (RS256), and redirects to the frontend with the token in the URL fragment.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/me": {
+      "get": {
+        "operationId": "AuthController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Return the calling principal — orgId, userId, role + org slug/name for UI display.",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "HealthController_liveness",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Liveness probe",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "HealthController_readiness",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Readiness probe — DB + (when wired) Redis roundtrip",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/status": {
+      "get": {
+        "operationId": "HealthController_status",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Public service status (fail-soft, cacheable)",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/v1/lookup": {
+      "post": {
+        "description": "Runs deterministic structured checks (coverage, modifiers, NCCI bundling, medical necessity, timely filing, COB, provider taxonomy, 42 CFR Part 2 SUD consent, MHPAEA parity) and returns citation-grounded findings per CARC class.",
+        "operationId": "LookupController_run",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LookupRequestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Pre-flight a claim against payer × state × code rules",
+        "tags": [
+          "lookup"
+        ]
+      }
+    },
+    "/v1/era835/upload": {
+      "post": {
+        "operationId": "Era835Controller_upload",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Upload a parsed 835 ERA file and persist it to denial intelligence",
+        "tags": [
+          "era835"
+        ]
+      }
+    },
+    "/v1/eligibility/parse-271": {
+      "post": {
+        "operationId": "Edi271Controller_parse",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Parse an X12 271 eligibility response into a typed object",
+        "tags": [
+          "eligibility"
+        ]
+      }
+    },
+    "/v1/edi/270": {
+      "post": {
+        "operationId": "Edi270Controller_generate",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Generate270Dto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Generate an X12 270 eligibility inquiry",
+        "tags": [
+          "edi"
+        ]
+      }
+    },
+    "/v1/edi/837p": {
+      "post": {
+        "operationId": "Edi837PController_generate",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Generate837Dto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Generate an X12 837P professional claim",
+        "tags": [
+          "edi"
+        ]
+      }
+    },
+    "/v1/edi/837i": {
+      "post": {
+        "operationId": "Edi837IController_generate",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Generate an X12 837I institutional claim (UB-04)",
+        "tags": [
+          "edi"
+        ]
+      }
+    },
+    "/v1/denials/top": {
+      "get": {
+        "operationId": "DenialController_top",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "days",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Top denial reasons (CARC) by dollar impact",
+        "tags": [
+          "denials"
+        ]
+      }
+    },
+    "/v1/denials/catch-rate": {
+      "get": {
+        "operationId": "DenialController_catchRate",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Pre-flight catch rate over the window",
+        "tags": [
+          "denials"
+        ]
+      }
+    },
+    "/v1/denials/trend": {
+      "get": {
+        "operationId": "DenialController_trend",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Daily denial counts for trend chart",
+        "tags": [
+          "denials"
+        ]
+      }
+    },
+    "/v1/denials/summary": {
+      "get": {
+        "operationId": "DenialController_summary",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Consolidated denial summary for the dashboard — KPIs (total denials, $ impact, pre-flight catch rate) + top CARC buckets.",
+        "tags": [
+          "denials"
+        ]
+      }
+    },
+    "/v1/alerts": {
+      "get": {
+        "operationId": "AlertsController_list",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "unread",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "severity",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List alerts for the calling tenant",
+        "tags": [
+          "alerts"
+        ]
+      }
+    },
+    "/v1/alerts/{id}/read": {
+      "patch": {
+        "operationId": "AlertsController_markRead",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AckBodyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Mark an alert as read (acknowledged)",
+        "tags": [
+          "alerts"
+        ]
+      }
+    },
+    "/v1/admin/clearinghouse/credentials": {
+      "get": {
+        "operationId": "ClearinghouseCredentialController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List the calling tenant's clearinghouse credentials (no plaintext)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/clearinghouse/credentials/{clearinghouse}": {
+      "put": {
+        "operationId": "ClearinghouseCredentialController_upsert",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Upsert credentials for one clearinghouse. Plaintext is encrypted at rest with AES-256-GCM.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/clearinghouse/credentials/{id}": {
+      "delete": {
+        "operationId": "ClearinghouseCredentialController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Remove a credential row.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/clearinghouse/credentials/{id}/test": {
+      "post": {
+        "operationId": "ClearinghouseCredentialController_test",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Test credentials by minting an access token. Updates last_verified_at on success/failure.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/final-rules": {
+      "post": {
+        "operationId": "FinalRulesController_upload",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Upload a CMS Final Rule (or MLN article / state Medicaid manual) PDF as base64 JSON. Persists the file + a source_document row; downstream extractor picks up new rows on its own.",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "operationId": "FinalRulesController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List recent Final Rules / regulatory uploads (limited to last 200)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/clients": {
+      "get": {
+        "operationId": "ClientsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List the calling tenant's client companies (id + display fields)",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/v1/codes": {
+      "get": {
+        "operationId": "CodesController_search",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "system",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "prefix",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Search CPT/HCPCS codes by prefix.",
+        "tags": [
+          "codes"
+        ]
+      }
+    },
+    "/v1/codes/{code}": {
+      "get": {
+        "operationId": "CodesController_lookup",
+        "parameters": [
+          {
+            "name": "code",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Look up a single CPT/HCPCS code. CPT short_descriptors are gated by the AMA license token; HCPCS Level II flows through unchanged.",
+        "tags": [
+          "codes"
+        ]
+      }
+    },
+    "/v1/admin/extraction-queue/next": {
+      "get": {
+        "operationId": "ExtractionQueueController_next",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Pull next-priority unclaimed candidates",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/extraction-queue/{id}/claim": {
+      "post": {
+        "operationId": "ExtractionQueueController_claim",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Atomically claim a candidate (queued → claimed)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/extraction-queue/{id}/accept": {
+      "post": {
+        "operationId": "ExtractionQueueController_accept",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Accept candidate and insert payer_rule",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/extraction-queue/{id}/reject": {
+      "post": {
+        "operationId": "ExtractionQueueController_reject",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Reject candidate",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/extraction-queue/{id}/edit": {
+      "post": {
+        "operationId": "ExtractionQueueController_edit",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Accept with edits and insert edited payer_rule",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/audit-log": {
+      "get": {
+        "operationId": "AuditLogController_search",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "until",
+            "required": false,
+            "in": "query",
+            "description": "ISO timestamp upper bound (exclusive)",
+            "schema": {}
+          },
+          {
+            "name": "since",
+            "required": false,
+            "in": "query",
+            "description": "ISO timestamp lower bound (inclusive)",
+            "schema": {}
+          },
+          {
+            "name": "user_id",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "target_type",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "action",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Search this tenant audit log (paginated, keyset)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/export/rulebooks": {
+      "get": {
+        "operationId": "DataExportController_rulebooks",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Export the caller tenant's finalized rulebook history (JSON)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/export/audit-log": {
+      "get": {
+        "operationId": "DataExportController_auditLog",
+        "parameters": [
+          {
+            "name": "days",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Export the caller tenant's audit-log rows over N days (NDJSON, streamed)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/export/era-835": {
+      "get": {
+        "operationId": "DataExportController_era835",
+        "parameters": [
+          {
+            "name": "days",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Export the caller tenant's denial event aggregates (CSV)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/email-suppression": {
+      "get": {
+        "operationId": "SuppressionController_lookup",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Look up the suppression status of an address",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "SuppressionController_add",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSuppressionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Add an address to the global suppression list (admin override)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/email-suppression/{email}": {
+      "delete": {
+        "operationId": "SuppressionController_clear",
+        "parameters": [
+          {
+            "name": "email",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Clear suppression for an address (break-glass)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/cache/invalidate": {
+      "post": {
+        "operationId": "CacheInvalidateController_invalidate",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvalidateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Bump the global synthesis-cache version (admin only)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/tenant/delete": {
+      "post": {
+        "operationId": "TenantDeletionController_request",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestDeletionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Request deletion of the calling tenant (MSA § 7). 30-day grace.",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "operationId": "TenantDeletionController_current",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Read the calling tenant's current deletion request, if any",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/tenant/delete/{id}": {
+      "delete": {
+        "operationId": "TenantDeletionController_cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Cancel a pending deletion request (only requested/scheduled state)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/audit-log/{id}/redact": {
+      "post": {
+        "operationId": "AuditLogRedactionController_redact",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedactDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Scrub or remove a single audit_log row's payload. Records a hash + meta-audit row.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/rate-limit/overrides": {
+      "get": {
+        "operationId": "RateLimitOverrideController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List active overrides for the calling tenant",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/rate-limit/overrides/{scope}": {
+      "put": {
+        "operationId": "RateLimitOverrideController_upsert",
+        "parameters": [
+          {
+            "name": "scope",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertOverrideDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Upsert an override for one scope",
+        "tags": [
+          "admin"
+        ]
+      },
+      "delete": {
+        "operationId": "RateLimitOverrideController_remove",
+        "parameters": [
+          {
+            "name": "scope",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Remove an override",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/synthesis": {
+      "post": {
+        "description": "Behind feature flag synthesis.enabled. Uses Bedrock when synthesis.provider.name=bedrock and the SDK adapter is wired; otherwise falls back to the deterministic provider. Refusals (flag off, no findings, low confidence) return 422.",
+        "operationId": "SynthesisController_synthesize",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SynthesizeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Synthesize structured lookup findings into a brief plain-English narrative",
+        "tags": [
+          "synthesis"
+        ]
+      }
+    },
+    "/v1/admin/scim/tokens": {
+      "get": {
+        "operationId": "ScimTokenController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List SCIM bearer tokens for the calling tenant (no plaintext).",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "ScimTokenController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTokenDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create a new SCIM bearer token. The plaintext is returned ONCE; store it now.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/scim/tokens/{id}": {
+      "delete": {
+        "operationId": "ScimTokenController_revoke",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke a SCIM bearer token.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/abn": {
+      "post": {
+        "operationId": "AbnController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAbnDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create an ABN record (CMS-R-131)",
+        "tags": [
+          "abn"
+        ]
+      },
+      "get": {
+        "operationId": "AbnController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List ABN records for the calling tenant",
+        "tags": [
+          "abn"
+        ]
+      }
+    },
+    "/v1/abn/{id}/pdf": {
+      "post": {
+        "operationId": "AbnController_pdf",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenderPdfDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Render the CMS-R-131 form for an ABN record as a PDF",
+        "tags": [
+          "abn"
+        ]
+      }
+    },
+    "/v1/privacy/notices/{state}": {
+      "get": {
+        "operationId": "PrivacyController_notices",
+        "parameters": [
+          {
+            "name": "state",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Return privacy + AI notices applicable to a state",
+        "tags": [
+          "privacy"
+        ]
+      }
+    },
+    "/v1/privacy/consent": {
+      "post": {
+        "operationId": "PrivacyController_consent",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Record a consent decision for a privacy notice",
+        "tags": [
+          "privacy"
+        ]
+      }
+    },
+    "/v1/privacy/dsar": {
+      "post": {
+        "operationId": "PrivacyController_fileDsar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DsarSubmitDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "File a Data Subject Access/Deletion Request. 45-day clock starts at received_at.",
+        "tags": [
+          "privacy"
+        ]
+      },
+      "get": {
+        "operationId": "PrivacyController_listDsar",
+        "parameters": [
+          {
+            "name": "status",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Tenant admin: list DSAR requests",
+        "tags": [
+          "privacy"
+        ]
+      }
+    },
+    "/v1/privacy/dsar/{id}": {
+      "patch": {
+        "operationId": "PrivacyController_updateDsar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DsarUpdateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Tenant admin: update a DSAR's status",
+        "tags": [
+          "privacy"
+        ]
+      }
+    },
+    "/v1/redaction/preview": {
+      "post": {
+        "operationId": "RedactionController_preview",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Run the PHI redactor over raw text without persisting (UX preview).",
+        "tags": [
+          "redaction"
+        ]
+      }
+    },
+    "/v1/redaction/ingest": {
+      "post": {
+        "operationId": "RedactionController_ingest",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Persist a redacted-only copy of a document as a client_doc_upload. Original raw text is never stored. Returns the upload + redaction_event ids.",
+        "tags": [
+          "redaction"
+        ]
+      }
+    },
+    "/v1/reconciliation/rulebooks": {
+      "post": {
+        "operationId": "ReconciliationController_createRulebook",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRulebookDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Open a new draft client_rulebook",
+        "tags": [
+          "reconciliation"
+        ]
+      }
+    },
+    "/v1/reconciliation/rulebooks/{id}/diff": {
+      "get": {
+        "operationId": "ReconciliationController_diff",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Compute diff between authoritative + this rulebook",
+        "tags": [
+          "reconciliation"
+        ]
+      }
+    },
+    "/v1/reconciliation/decisions": {
+      "post": {
+        "operationId": "ReconciliationController_decide",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Record a per-row reconciliation decision",
+        "tags": [
+          "reconciliation"
+        ]
+      }
+    },
+    "/v1/reconciliation/rulebooks/{id}/finalize": {
+      "post": {
+        "operationId": "ReconciliationController_finalize",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinalizeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Finalize a draft rulebook; computes integrity_hash",
+        "tags": [
+          "reconciliation"
+        ]
+      }
+    },
+    "/v1/disputes": {
+      "post": {
+        "operationId": "DisputeController_submit",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Submit a \"this rule is wrong\" dispute",
+        "tags": [
+          "disputes"
+        ]
+      }
+    },
+    "/v1/disputes/{id}/resolve-right": {
+      "post": {
+        "operationId": "DisputeController_resolveRight",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRightDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Analyst confirms our rule is correct",
+        "tags": [
+          "disputes"
+        ]
+      }
+    },
+    "/v1/disputes/{id}/resolve-wrong": {
+      "post": {
+        "operationId": "DisputeController_resolveWrong",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveWrongDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Analyst confirms our rule is wrong; spawns extraction_candidate",
+        "tags": [
+          "disputes"
+        ]
+      }
+    },
+    "/v1/admin/webhook-subscriptions": {
+      "post": {
+        "operationId": "WebhookSubscriptionController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSubscriptionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create a webhook subscription for the caller tenant",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "operationId": "WebhookSubscriptionController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List webhook subscriptions for this tenant",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/webhook-subscriptions/{id}/pause": {
+      "post": {
+        "operationId": "WebhookSubscriptionController_pause",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Pause a subscription",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/webhook-subscriptions/{id}/resume": {
+      "post": {
+        "operationId": "WebhookSubscriptionController_resume",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Resume a paused subscription",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/webhook-subscriptions/{id}": {
+      "delete": {
+        "operationId": "WebhookSubscriptionController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Disable a subscription (soft delete; deliveries already in flight finish or dead-letter)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/risk-adjustment/hcc-mapping/{icd10}": {
+      "get": {
+        "operationId": "RiskAdjustmentController_hccMapping",
+        "parameters": [
+          {
+            "name": "icd10",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "required": false,
+            "in": "query",
+            "description": "HCC version (default V28)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "year",
+            "required": false,
+            "in": "query",
+            "description": "Effective year (default current)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Look up CMS-HCC v28 + RxHCC mappings for a single ICD-10",
+        "tags": [
+          "risk-adjustment"
+        ]
+      }
+    },
+    "/v1/risk-adjustment/raf": {
+      "post": {
+        "description": "Maps each ICD-10 to its V28 HCC, applies the hierarchy (more-severe HCC trumps less-severe), sums surviving raf_weights, and returns total + breakdown + unmapped ICDs. For Medicare Advantage capitation revenue analytics. RLS enforces tenant isolation on any tenant-scoped persistence layered on top.",
+        "operationId": "RiskAdjustmentController_raf",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoreDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Compute CMS-HCC v28 Risk Adjustment Factor (RAF) for a list of ICD-10s",
+        "tags": [
+          "risk-adjustment"
+        ]
+      }
+    },
+    "/v1/billing/stripe-webhook": {
+      "post": {
+        "operationId": "BillingController_stripeWebhook",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Stripe webhook receiver (HMAC-verified locally)",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/v1/billing/entitlement": {
+      "get": {
+        "operationId": "BillingController_entitlement",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Return the caller tenant's current entitlement (tier/seats/states/packs)",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/v1/billing/portal-redirect": {
+      "get": {
+        "operationId": "BillingController_portalRedirect",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Convenience: 302-redirect to a freshly minted Stripe customer-portal session. Frontend uses this as a plain <a href> from the billing page.",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/v1/admin/billing/dunning-state": {
+      "get": {
+        "operationId": "BillingAdminController_dunningState",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Banner state for the in-app dunning UI",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/billing/checkout-session": {
+      "post": {
+        "operationId": "BillingAdminController_checkoutSession",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutSessionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create a Stripe Checkout session for self-serve tier purchase",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/billing/portal-session": {
+      "post": {
+        "operationId": "BillingAdminController_portalSession",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortalSessionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create a Stripe Customer Portal session for the calling tenant",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/billing/seats": {
+      "post": {
+        "operationId": "BillingAdminController_addSeats",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeatChangeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Self-serve seat increase (writes through Stripe with prorations)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/internal/ses-feedback": {
+      "post": {
+        "operationId": "SesFeedbackController_receive",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "SNS-delivered SES bounce/complaint feedback",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/v1/u/{token}": {
+      "get": {
+        "operationId": "UnsubscribeController_getRedeem",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Redeem an unsubscribe token (browser-friendly GET)",
+        "tags": [
+          "email"
+        ]
+      },
+      "post": {
+        "operationId": "UnsubscribeController_postRedeem",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Redeem an unsubscribe token (RFC 8058 List-Unsubscribe POST)",
+        "tags": [
+          "email"
+        ]
+      }
+    },
+    "/v1/admin/invites": {
+      "post": {
+        "operationId": "InviteIssueController_issue",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Issue a magic-link invite for an existing app_user",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "operationId": "InviteIssueController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List recent invites for the calling tenant",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/invites/{id}": {
+      "delete": {
+        "operationId": "InviteIssueController_revoke",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke an outstanding invite",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/invite/redeem": {
+      "post": {
+        "operationId": "InviteRedeemController_redeem",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedeemDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Redeem a magic-link invite. Anonymous + rate-limited.",
+        "tags": [
+          "invite"
+        ]
+      }
+    },
+    "/v1/signup/start": {
+      "post": {
+        "operationId": "SignupController_start",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupStartDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Start a self-serve signup. Returns a Stripe Checkout URL.",
+        "tags": [
+          "signup"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Billing Rules Platform API",
+    "description": "Pre-flight a claim against payer × state × code rules.",
+    "version": "0.1.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "org-id": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Org-Id"
+      }
+    },
+    "schemas": {
+      "ClaimLineDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "99497",
+            "description": "CPT or HCPCS Level II code"
+          },
+          "modifiers": {
+            "example": [
+              "25"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pos": {
+            "type": "string",
+            "example": "11"
+          },
+          "units": {
+            "type": "number",
+            "example": 1
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "LookupRequestDto": {
+        "type": "object",
+        "properties": {
+          "payer_id": {
+            "type": "string",
+            "example": "11111111-1111-4111-8111-111111111111"
+          },
+          "state": {
+            "type": "string",
+            "example": "OH"
+          },
+          "product_line": {
+            "type": "string",
+            "example": "medicare_ffs"
+          },
+          "date_of_service": {
+            "type": "string",
+            "example": "2026-04-15"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClaimLineDto"
+            }
+          },
+          "diagnoses": {
+            "example": [
+              "Z51.5"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "provider_taxonomy": {
+            "type": "string",
+            "example": "363LF0000X"
+          },
+          "cob_other_coverage": {
+            "type": "string",
+            "example": "employer_group_lt_20"
+          },
+          "filing_date": {
+            "type": "string",
+            "example": "2026-05-01"
+          },
+          "client_id": {
+            "type": "string",
+            "example": "22222222-2222-4222-8222-222222222222",
+            "description": "Tenant client_id; required if SUD codes appear on the claim."
+          },
+          "patient_external_id": {
+            "type": "string",
+            "example": "PHASH:abc123",
+            "description": "De-identified patient reference, used for 42 CFR Part 2 SUD consent lookup."
+          }
+        },
+        "required": [
+          "payer_id",
+          "state",
+          "product_line",
+          "date_of_service",
+          "lines"
+        ]
+      },
+      "UploadDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ParseDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "Generate270Dto": {
+        "type": "object",
+        "properties": {}
+      },
+      "Generate837Dto": {
+        "type": "object",
+        "properties": {}
+      },
+      "AckBodyDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpsertDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ClaimDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "AcceptDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RejectDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "EditDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateSuppressionDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "InvalidateDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RequestDeletionDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RedactDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "UpsertOverrideDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "SynthesizeDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateTokenDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateAbnDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RenderPdfDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ConsentDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "DsarSubmitDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "DsarUpdateDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "PreviewDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "IngestDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateRulebookDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "DecideDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "FinalizeDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "SubmitDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ResolveRightDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ResolveWrongDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateSubscriptionDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ScoreDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CheckoutSessionDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "PortalSessionDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "SeatChangeDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "IssueDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "RedeemDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "SignupStartDto": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  }
+}

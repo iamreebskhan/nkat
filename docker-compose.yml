@@ -1,0 +1,109 @@
+# Local development stack for the Billing Rules Platform.
+#
+# Quick start:
+#   docker compose up                  # db + migrations + backend (port 3000)
+#   docker compose up db migrate       # just the DB + seeds, ready for
+#                                       `npm run start:dev` on the host
+#                                       (faster iteration loop)
+#   docker compose down                # tears down containers; pgdata kept
+#   docker compose down -v             # nukes the data volume too — fresh DB
+#
+# After everything's up:
+#   - API on http://localhost:3000   (healthz, readyz, status, /v1/...)
+#   - Frontend (run separately):     `npm --prefix frontend run dev` → :5173
+#
+# The `migrate` service is a one-shot: it applies every db/migrations/*.sql
+# file then every db/seed/*.sql file in order, then exits 0. `backend`
+# waits for `migrate` to succeed before starting.
+
+services:
+  db:
+    # Postgres 16 with pgvector pre-installed.
+    # pgvector/pgvector image tracks Postgres major versions; pin a digest in production.
+    image: pgvector/pgvector:pg16
+    container_name: billing_rules_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin_dev_only_change_in_prod
+      POSTGRES_DB: billing_rules
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d billing_rules"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    # One-shot: applies migrations + seeds, exits 0. Re-running is safe;
+    # the seeds all use ON CONFLICT DO NOTHING and migrations are
+    # idempotent at the schema level (CREATE TABLE IF NOT EXISTS, etc.).
+    image: pgvector/pgvector:pg16
+    container_name: billing_rules_migrate
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: admin
+      PGPASSWORD: admin_dev_only_change_in_prod
+      PGDATABASE: billing_rules
+    volumes:
+      - ./db:/db:ro
+    entrypoint: ["/bin/bash", "-eu", "-o", "pipefail", "-c"]
+    command:
+      - |
+        echo "==> applying migrations..."
+        for f in /db/migrations/*.sql; do
+          echo "  -- $$f"
+          psql -v ON_ERROR_STOP=1 -f "$$f"
+        done
+        echo "==> applying seeds..."
+        for f in /db/seed/*.sql; do
+          echo "  -- $$f"
+          psql -v ON_ERROR_STOP=1 -f "$$f"
+        done
+        echo "==> migrate: done."
+
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    container_name: billing_rules_backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      AUTH_MODE: dev_header
+      DATABASE_URL: postgres://admin:admin_dev_only_change_in_prod@db:5432/billing_rules
+      DB_APP_PASSWORD: admin_dev_only_change_in_prod
+      DD_AGENT_HOST: ""
+      STRIPE_API_KEY: ""
+      STRIPE_WEBHOOK_SIGNING_SECRET: ""
+      APP_BASE_URL: "http://localhost:5173"
+    ports:
+      - "3000:3000"
+    volumes:
+      # Bind-mount source for hot-reload; node_modules stays inside the
+      # image (faster + matches the Linux runtime).
+      - ./backend/src:/app/src
+      - ./backend/scripts:/app/scripts
+      - ./backend/test:/app/test
+      - ./backend/tsconfig.json:/app/tsconfig.json:ro
+      - ./backend/tsconfig.build.json:/app/tsconfig.build.json:ro
+      - ./backend/nest-cli.json:/app/nest-cli.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/healthz',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  pgdata:

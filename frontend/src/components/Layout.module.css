@@ -1,0 +1,107 @@
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-5);
+  border-bottom: 3px solid var(--border);
+  background: var(--bg);
+  font-family: var(--font-sans);
+}
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  letter-spacing: 0.05em;
+}
+.brandMark {
+  font-size: var(--fs-22);
+  line-height: 1;
+}
+.brandTag {
+  text-transform: uppercase;
+  font-size: var(--fs-12);
+  color: var(--fg-secondary);
+}
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.who {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: var(--fs-12);
+  font-family: var(--font-mono);
+}
+.whoRole {
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.whoOrg {
+  color: var(--fg-secondary);
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  flex: 1;
+  min-height: 0;
+}
+@media (max-width: 768px) {
+  .shell { grid-template-columns: 1fr; }
+  .side { display: none; }
+}
+
+.side {
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  padding: var(--sp-4) 0;
+  position: sticky;
+  top: 65px;
+  height: calc(100vh - 65px);
+  overflow-y: auto;
+}
+
+.navSection {
+  margin-bottom: var(--sp-5);
+}
+.navHeading {
+  margin: 0 var(--sp-5) var(--sp-2);
+  font-size: var(--fs-12);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-secondary);
+}
+.navList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.navLink {
+  display: block;
+  padding: var(--sp-2) var(--sp-5);
+  text-decoration: none;
+  color: var(--fg);
+  font-size: var(--fs-14);
+  border-left: 3px solid transparent;
+}
+.navLink:hover { background: var(--bg-subtle); }
+.navLinkActive {
+  background: var(--bg-inverse);
+  color: var(--fg-inverse);
+  border-left-color: var(--border);
+  font-weight: 700;
+}
+
+.main {
+  padding: var(--sp-6);
+  background: var(--bg);
+  outline: none;
+}
+.main:focus-visible { box-shadow: inset var(--focus-ring); }

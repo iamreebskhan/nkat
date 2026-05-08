@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Acme EHR — Encounter</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; max-width: 760px; }
+    .panel { border: 1px solid #ccc; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .codes li { margin: 4px 0; }
+    h1 { font-size: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Encounter — Patient PT-001 — DOS 2026-04-15</h1>
+
+  <div class="panel">
+    <h2>Procedures</h2>
+    <ul class="codes">
+      <li>99497 — Advance care planning, first 30 minutes</li>
+      <li>99498 — Advance care planning, each additional 30 minutes</li>
+      <li>G0318 — Prolonged care planning</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h2>Diagnoses</h2>
+    <ul>
+      <li>Z51.5 — Encounter for palliative care</li>
+      <li>C34.90 — Malignant neoplasm of unspecified bronchus</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h2>Notes</h2>
+    <p>
+      Year 2026 review. ZIP 43215. Patient consents to ACP discussion.
+      Provider also reviewed potential RPM enrollment (99453, 99454) for
+      future visits.
+    </p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,114 @@
+/*
+ * Reset + base typography. Loads after theme.css so var(--c-...) is bound.
+ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--fs-16);
+  line-height: var(--line-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-height: 100vh;
+  /* Subtle 1px grid in the background to reinforce the brutalist feel. */
+  background-image:
+    linear-gradient(to right, var(--c-grey-100) 1px, transparent 1px);
+  background-size: 8px 8px;
+  background-attachment: fixed;
+}
+
+#root { min-height: 100vh; display: flex; flex-direction: column; }
+
+h1, h2, h3, h4, h5, h6 { margin: 0; font-weight: 700; line-height: var(--line-tight); }
+h1 { font-size: var(--fs-36); letter-spacing: -0.02em; }
+h2 { font-size: var(--fs-28); letter-spacing: -0.01em; }
+h3 { font-size: var(--fs-22); }
+h4 { font-size: var(--fs-18); }
+h5 { font-size: var(--fs-16); }
+h6 { font-size: var(--fs-14); text-transform: uppercase; letter-spacing: 0.05em; }
+
+p { margin: 0; }
+
+a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration-thickness: 2px; }
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+input, textarea, select {
+  font: inherit;
+  color: inherit;
+}
+
+code, pre, kbd, samp {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  margin: var(--sp-5) 0;
+}
+
+/* Focus styles — applied to all focusable elements consistently. */
+:focus { outline: none; }
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Skip link for keyboard users. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: var(--sp-2);
+}
+.skip-link:focus {
+  left: var(--sp-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: var(--sp-2) var(--sp-3);
+  z-index: 9999;
+}
+
+/* Selection. */
+::selection {
+  background: var(--c-black-100);
+  color: var(--c-white-100);
+}
+@media (prefers-color-scheme: dark) {
+  ::selection { background: var(--c-white-100); color: var(--c-black-100); }
+}
+
+/* Utility — visually hide but keep for screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

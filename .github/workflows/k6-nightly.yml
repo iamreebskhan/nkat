@@ -1,0 +1,127 @@
+name: k6 / nightly load (lookup + synthesis)
+
+# Runs the steady-state lookup + synthesis scripts against staging
+# overnight. Posts results to Datadog as custom metrics:
+#
+#   billing_rules.k6.lookup.p95_ms          (gauge)
+#   billing_rules.k6.synthesis.p95_ms        (gauge)
+#   billing_rules.k6.synthesis.cache_hit_rate (gauge)
+#
+# A regression in any of those triggers Datadog alerts that we own
+# (declared in infra/terraform/datadog-dashboards.tf).
+
+on:
+  schedule:
+    # 09:00 UTC — after EU business hours, before US business hours.
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: k6-nightly
+  cancel-in-progress: false
+
+jobs:
+  lookup:
+    name: lookup (5m @ 25 RPS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install k6
+        run: |
+          set -euo pipefail
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+      - name: Run lookup
+        env:
+          BASE_URL: ${{ secrets.K6_STAGING_BASE_URL }}
+          ORG_ID: ${{ secrets.K6_STAGING_ORG_ID }}
+        run: |
+          k6 run loadtest/lookup.k6.js \
+            -e BASE_URL=$BASE_URL \
+            -e ORG_ID=$ORG_ID \
+            --summary-export=k6-lookup-summary.json
+      - name: Post p95 to Datadog
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        run: |
+          set -euo pipefail
+          P95=$(jq '.metrics.http_req_duration.values["p(95)"]' k6-lookup-summary.json)
+          NOW=$(date +%s)
+          curl -fsS -X POST "https://api.datadoghq.com/api/v1/series" \
+            -H "Content-Type: application/json" \
+            -H "DD-API-KEY: $DD_API_KEY" \
+            -d @- <<EOF
+          { "series": [
+            { "metric": "billing_rules.k6.lookup.p95_ms",
+              "type": "gauge",
+              "points": [[$NOW, $P95]],
+              "tags": ["env:staging","script:lookup","source:github_actions"]
+            }
+          ]}
+          EOF
+      - name: Upload summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-lookup-summary
+          path: k6-lookup-summary.json
+
+  synthesis:
+    name: synthesis (5m, three-stage)
+    runs-on: ubuntu-latest
+    needs: lookup
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install k6
+        run: |
+          set -euo pipefail
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+      - name: Run synthesis
+        env:
+          BASE_URL: ${{ secrets.K6_STAGING_BASE_URL }}
+          ORG_ID: ${{ secrets.K6_STAGING_ORG_ID }}
+        run: |
+          k6 run loadtest/synthesis.k6.js \
+            -e BASE_URL=$BASE_URL \
+            -e ORG_ID=$ORG_ID \
+            --summary-export=k6-synthesis-summary.json
+      - name: Post p95 + cache-hit-rate to Datadog
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        run: |
+          set -euo pipefail
+          P95=$(jq '.metrics.http_req_duration.values["p(95)"]' k6-synthesis-summary.json)
+          HITS=$(jq '.metrics.synthesis_cache_hits.values.count // 0' k6-synthesis-summary.json)
+          MISSES=$(jq '.metrics.synthesis_cache_misses.values.count // 0' k6-synthesis-summary.json)
+          # Cache hit rate denominator must avoid divide-by-zero.
+          TOTAL=$(echo "$HITS + $MISSES" | bc)
+          if [ "$TOTAL" -eq 0 ]; then RATE=0; else RATE=$(echo "scale=6; $HITS / $TOTAL" | bc); fi
+          NOW=$(date +%s)
+          curl -fsS -X POST "https://api.datadoghq.com/api/v1/series" \
+            -H "Content-Type: application/json" \
+            -H "DD-API-KEY: $DD_API_KEY" \
+            -d @- <<EOF
+          { "series": [
+            { "metric": "billing_rules.k6.synthesis.p95_ms",
+              "type": "gauge",
+              "points": [[$NOW, $P95]],
+              "tags": ["env:staging","script:synthesis","source:github_actions"] },
+            { "metric": "billing_rules.k6.synthesis.cache_hit_rate",
+              "type": "gauge",
+              "points": [[$NOW, $RATE]],
+              "tags": ["env:staging","script:synthesis","source:github_actions"] }
+          ]}
+          EOF
+      - name: Upload summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-synthesis-summary
+          path: k6-synthesis-summary.json
