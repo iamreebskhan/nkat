@@ -27,6 +27,14 @@ integrationDescribe('RLS isolation (integration)', () => {
        ON CONFLICT (id) DO NOTHING`,
       [ORG_A, ORG_B],
     );
+    // Drop any pre-existing client_company rows for these orgs so the
+    // RLS row-count assertions below have a known baseline. Seed 0017
+    // adds two clients to ORG_A; we want ONLY the rows this test
+    // controls.
+    await ctx.pool.query(
+      `DELETE FROM client_company WHERE org_id = $1 OR org_id = $2`,
+      [ORG_A, ORG_B],
+    );
     await ctx.pool.query(
       `INSERT INTO client_company (id, org_id, name, primary_state, specialties) VALUES
         ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', $1, 'Acme Hospice', 'OH', ARRAY['hospice']),
