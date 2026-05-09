@@ -30,7 +30,24 @@ CREATE OR REPLACE FUNCTION app.bump_synthesis_cache_version()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  affected_count int := 0;
 BEGIN
+  -- Skip if no rows actually moved through the statement. Postgres
+  -- doesn't let us put `WHEN (EXISTS (SELECT 1 FROM new_rows))` on
+  -- the CREATE TRIGGER (subqueries forbidden in WHEN), so we do the
+  -- same check inside the function instead. This preserves the
+  -- original "UPDATE WHERE FALSE doesn't bump" semantics.
+  IF TG_OP = 'DELETE' THEN
+    SELECT count(*) INTO affected_count FROM old_rows;
+  ELSE
+    SELECT count(*) INTO affected_count FROM new_rows;
+  END IF;
+
+  IF affected_count = 0 THEN
+    RETURN NULL;
+  END IF;
+
   -- Atomic increment + a "trigger-driven" note. Skip silently if the
   -- key is missing (e.g., during a fresh deploy mid-migration).
   UPDATE system_setting

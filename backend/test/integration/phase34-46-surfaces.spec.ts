@@ -215,7 +215,9 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
             user_id: USER_A,
             action: 'test',
             target_type: 'noop',
-            target_id: 'noop',
+            // target_id is UUID-typed in the schema; nullable. Passing
+            // a literal 'noop' string would break the type.
+            target_id: null,
             payload: { x: 1 },
             ip_address: null,
             user_agent: null,
