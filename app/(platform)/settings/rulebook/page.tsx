@@ -78,7 +78,7 @@ export default function RulebookPage() {
     if (params.get("init") === "generate") {
       void generate();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   async function generate() {

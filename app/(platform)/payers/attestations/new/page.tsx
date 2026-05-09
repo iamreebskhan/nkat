@@ -8,7 +8,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,6 +19,14 @@ interface PayerOption {
 }
 
 export default function NewAttestationPage() {
+  return (
+    <Suspense fallback={null}>
+      <NewAttestationInner />
+    </Suspense>
+  );
+}
+
+function NewAttestationInner() {
   const router = useRouter();
   const params = useSearchParams();
   const requestId = params.get("requestId");

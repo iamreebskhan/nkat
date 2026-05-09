@@ -100,7 +100,7 @@ const AI_SYNTHESIZED_CONFIDENCE = 0.4;
  */
 export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
   // Step 1 — fill in missing params from natural language if possible.
-  let payerId = req.payerId ?? null;
+  const payerId = req.payerId ?? null;
   let state = req.state ?? null;
   let cptCode = req.cptCode ?? null;
   let attribute = req.attribute ?? null;
