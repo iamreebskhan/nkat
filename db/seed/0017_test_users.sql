@@ -25,8 +25,9 @@ ON CONFLICT (org_id, user_id) DO NOTHING;
 
 -- A second org so the SCIM cross-tenant + RLS tests have something to
 -- contrast against in dev. Not subscribed (no `subscription` row).
-INSERT INTO org (id, name, status) VALUES
-  ('22222222-2222-4222-8222-222222222222', 'Other RCM Co', 'active')
+-- Slug is NOT NULL UNIQUE; supply one for every org insert.
+INSERT INTO org (id, name, slug, status) VALUES
+  ('22222222-2222-4222-8222-222222222222', 'Other RCM Co', 'other-rcm-co', 'active')
 ON CONFLICT (id) DO NOTHING;
 
 -- An admin who's a member of BOTH orgs — useful for the "switch org"
