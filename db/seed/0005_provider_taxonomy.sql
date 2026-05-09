@@ -42,7 +42,11 @@ INSERT INTO provider_taxonomy (taxonomy, classification, specialization, groupin
   ('101YA0400X','Counselor',                         'Addiction (Substance Use Disorder)',  'Behavioral Health & Social Service Providers',                 '2003-01-01'),
   -- Hospice / Palliative agencies
   ('251G00000X','Home Health Agency',                NULL,                                  'Agencies',                                                     '2003-01-01'),
-  ('251G00000X','Hospice Care, Community Based',     NULL,                                  'Agencies',                                                     '2003-01-01')
+  -- Hospice Care, Community Based has its own taxonomy code (251V00000X),
+  -- distinct from Home Health Agency (251G00000X). Original seed had both
+  -- under the same code, which made ON CONFLICT collide on a single
+  -- statement.
+  ('251V00000X','Hospice Care, Community Based',     NULL,                                  'Agencies',                                                     '2003-01-01')
 ON CONFLICT (taxonomy) DO UPDATE
   SET classification = EXCLUDED.classification,
       specialization = EXCLUDED.specialization,
