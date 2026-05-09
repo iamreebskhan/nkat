@@ -37,8 +37,9 @@ CREATE TABLE privacy_consent (
   ip_address INET,
   user_agent TEXT,
   granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  revoked_at TIMESTAMPTZ,
-  PRIMARY KEY (id)
+  revoked_at TIMESTAMPTZ
+  -- (PK is declared inline on the `id` column above; a second PRIMARY KEY
+  -- here would be rejected.)
 );
 
 CREATE INDEX privacy_consent_subject_idx
