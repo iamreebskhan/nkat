@@ -35,6 +35,7 @@ import {
   Users,
 } from "lucide-react";
 
+import { AmaLicenseBadge } from "@/components/AmaLicenseBadge";
 import { cn } from "@/lib/utils";
 
 /**
@@ -148,6 +149,9 @@ export function Sidebar({ items, badges = {}, orgName, userEmail }: Props) {
         <div className="px-3 py-3 border-t border-slate-800">
           <div className="px-3 py-2 rounded-md bg-slate-800/40 text-xs text-slate-300 truncate">
             {userEmail}
+          </div>
+          <div className="px-3 mt-2">
+            <AmaLicenseBadge />
           </div>
         </div>
       )}

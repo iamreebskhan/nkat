@@ -10,6 +10,9 @@
  *      the pending_invite.
  */
 import { withOrgContext } from "@/lib/db";
+import { sendEmail } from "@/lib/email/email.service";
+import { inviteEmail } from "@/lib/email/templates";
+import { env } from "@/lib/env";
 import {
   InviteSchema,
   ROLE_DEFAULT_PERMISSIONS,
@@ -68,7 +71,74 @@ export async function createInvite(args: {
     }
 
     return { id: inviteId, token };
+  }).then(async (result) => {
+    void sendInviteEmail({
+      orgId: args.orgId,
+      inviteeEmail: args.payload.email,
+      inviterUserId: args.invitedByUserId,
+      token: result.token,
+      expiresAt: expiresAt.toISOString(),
+    });
+    return result;
   });
+}
+
+async function sendInviteEmail(input: {
+  orgId: string;
+  inviteeEmail: string;
+  inviterUserId: string;
+  token: string;
+  expiresAt: string;
+}): Promise<void> {
+  try {
+    const meta = await withOrgContext(input.orgId, async (tx) => {
+      const orgRow = await tx.$queryRaw<{ name: string }[]>`
+        SELECT name FROM org WHERE id = ${input.orgId}::uuid LIMIT 1
+      `;
+      const branding = await tx.$queryRaw<
+        { display_name: string | null; primary_color: string | null; logo_url: string | null;
+          email_from_name: string | null; email_from_address: string | null }[]
+      >`
+        SELECT display_name, primary_color, logo_url, email_from_name, email_from_address
+        FROM org_branding WHERE org_id = ${input.orgId}::uuid LIMIT 1
+      `;
+      const inviter = await tx.$queryRaw<{ full_name: string | null; email: string }[]>`
+        SELECT full_name, email FROM app_user WHERE id = ${input.inviterUserId}::uuid LIMIT 1
+      `;
+      return {
+        orgName: orgRow[0]?.name ?? "your organization",
+        branding: branding[0] ?? null,
+        inviterName: inviter[0]?.full_name ?? inviter[0]?.email ?? "A teammate",
+      };
+    });
+
+    const acceptUrl = `${env().APP_BASE_URL}/invites/${input.token}`;
+    const tmpl = inviteEmail({
+      inviteeEmail: input.inviteeEmail,
+      inviterName: meta.inviterName,
+      acceptUrl,
+      expiresAt: input.expiresAt,
+      branding: {
+        displayName: meta.branding?.display_name ?? meta.orgName,
+        primaryColor: meta.branding?.primary_color ?? null,
+        logoUrl: meta.branding?.logo_url ?? null,
+      },
+    });
+
+    await sendEmail({
+      to: input.inviteeEmail,
+      subject: tmpl.subject,
+      html: tmpl.html,
+      text: tmpl.text,
+      fromName: meta.branding?.email_from_name ?? meta.orgName,
+      fromAddress: meta.branding?.email_from_address ?? undefined,
+    });
+  } catch (err) {
+    console.error("invite email send failed", {
+      err: err instanceof Error ? err.message : String(err),
+      to: input.inviteeEmail,
+    });
+  }
 }
 
 export async function listInvites(args: {
