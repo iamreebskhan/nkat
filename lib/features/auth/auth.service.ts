@@ -33,6 +33,8 @@ const MIN_PASSWORD_LEN = 12;
 export interface LoginInput {
   email: string;
   password: string;
+  /** Required if the account has MFA enrolled; otherwise ignored. */
+  mfaCode?: string;
 }
 
 export interface LoginSuccess {
@@ -42,7 +44,9 @@ export interface LoginSuccess {
 export type LoginResult =
   | LoginSuccess
   | { error: "invalid_credentials" }
-  | { error: "user_inactive" };
+  | { error: "user_inactive" }
+  | { error: "mfa_required" }
+  | { error: "mfa_bad_code" };
 
 export async function login(input: LoginInput): Promise<LoginResult> {
   const rows = await prisma.$queryRaw<
@@ -67,6 +71,19 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   }
   if (user.status !== "active") {
     return { error: "user_inactive" };
+  }
+
+  // MFA gate. If the account has enrolled, require + verify the code.
+  const mfaRows = await prisma.$queryRaw<
+    { mfa_enrolled_at: Date | null }[]
+  >`
+    SELECT mfa_enrolled_at FROM app_user WHERE id = ${user.id}::uuid LIMIT 1
+  `;
+  if (mfaRows[0]?.mfa_enrolled_at) {
+    if (!input.mfaCode) return { error: "mfa_required" };
+    const { verifyMfaChallenge } = await import("./mfa.service");
+    const okMfa = await verifyMfaChallenge({ userId: user.id, code: input.mfaCode });
+    if (!okMfa) return { error: "mfa_bad_code" };
   }
 
   const orgRows = await prisma.$queryRaw<

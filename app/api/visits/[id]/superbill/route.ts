@@ -12,12 +12,13 @@ import {
   getSuperbillByVisit,
   persistDraft,
 } from "@/lib/features/superbills/superbill.service";
+import { logPhiAccess } from "@/lib/hipaa/phi-access-log";
 
 interface Params {
   params: Promise<{ id: string }>;
 }
 
-export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
+export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["billing.superbills.view"]);
   if (session instanceof Response) return session;
 
@@ -26,7 +27,17 @@ export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
     orgId: session.orgId,
     visitId: id,
   });
-  if (existing) return ok({ existing, draft: null });
+  if (existing) {
+    void logPhiAccess({
+      orgId: session.orgId,
+      userId: session.userId,
+      patientId: existing.patientId,
+      accessType: "view",
+      context: "superbill",
+      request: req,
+    });
+    return ok({ existing, draft: null });
+  }
 
   // No row yet — return a fresh in-memory draft so the FE can render it
   // without a separate POST round-trip.

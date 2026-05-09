@@ -12,16 +12,25 @@ import {
   getCarePlan,
   upsertCarePlan,
 } from "@/lib/features/care-plans/care-plan.service";
+import { logPhiAccess } from "@/lib/hipaa/phi-access-log";
 
 interface Params {
   params: Promise<{ patientId: string }>;
 }
 
-export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
+export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["careplans.view"]);
   if (session instanceof Response) return session;
   const { patientId } = await ctx.params;
   const cp = await getCarePlan({ orgId: session.orgId, patientId });
+  void logPhiAccess({
+    orgId: session.orgId,
+    userId: session.userId,
+    patientId,
+    accessType: "view",
+    context: "care_plan",
+    request: req,
+  });
   if (!cp) return ok({ carePlan: null });
   return ok({ carePlan: cp });
 }
@@ -53,6 +62,14 @@ export async function PUT(req: NextRequest, ctx: Params): Promise<Response> {
       activeMedications: body.activeMedications,
       snapshotForVisitId: body.snapshotForVisitId,
       signedByUserId: session.userId,
+    });
+    void logPhiAccess({
+      orgId: session.orgId,
+      userId: session.userId,
+      patientId,
+      accessType: "edit",
+      context: "care_plan",
+      request: req,
     });
     return ok(r);
   } catch (err) {

@@ -19,14 +19,25 @@ import { login } from "@/lib/features/auth/auth.service";
 const Schema = z.object({
   email: z.string().email().max(254),
   password: z.string().min(1).max(200),
+  mfaCode: z.string().max(20).optional(),
 });
 
 export async function POST(req: NextRequest): Promise<Response> {
   const body = await parseJson(req, Schema);
   if (body instanceof Response) return body;
 
-  const result = await login({ email: body.email, password: body.password });
+  const result = await login({
+    email: body.email,
+    password: body.password,
+    mfaCode: body.mfaCode,
+  });
   if ("error" in result) {
+    if (result.error === "mfa_required") {
+      return fail("MFA code required.", { status: 401 });
+    }
+    if (result.error === "mfa_bad_code") {
+      return fail("MFA code didn't match.", { status: 401 });
+    }
     if (result.error === "user_inactive") {
       return fail("Account is suspended. Contact your org admin.", { status: 403 });
     }
