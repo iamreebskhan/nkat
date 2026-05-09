@@ -21,6 +21,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 
+import { assertNoPhi } from "@/lib/ai/phi-guard";
 import { fetchPayerRule } from "@/lib/features/billing/payer-rule.repository";
 import { describeDenialHeuristic, lookupCarc } from "@/lib/features/denials/denial-pure";
 import type { AiRecommendation } from "@/lib/features/denials/denial.types";
@@ -143,6 +144,7 @@ export async function analyzeDenial(
 
   let response: Anthropic.Messages.Message;
   try {
+    assertNoPhi(userMsg, "denialAnalyst");
     response = await client().messages.create({
       model: MODEL,
       max_tokens: 600,

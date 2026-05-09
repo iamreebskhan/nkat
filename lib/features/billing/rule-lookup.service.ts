@@ -27,12 +27,12 @@
  * verbatim citation OR is `unknown` — never a third option.
  */
 import {
-  assertNoPhi,
   isAnthropicConfigured,
   parseRuleQuery,
   synthesizeRuleAnswer,
   type ParsedQuery,
 } from "@/lib/ai/anthropic.client";
+import { assertNoPhi } from "@/lib/ai/phi-guard";
 import { isEmbedderConfigured } from "@/lib/ai/embedder";
 import { hybridSearch } from "@/lib/ai/vector-search";
 
@@ -107,7 +107,7 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
   const dos = req.dos ? new Date(req.dos) : new Date();
 
   if ((!payerId || !state || !cptCode) && req.query && isAnthropicConfigured()) {
-    assertNoPhi(req.query);
+    assertNoPhi(req.query, "ruleLookup.query");
     let parsed: ParsedQuery;
     try {
       parsed = await parseRuleQuery(req.query);
@@ -198,7 +198,7 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
 
   const queryText =
     req.query ?? `${fullAttribute} for CPT ${fullCptCode} in ${fullState}`;
-  assertNoPhi(queryText);
+  assertNoPhi(queryText, "ruleLookup.synth");
 
   const chunks = await hybridSearch({
     query: queryText,

@@ -37,6 +37,7 @@
     "browser-extension",
     "infra",
     "loadtest",
-    "db"
+    "db",
+    "e2e"
   ]
 }
