@@ -25,11 +25,11 @@ export interface SudConsentInput {
 }
 
 export type SudConsentStatus =
-  | 'no_sud_codes'             // none of the codes flag is_sud_part2
-  | 'consent_active'           // SUD code present + consent on file
-  | 'consent_missing'          // SUD code present + no consent
-  | 'consent_revoked'          // SUD code present + consent revoked before DOS
-  | 'patient_unknown';         // SUD code present + no patient_external_id supplied
+  | 'no_sud_codes' // none of the codes flag is_sud_part2
+  | 'consent_active' // SUD code present + consent on file
+  | 'consent_missing' // SUD code present + no consent
+  | 'consent_revoked' // SUD code present + consent revoked before DOS
+  | 'patient_unknown'; // SUD code present + no patient_external_id supplied
 
 export interface SudConsentResult {
   status: SudConsentStatus;
@@ -57,7 +57,9 @@ export class SudConsentService {
       .where('code', 'in', input.codes)
       .where('is_sud_part2', '=', true)
       .where('effective_date', '<=', input.dos)
-      .where((eb) => eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', input.dos)]))
+      .where((eb) =>
+        eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', input.dos)]),
+      )
       .execute();
 
     const flagged_codes = flagged.map((r) => r.code);

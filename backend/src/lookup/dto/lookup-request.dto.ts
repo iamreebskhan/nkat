@@ -106,12 +106,18 @@ export class LookupRequestDto {
   @IsDateString()
   filing_date?: string;
 
-  @ApiPropertyOptional({ example: '22222222-2222-4222-8222-222222222222', description: 'Tenant client_id; required if SUD codes appear on the claim.' })
+  @ApiPropertyOptional({
+    example: '22222222-2222-4222-8222-222222222222',
+    description: 'Tenant client_id; required if SUD codes appear on the claim.',
+  })
   @IsOptional()
   @IsString()
   client_id?: string;
 
-  @ApiPropertyOptional({ example: 'PHASH:abc123', description: 'De-identified patient reference, used for 42 CFR Part 2 SUD consent lookup.' })
+  @ApiPropertyOptional({
+    example: 'PHASH:abc123',
+    description: 'De-identified patient reference, used for 42 CFR Part 2 SUD consent lookup.',
+  })
   @IsOptional()
   @IsString()
   patient_external_id?: string;

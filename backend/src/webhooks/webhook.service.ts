@@ -36,14 +36,14 @@ export interface DeliveryResult {
 }
 
 const BACKOFF_SEQUENCE_MS = [
-  0,                  // attempt 1: immediate
-  60_000,             // attempt 2: +1m
-  300_000,            // attempt 3: +5m
-  900_000,            // attempt 4: +15m
-  3_600_000,          // attempt 5: +1h
-  21_600_000,         // attempt 6: +6h
-  86_400_000,         // attempt 7: +24h
-  86_400_000,         // attempt 8: +24h
+  0, // attempt 1: immediate
+  60_000, // attempt 2: +1m
+  300_000, // attempt 3: +5m
+  900_000, // attempt 4: +15m
+  3_600_000, // attempt 5: +1h
+  21_600_000, // attempt 6: +6h
+  86_400_000, // attempt 7: +24h
+  86_400_000, // attempt 8: +24h
 ];
 
 function nextReadyAt(attempt: number, now: Date): Date | null {
@@ -76,12 +76,16 @@ export class WebhookService {
       const now = new Date();
       let enqueued = 0;
       for (const s of subs) {
-        const signed = signPayload(s.signing_secret, {
-          event: input.event_type,
-          event_id: input.event_id,
-          org_id: input.org_id,
-          data: input.payload,
-        }, now.getTime());
+        const signed = signPayload(
+          s.signing_secret,
+          {
+            event: input.event_type,
+            event_id: input.event_id,
+            org_id: input.org_id,
+            data: input.payload,
+          },
+          now.getTime(),
+        );
         await tx
           .insertInto('webhook_delivery')
           .values({
@@ -89,7 +93,12 @@ export class WebhookService {
             subscription_id: s.id,
             event_id: input.event_id,
             event_type: input.event_type,
-            payload: { event: input.event_type, event_id: input.event_id, org_id: input.org_id, data: input.payload },
+            payload: {
+              event: input.event_type,
+              event_id: input.event_id,
+              org_id: input.org_id,
+              data: input.payload,
+            },
             signature: signed.signature,
             ready_at: now,
           })
@@ -105,9 +114,14 @@ export class WebhookService {
       const now = new Date();
       // Atomic claim: SELECT FOR UPDATE SKIP LOCKED + UPDATE in one statement.
       const claimed = await sql<{
-        id: string; subscription_id: string; payload: Record<string, unknown>;
-        signature: string; attempt_count: number; max_attempts: number;
-        url: string; signing_secret: string;
+        id: string;
+        subscription_id: string;
+        payload: Record<string, unknown>;
+        signature: string;
+        attempt_count: number;
+        max_attempts: number;
+        url: string;
+        signing_secret: string;
       }>`
         WITH next_batch AS (
           SELECT wd.id
@@ -141,8 +155,12 @@ export class WebhookService {
   private async deliverOne(
     tx: Tx,
     row: {
-      id: string; subscription_id: string; payload: Record<string, unknown>;
-      signature: string; attempt_count: number; max_attempts: number;
+      id: string;
+      subscription_id: string;
+      payload: Record<string, unknown>;
+      signature: string;
+      attempt_count: number;
+      max_attempts: number;
       url: string;
     },
     now: Date,

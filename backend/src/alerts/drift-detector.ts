@@ -54,7 +54,11 @@ function entryKey(e: DiffEntry): string {
   return `${e.key.payer_id}|${e.key.state}|${e.key.product_line}|${e.key.code}|${e.key.attribute}`;
 }
 
-export function detectDrift(rulebook_id: string, baseline: DiffSet, current: DiffSet): DriftAlert[] {
+export function detectDrift(
+  rulebook_id: string,
+  baseline: DiffSet,
+  current: DiffSet,
+): DriftAlert[] {
   const baselineMap = new Map<string, DiffEntry>(
     baseline.entries.map((e): [string, DiffEntry] => [entryKey(e), e]),
   );
@@ -70,7 +74,11 @@ export function detectDrift(rulebook_id: string, baseline: DiffSet, current: Dif
     const after = currentMap.get(k);
     const beforeOutcome = before?.outcome ?? 'absent';
     const afterOutcome = after?.outcome ?? 'absent';
-    if (beforeOutcome === afterOutcome && (before?.field_diffs ?? []).join(',') === (after?.field_diffs ?? []).join(',')) continue;
+    if (
+      beforeOutcome === afterOutcome &&
+      (before?.field_diffs ?? []).join(',') === (after?.field_diffs ?? []).join(',')
+    )
+      continue;
 
     // Resolution case: any → aligned. Don't alert.
     if (afterOutcome === 'aligned' && beforeOutcome !== 'aligned') {
@@ -96,9 +104,12 @@ export function detectDrift(rulebook_id: string, baseline: DiffSet, current: Dif
   // Stable order: critical first, then by key.
   const rank: Record<AlertSeverity, number> = { critical: 0, high: 1, medium: 2, info: 3 };
   alerts.sort((a, b) => {
-    const sa = rank[a.severity], sb = rank[b.severity];
+    const sa = rank[a.severity],
+      sb = rank[b.severity];
     if (sa !== sb) return sa - sb;
-    return entryKey({ outcome: 'aligned', key: a.key } as DiffEntry).localeCompare(entryKey({ outcome: 'aligned', key: b.key } as DiffEntry));
+    return entryKey({ outcome: 'aligned', key: a.key } as DiffEntry).localeCompare(
+      entryKey({ outcome: 'aligned', key: b.key } as DiffEntry),
+    );
   });
   return alerts;
 }

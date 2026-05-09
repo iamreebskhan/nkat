@@ -32,29 +32,46 @@ describe('signPayload + verifySignature', () => {
   it('signs a payload and verifies round-trip', () => {
     const signed = signPayload(SECRET, { event: 'alert.created', alert_id: 'x' }, FIXED);
     expect(signed.signature).toMatch(/^sha256=[0-9a-f]{64}$/);
-    expect(verifySignature(SECRET, signed.body, signed.timestamp, signed.signature, 60_000, FIXED)).toBe(true);
+    expect(
+      verifySignature(SECRET, signed.body, signed.timestamp, signed.signature, 60_000, FIXED),
+    ).toBe(true);
   });
 
   it('fails verification on tampered body', () => {
     const signed = signPayload(SECRET, { x: 1 }, FIXED);
-    expect(verifySignature(SECRET, signed.body + ' ', signed.timestamp, signed.signature, 60_000, FIXED)).toBe(false);
+    expect(
+      verifySignature(SECRET, signed.body + ' ', signed.timestamp, signed.signature, 60_000, FIXED),
+    ).toBe(false);
   });
 
   it('fails verification on wrong secret', () => {
     const signed = signPayload(SECRET, { x: 1 }, FIXED);
-    expect(verifySignature('different', signed.body, signed.timestamp, signed.signature, 60_000, FIXED)).toBe(false);
+    expect(
+      verifySignature('different', signed.body, signed.timestamp, signed.signature, 60_000, FIXED),
+    ).toBe(false);
   });
 
   it('fails verification on stale timestamp (replay protection)', () => {
     const signed = signPayload(SECRET, { x: 1 }, FIXED);
     // 10 minutes later, default 5-min tolerance
-    expect(verifySignature(SECRET, signed.body, signed.timestamp, signed.signature, 5 * 60 * 1000, FIXED + 10 * 60 * 1000)).toBe(false);
+    expect(
+      verifySignature(
+        SECRET,
+        signed.body,
+        signed.timestamp,
+        signed.signature,
+        5 * 60 * 1000,
+        FIXED + 10 * 60 * 1000,
+      ),
+    ).toBe(false);
   });
 
   it('fails verification on missing sha256 prefix', () => {
     const signed = signPayload(SECRET, { x: 1 }, FIXED);
     const naked = signed.signature.replace('sha256=', '');
-    expect(verifySignature(SECRET, signed.body, signed.timestamp, naked, 60_000, FIXED)).toBe(false);
+    expect(verifySignature(SECRET, signed.body, signed.timestamp, naked, 60_000, FIXED)).toBe(
+      false,
+    );
   });
 
   it('produces stable signature for equivalent objects with different key orders', () => {
@@ -73,6 +90,8 @@ describe('signPayload + verifySignature', () => {
     const signed = signPayload(SECRET, { x: 1 }, FIXED);
     // truncated signature must fail (not throw)
     const truncated = signed.signature.slice(0, signed.signature.length - 5);
-    expect(verifySignature(SECRET, signed.body, signed.timestamp, truncated, 60_000, FIXED)).toBe(false);
+    expect(verifySignature(SECRET, signed.body, signed.timestamp, truncated, 60_000, FIXED)).toBe(
+      false,
+    );
   });
 });

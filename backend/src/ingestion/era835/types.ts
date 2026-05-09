@@ -17,8 +17,8 @@
 export interface Era835Adjustment {
   /** CO=Contractual Obligation, PR=Patient Responsibility, OA=Other, PI=Payer Initiated. */
   group_code: 'CO' | 'PR' | 'OA' | 'PI';
-  reason_code: string;          // CARC, e.g. "97", "11", "29", "16"
-  amount: number;               // dollars; negative means we owe payer (recovery)
+  reason_code: string; // CARC, e.g. "97", "11", "29", "16"
+  amount: number; // dollars; negative means we owe payer (recovery)
   quantity?: number | undefined;
 }
 

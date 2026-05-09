@@ -39,7 +39,10 @@ export class WaystarClient {
   private readonly nowMs: () => number;
   private cached: CachedToken | null = null;
 
-  constructor(private readonly creds: WaystarCreds, opts: WaystarClientOptions = {}) {
+  constructor(
+    private readonly creds: WaystarCreds,
+    opts: WaystarClientOptions = {},
+  ) {
     if (!creds.clientId || !creds.clientSecret) {
       throw new Error('WaystarClient: clientId + clientSecret required');
     }
@@ -97,5 +100,7 @@ export class WaystarClient {
     };
   }
 
-  _resetTokenCache(): void { this.cached = null; }
+  _resetTokenCache(): void {
+    this.cached = null;
+  }
 }

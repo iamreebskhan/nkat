@@ -10,8 +10,13 @@ interface RowLike {
   client_id: string | null;
   rulebook_id: string | null;
   alert_type:
-    | 'rule_change' | 'new_diff' | 'source_expired' | 'consent_required'
-    | 'attestation_expiring' | 'extraction_drift' | 'source_unavailable';
+    | 'rule_change'
+    | 'new_diff'
+    | 'source_expired'
+    | 'consent_required'
+    | 'attestation_expiring'
+    | 'extraction_drift'
+    | 'source_unavailable';
   severity: 'critical' | 'high' | 'medium' | 'info';
   payload: Record<string, unknown>;
   related_rule_id: string | null;
@@ -41,14 +46,16 @@ function row(over: Partial<RowLike> = {}): RowLike {
 
 describe('AlertsController.toView', () => {
   it('emits FE-friendly fields (type, read_at, severity-3-bucket)', () => {
-    const v = toView(row({
-      alert_type: 'rule_change',
-      severity: 'high',
-      payload: { title: 'Rule X changed', detail: 'Effective May 1', payer_id: 'p-1' },
-    }));
+    const v = toView(
+      row({
+        alert_type: 'rule_change',
+        severity: 'high',
+        payload: { title: 'Rule X changed', detail: 'Effective May 1', payer_id: 'p-1' },
+      }),
+    );
     expect(v).toMatchObject({
       type: 'rule_change',
-      severity: 'warning',           // 'high' collapsed to 'warning'
+      severity: 'warning', // 'high' collapsed to 'warning'
       title: 'Rule X changed',
       detail: 'Effective May 1',
       payer_id: 'p-1',

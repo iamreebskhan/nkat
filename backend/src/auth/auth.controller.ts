@@ -57,7 +57,9 @@ export class AuthController {
   }
 
   @Get('sso/start')
-  @ApiOperation({ summary: 'Begin OIDC flow to the configured IdP. 503 when IdP is not configured.' })
+  @ApiOperation({
+    summary: 'Begin OIDC flow to the configured IdP. 503 when IdP is not configured.',
+  })
   ssoStart(@Query('next') next: string | undefined, @Res() res: Response) {
     if (!this.env.OIDC_AUTHORIZATION_URL || !this.env.OIDC_CLIENT_ID) {
       throw new ServiceUnavailableException({
@@ -83,7 +85,7 @@ export class AuthController {
   @Get('sso/callback')
   @ApiOperation({
     summary:
-      'OIDC authorization-code-flow callback. Exchanges `code` for the IdP\'s ID token, ' +
+      "OIDC authorization-code-flow callback. Exchanges `code` for the IdP's ID token, " +
       'verifies it via OIDC_JWKS_URL, mints OUR session JWT (RS256), and redirects to the ' +
       'frontend with the token in the URL fragment.',
   })
@@ -102,7 +104,9 @@ export class AuthController {
       ['JWT_ISSUER', this.env.JWT_ISSUER],
       ['JWT_AUDIENCE', this.env.JWT_AUDIENCE],
       ['SESSION_SIGNING_PRIVATE_KEY', this.env.SESSION_SIGNING_PRIVATE_KEY],
-    ].filter(([, v]) => !v).map(([k]) => k);
+    ]
+      .filter(([, v]) => !v)
+      .map(([k]) => k);
     if (missing.length > 0) {
       throw new ServiceUnavailableException({
         code: 'SSO_NOT_CONFIGURED',
@@ -212,11 +216,7 @@ export class AuthController {
       try {
         // RLS scopes the lookup to the caller's own org row.
         const r = await runReadOnlyWithTenant(this.db, orgId, async (tx) =>
-          tx
-            .selectFrom('org')
-            .select(['slug', 'name'])
-            .where('id', '=', orgId)
-            .executeTakeFirst(),
+          tx.selectFrom('org').select(['slug', 'name']).where('id', '=', orgId).executeTakeFirst(),
         );
         orgSlug = r?.slug ?? null;
         orgName = r?.name ?? null;

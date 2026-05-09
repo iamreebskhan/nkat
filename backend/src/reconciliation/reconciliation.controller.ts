@@ -50,7 +50,13 @@ export class ReconciliationController {
   async decide(@Req() req: Request, @Body() body: DecideDto) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     assertUuid(body.client_rule_id, 'client_rule_id');
-    await this.svc.decide(orgId, body.client_rule_id, body.decision, body.note ?? null, body.decided_by);
+    await this.svc.decide(
+      orgId,
+      body.client_rule_id,
+      body.decision,
+      body.note ?? null,
+      body.decided_by,
+    );
     return { ok: true };
   }
 

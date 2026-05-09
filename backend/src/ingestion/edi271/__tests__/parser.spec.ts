@@ -50,9 +50,7 @@ describe('parseEdi271 — fixture', () => {
     expect(active.eligibility_code).toBe('1');
     expect(active.service_type_codes).toEqual(['30', 'MH', 'AL']);
     expect(active.insurance_type_code).toBe('HM');
-    expect(active.message_text).toEqual([
-      'Active coverage for medical / mental health / SUD',
-    ]);
+    expect(active.message_text).toEqual(['Active coverage for medical / mental health / SUD']);
   });
 
   it('parses copay benefit (EB*B with monetary amount)', () => {
@@ -85,16 +83,15 @@ describe('parseEdi271 — edge cases', () => {
   });
 
   it('handles file without IEA (still returns last subscriber)', () => {
-    const out = parseEdi271(
-      'NM1*IL*1*X*Y****MI*M-1~EB*1**30****0***Y~',
-    );
+    const out = parseEdi271('NM1*IL*1*X*Y****MI*M-1~EB*1**30****0***Y~');
     expect(out.subscribers).toHaveLength(1);
     expect(out.subscribers[0].subscriber_id).toBe('M-1');
     expect(out.subscribers[0].benefits).toHaveLength(1);
   });
 
   it('respects custom delimiters', () => {
-    const isa = 'ISA|00|          |00|          |ZZ|P              |ZZ|R              |260415|1234|^|00501|000000001|0|P|:#';
+    const isa =
+      'ISA|00|          |00|          |ZZ|P              |ZZ|R              |260415|1234|^|00501|000000001|0|P|:#';
     const body = 'NM1|IL|1|X|Y||||MI|M-9#EB|1||30||||0|||Y#';
     const out = parseEdi271(isa + body);
     expect(out.subscribers[0].subscriber_id).toBe('M-9');

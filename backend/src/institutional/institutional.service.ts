@@ -43,9 +43,7 @@ export class InstitutionalService {
       .select(['bill_type', 'description', 'valid_for_product_lines'])
       .where('bill_type', '=', billType)
       .where('effective_date', '<=', dos)
-      .where((eb) =>
-        eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]),
-      )
+      .where((eb) => eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]))
       .executeTakeFirst();
     if (!row) {
       return {
@@ -89,9 +87,7 @@ export class InstitutionalService {
       .where('product_line', '=', productLine)
       .where('valid', '=', true)
       .where('effective_date', '<=', dos)
-      .where((eb) =>
-        eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]),
-      )
+      .where((eb) => eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]))
       .execute();
     const validSet = new Set(allowed.map((r) => r.revenue_code));
 

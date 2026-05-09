@@ -1,4 +1,13 @@
-import { Body, Controller, HttpException, HttpStatus, Inject, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ArrayMaxSize, IsArray, IsIn, IsObject, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -27,7 +36,10 @@ class SynthesizeDto {
   @IsString() product_line!: string;
   @IsString() date_of_service!: string;
   @IsIn(['biller', 'manager', 'analyst']) audience!: 'biller' | 'manager' | 'analyst';
-  @IsArray() @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => FindingInput)
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => FindingInput)
   findings!: FindingInput[];
 }
 

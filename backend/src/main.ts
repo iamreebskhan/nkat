@@ -7,7 +7,10 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 {
   const envPath = resolve(process.cwd(), '.env');
-  if (existsSync(envPath) && typeof (process as { loadEnvFile?: (p: string) => void }).loadEnvFile === 'function') {
+  if (
+    existsSync(envPath) &&
+    typeof (process as { loadEnvFile?: (p: string) => void }).loadEnvFile === 'function'
+  ) {
     try {
       (process as { loadEnvFile: (p: string) => void }).loadEnvFile(envPath);
     } catch {
@@ -35,12 +38,12 @@ async function bootstrap(): Promise<INestApplication> {
     bodyParser: false,
   });
   const express = await import('express');
-  const captureRawBody: import('express').NextFunction extends infer _ ? (
+  const captureRawBody = (
     req: import('express').Request & { rawBody?: string },
     _res: import('express').Response,
     buf: Buffer,
     encoding: BufferEncoding,
-  ) => void : never = (req, _res, buf, encoding) => {
+  ): void => {
     if (req.path === '/v1/billing/stripe-webhook') {
       req.rawBody = buf.toString(encoding || 'utf8');
     }

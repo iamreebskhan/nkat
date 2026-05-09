@@ -20,14 +20,14 @@
  */
 
 export interface AbnFormData {
-  formVersion: string;            // e.g. 'CMS-R-131-2026-03-13'
+  formVersion: string; // e.g. 'CMS-R-131-2026-03-13'
   notifierName: string;
   notifierAddress: string;
   patientName: string;
-  patientId: string;              // typically an internal opaque id, NOT MRN
-  serviceDescription: string;     // the items/services we expect Medicare not to cover
+  patientId: string; // typically an internal opaque id, NOT MRN
+  serviceDescription: string; // the items/services we expect Medicare not to cover
   reasonForNoncoverage: string;
-  estimatedCost: string;          // "$ 145.00" or similar
+  estimatedCost: string; // "$ 145.00" or similar
   optionSelected: 'OPTION_1' | 'OPTION_2' | 'OPTION_3' | null;
   signedAt: Date | null;
   signaturePresent: boolean;
@@ -60,9 +60,10 @@ export function buildAbnPdf(data: AbnFormData): Buffer {
   // 3: page (Letter = 612 x 792 points; 1 inch = 72 pt)
   objects.push({
     id: 3,
-    body: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] '
-        + '/Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> '
-        + '/Contents 4 0 R >>',
+    body:
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+      '/Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> ' +
+      '/Contents 4 0 R >>',
   });
   // 4: content stream
   objects.push({
@@ -123,7 +124,9 @@ function renderLines(data: AbnFormData): RenderedLine[] {
     out.push({ text, bold: false, size, yOffset: y });
     y += size + 3;
   };
-  const blank = (n = 1) => { y += 6 * n; };
+  const blank = (n = 1) => {
+    y += 6 * n;
+  };
 
   head(`Advance Beneficiary Notice of Noncoverage (ABN)`, 14);
   body(`Form ${data.formVersion} — Office of Management and Budget approved.`);
@@ -139,7 +142,7 @@ function renderLines(data: AbnFormData): RenderedLine[] {
   body(`Identification number: ${escapePdf(data.patientId)}`);
   blank();
 
-  head('NOTE: If Medicare doesn\'t pay for D. below, you may have to pay.', 10);
+  head("NOTE: If Medicare doesn't pay for D. below, you may have to pay.", 10);
   body('Medicare does not pay for everything, even some care that you or your');
   body('health care provider have good reason to think you need. We expect');
   body('Medicare may not pay for the D. below.');
@@ -158,16 +161,26 @@ function renderLines(data: AbnFormData): RenderedLine[] {
   blank();
 
   head('OPTIONS — CHOOSE ONE', 10);
-  body(`${data.optionSelected === 'OPTION_1' ? '[X]' : '[ ]'} OPTION 1. I want the D. listed above. You may ask`);
+  body(
+    `${data.optionSelected === 'OPTION_1' ? '[X]' : '[ ]'} OPTION 1. I want the D. listed above. You may ask`,
+  );
   body('  Medicare to be billed for an official decision on payment, which');
   body('  is sent to me on a Medicare Summary Notice.');
-  body(`${data.optionSelected === 'OPTION_2' ? '[X]' : '[ ]'} OPTION 2. I want the D. listed above, but do not bill Medicare.`);
-  body(`${data.optionSelected === 'OPTION_3' ? '[X]' : '[ ]'} OPTION 3. I don't want the D. listed above. I understand that`);
+  body(
+    `${data.optionSelected === 'OPTION_2' ? '[X]' : '[ ]'} OPTION 2. I want the D. listed above, but do not bill Medicare.`,
+  );
+  body(
+    `${data.optionSelected === 'OPTION_3' ? '[X]' : '[ ]'} OPTION 3. I don't want the D. listed above. I understand that`,
+  );
   body('  with this choice I am not responsible for payment.');
   blank();
 
   head('H. SIGNATURE', 10);
-  body(data.signaturePresent ? '/// signed in accompanying record ///' : '_____________________________________');
+  body(
+    data.signaturePresent
+      ? '/// signed in accompanying record ///'
+      : '_____________________________________',
+  );
   body(`Date: ${data.signedAt ? data.signedAt.toISOString().slice(0, 10) : '__________'}`);
   blank();
 

@@ -27,8 +27,8 @@ describe('validateConfirmationPhrase', () => {
   it.each([
     ['DELETE-TENANT-acme-hospice', 'acme-hospice', true],
     [' DELETE-TENANT-acme-hospice ', 'acme-hospice', true], // trim ok
-    ['delete-tenant-acme-hospice', 'acme-hospice', false],   // case-sensitive
-    ['DELETE-TENANT-acme', 'acme-hospice', false],           // wrong slug
+    ['delete-tenant-acme-hospice', 'acme-hospice', false], // case-sensitive
+    ['DELETE-TENANT-acme', 'acme-hospice', false], // wrong slug
     ['', 'acme-hospice', false],
     ['DELETE-TENANT-', 'acme-hospice', false],
   ])('"%s" against slug "%s" → %s', (input, slug, expected) => {
@@ -56,7 +56,9 @@ describe('isReadyForExecution', () => {
   });
 
   it('NOT ready when grace not yet elapsed', () => {
-    expect(isReadyForExecution({ status: 'requested', earliestExecuteAt: future }, NOW)).toBe(false);
+    expect(isReadyForExecution({ status: 'requested', earliestExecuteAt: future }, NOW)).toBe(
+      false,
+    );
   });
 
   it.each(['executed', 'canceled', 'failed'] as const)(

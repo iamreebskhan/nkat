@@ -17,7 +17,7 @@
 import { createPrivateKey, createSign, type KeyObject } from 'node:crypto';
 
 export interface SessionClaims {
-  sub: string;        // userId
+  sub: string; // userId
   org_id: string;
   role: string;
   iss: string;
@@ -27,7 +27,10 @@ export interface SessionClaims {
 }
 
 export class JwtSigningError extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
     super(message);
     this.name = 'JwtSigningError';
   }
@@ -39,7 +42,10 @@ export class JwtSigningError extends Error {
  */
 export function parsePrivateKey(pem: string): KeyObject {
   if (typeof pem !== 'string' || !pem.includes('PRIVATE KEY')) {
-    throw new JwtSigningError('NO_PRIVATE_KEY', 'SESSION_SIGNING_PRIVATE_KEY is missing or not a PEM');
+    throw new JwtSigningError(
+      'NO_PRIVATE_KEY',
+      'SESSION_SIGNING_PRIVATE_KEY is missing or not a PEM',
+    );
   }
   try {
     return createPrivateKey({ key: pem, format: 'pem' });
@@ -88,9 +94,5 @@ export function signJwt(args: {
 
 function b64url(input: string | Buffer): string {
   const buf = typeof input === 'string' ? Buffer.from(input, 'utf8') : input;
-  return buf
-    .toString('base64')
-    .replace(/=+$/, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
+  return buf.toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 }

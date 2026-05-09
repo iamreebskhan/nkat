@@ -142,16 +142,22 @@ async function main() {
       idempotencyKey: p.idempotencyKey,
     });
     switch (r.status) {
-      case 'sent': sent++; break;
-      case 'suppressed': suppressed++; break;
-      case 'duplicate': dup++; break;
-      case 'failed': failed++; break;
+      case 'sent':
+        sent++;
+        break;
+      case 'suppressed':
+        suppressed++;
+        break;
+      case 'duplicate':
+        dup++;
+        break;
+      case 'failed':
+        failed++;
+        break;
     }
   }
 
-  console.log(
-    `Done: sent=${sent} suppressed=${suppressed} duplicate=${dup} failed=${failed}.`,
-  );
+  console.log(`Done: sent=${sent} suppressed=${suppressed} duplicate=${dup} failed=${failed}.`);
   await pool.end();
   exit(failed === 0 ? 0 : 1);
 }

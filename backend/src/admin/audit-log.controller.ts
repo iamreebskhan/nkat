@@ -21,7 +21,7 @@ class AuditQuery {
   @IsOptional() @IsString() @MaxLength(64) user_id?: string;
   @IsOptional() @IsDateString() since?: string;
   @IsOptional() @IsDateString() until?: string;
-  @IsOptional() @IsString() cursor?: string;     // ISO timestamp of the last seen row's occurred_at
+  @IsOptional() @IsString() cursor?: string; // ISO timestamp of the last seen row's occurred_at
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500) limit?: number;
 }
 
@@ -36,8 +36,16 @@ export class AuditLogController {
   @ApiQuery({ name: 'action', required: false })
   @ApiQuery({ name: 'target_type', required: false })
   @ApiQuery({ name: 'user_id', required: false })
-  @ApiQuery({ name: 'since', required: false, description: 'ISO timestamp lower bound (inclusive)' })
-  @ApiQuery({ name: 'until', required: false, description: 'ISO timestamp upper bound (exclusive)' })
+  @ApiQuery({
+    name: 'since',
+    required: false,
+    description: 'ISO timestamp lower bound (inclusive)',
+  })
+  @ApiQuery({
+    name: 'until',
+    required: false,
+    description: 'ISO timestamp upper bound (exclusive)',
+  })
   @ApiQuery({ name: 'cursor', required: false })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async search(@Req() req: Request, @Query() q: AuditQuery) {
@@ -48,8 +56,15 @@ export class AuditLogController {
       let query = tx
         .selectFrom('audit_log')
         .select([
-          'id', 'user_id', 'action', 'target_type', 'target_id',
-          'payload', 'ip_address', 'user_agent', 'occurred_at',
+          'id',
+          'user_id',
+          'action',
+          'target_type',
+          'target_id',
+          'payload',
+          'ip_address',
+          'user_agent',
+          'occurred_at',
         ])
         .orderBy('occurred_at', 'desc')
         .limit(limit + 1);
@@ -64,9 +79,10 @@ export class AuditLogController {
       const rows = await query.execute();
       const hasMore = rows.length > limit;
       const trimmed = hasMore ? rows.slice(0, limit) : rows;
-      const nextCursor = hasMore && trimmed.length > 0
-        ? trimmed[trimmed.length - 1].occurred_at.toISOString()
-        : null;
+      const nextCursor =
+        hasMore && trimmed.length > 0
+          ? trimmed[trimmed.length - 1].occurred_at.toISOString()
+          : null;
       return { items: trimmed, next_cursor: nextCursor };
     });
   }

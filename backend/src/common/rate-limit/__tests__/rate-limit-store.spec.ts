@@ -1,8 +1,4 @@
-import {
-  InMemoryRateLimitStore,
-  RedisRateLimitStore,
-  type RedisLike,
-} from '../rate-limit-store';
+import { InMemoryRateLimitStore, RedisRateLimitStore, type RedisLike } from '../rate-limit-store';
 
 describe('InMemoryRateLimitStore', () => {
   it('allows up to limit, then rejects with retryAfterMs', async () => {
@@ -20,7 +16,9 @@ describe('InMemoryRateLimitStore', () => {
     const s = new InMemoryRateLimitStore();
     const t = 1_000_000;
     expect((await s.consume({ key: 'a', limit: 1, refillPerSec: 1, nowMs: t })).allowed).toBe(true);
-    expect((await s.consume({ key: 'a', limit: 1, refillPerSec: 1, nowMs: t })).allowed).toBe(false);
+    expect((await s.consume({ key: 'a', limit: 1, refillPerSec: 1, nowMs: t })).allowed).toBe(
+      false,
+    );
     expect((await s.consume({ key: 'b', limit: 1, refillPerSec: 1, nowMs: t })).allowed).toBe(true);
   });
 });

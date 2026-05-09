@@ -13,11 +13,7 @@ import type { Kysely } from 'kysely';
 import { runWithTenant } from '../database/rls-transaction';
 import type { Database } from '../database/schema.types';
 import { renderTemplate, type RenderArgsFor } from './email-templates';
-import {
-  EmailSendError,
-  type EmailClient,
-  type EmailTemplate,
-} from './email-types';
+import { EmailSendError, type EmailClient, type EmailTemplate } from './email-types';
 import { signUnsubscribeToken } from './unsubscribe-token';
 
 export const EMAIL_CLIENT_TOKEN = Symbol('EMAIL_CLIENT');
@@ -28,8 +24,8 @@ export const EMAIL_UNSUBSCRIBE_BASE_URL_TOKEN = Symbol('EMAIL_UNSUBSCRIBE_BASE_U
 
 /** Exponential backoff for the retry cron. ms per attempt index. */
 const RETRY_BACKOFF_MS = [
-  10 * 60 * 1000,    // 10 min
-  60 * 60 * 1000,    // 1 h
+  10 * 60 * 1000, // 10 min
+  60 * 60 * 1000, // 1 h
   6 * 60 * 60 * 1000, // 6 h
   24 * 60 * 60 * 1000, // 24 h
 ];
@@ -61,10 +57,14 @@ export class EmailService {
   constructor(
     @Inject(EMAIL_CLIENT_TOKEN) private readonly client: EmailClient,
     @Inject(EMAIL_FROM_TOKEN) private readonly fromAddress: string,
-    @Optional() @Inject(EMAIL_CONFIGURATION_SET_TOKEN) private readonly configurationSet: string | undefined,
+    @Optional()
+    @Inject(EMAIL_CONFIGURATION_SET_TOKEN)
+    private readonly configurationSet: string | undefined,
     private readonly db: Kysely<Database>,
     @Optional() @Inject(EMAIL_UNSUBSCRIBE_SECRET_TOKEN) private readonly unsubscribeSecret?: string,
-    @Optional() @Inject(EMAIL_UNSUBSCRIBE_BASE_URL_TOKEN) private readonly unsubscribeBaseUrl?: string,
+    @Optional()
+    @Inject(EMAIL_UNSUBSCRIBE_BASE_URL_TOKEN)
+    private readonly unsubscribeBaseUrl?: string,
   ) {}
 
   async send<T extends EmailTemplate>(input: SendInput<T>): Promise<SendResult> {
@@ -86,12 +86,18 @@ export class EmailService {
       .selectFrom('email_suppression')
       .select(['email', 'reason'])
       .where('email', '=', recipient)
-      .where((eb) =>
-        eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date())]),
-      )
+      .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date())]))
       .executeTakeFirst();
     if (suppressed) {
-      const id = await this.recordAudit(input, recipient, rendered.subject, 'suppressed', null, 'SuppressionList', suppressed.reason);
+      const id = await this.recordAudit(
+        input,
+        recipient,
+        rendered.subject,
+        'suppressed',
+        null,
+        'SuppressionList',
+        suppressed.reason,
+      );
       this.log.warn(`email suppressed to=${recipient} reason=${suppressed.reason}`);
       return { status: 'suppressed', email_send_id: id };
     }
@@ -161,7 +167,9 @@ export class EmailService {
    * `sent` (or schedules the next retry / dead-letters when MAX_RETRIES
    * exceeded).
    */
-  async retryFailedSend(emailSendId: string): Promise<{ status: 'sent' | 'failed' | 'dead_lettered' | 'noop' }> {
+  async retryFailedSend(
+    emailSendId: string,
+  ): Promise<{ status: 'sent' | 'failed' | 'dead_lettered' | 'noop' }> {
     const row = await this.db
       .selectFrom('email_send')
       .selectAll()
@@ -236,7 +244,8 @@ export class EmailService {
         .execute();
       return { status: 'sent' };
     }
-    const next = isRetryable(errorClass) && newAttempt < MAX_RETRIES ? nextRetryAt(newAttempt) : null;
+    const next =
+      isRetryable(errorClass) && newAttempt < MAX_RETRIES ? nextRetryAt(newAttempt) : null;
     await this.db
       .updateTable('email_send')
       .set({
@@ -305,7 +314,9 @@ export class EmailService {
  * include a mailto: alternative — keeping the surface to one verb
  * (HTTP) limits attack surface and matches our redeem endpoint.
  */
-export function buildListUnsubscribeHeaders(unsubscribeUrl: string): Array<{ name: string; value: string }> {
+export function buildListUnsubscribeHeaders(
+  unsubscribeUrl: string,
+): Array<{ name: string; value: string }> {
   return [
     { name: 'List-Unsubscribe', value: `<${unsubscribeUrl}>` },
     { name: 'List-Unsubscribe-Post', value: 'List-Unsubscribe=One-Click' },
@@ -324,8 +335,8 @@ export function isRetryable(errorClass: string | null): boolean {
     case 'MessageRejected':
     case 'MailFromDomainNotVerifiedException':
     case 'AccountSuspendedException':
-    case 'SuppressionList':                 // already handled upstream
-    case 'NoMessageId':                     // shape mismatch, won't fix on retry
+    case 'SuppressionList': // already handled upstream
+    case 'NoMessageId': // shape mismatch, won't fix on retry
       return false;
     case 'ThrottlingException':
     case 'TooManyRequestsException':
@@ -333,6 +344,6 @@ export function isRetryable(errorClass: string | null): boolean {
     case 'UnhandledException':
       return true;
     default:
-      return true;                          // unknown → cautious retry
+      return true; // unknown → cautious retry
   }
 }

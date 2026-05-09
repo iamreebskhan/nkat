@@ -39,7 +39,11 @@ export class RulebookNotEditableError extends Error {
 export class ReconciliationService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async createRulebook(orgId: string, clientId: string, notes?: string): Promise<{ id: string; version: number }> {
+  async createRulebook(
+    orgId: string,
+    clientId: string,
+    notes?: string,
+  ): Promise<{ id: string; version: number }> {
     return runWithTenant(this.db, orgId, async (tx) => {
       const lastVersion = await tx
         .selectFrom('client_rulebook')
@@ -80,7 +84,8 @@ export class ReconciliationService {
         code: r.code,
         attribute: r.attribute,
         value: r.value,
-        coverage_status: ((r.value as { coverage_status?: CoverageStatus }).coverage_status ?? 'covered'),
+        coverage_status:
+          (r.value as { coverage_status?: CoverageStatus }).coverage_status ?? 'covered',
         effective_date: rulebook.created_at.toISOString().slice(0, 10),
         source_id: r.id,
       }));
@@ -89,9 +94,21 @@ export class ReconciliationService {
       const today = new Date();
       const rules = await tx
         .selectFrom('payer_rule')
-        .select(['id', 'payer_id', 'state', 'product_line', 'code', 'attribute', 'value', 'coverage_status', 'effective_date'])
+        .select([
+          'id',
+          'payer_id',
+          'state',
+          'product_line',
+          'code',
+          'attribute',
+          'value',
+          'coverage_status',
+          'effective_date',
+        ])
         .where('effective_date', '<=', today)
-        .where((eb) => eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', today)]))
+        .where((eb) =>
+          eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', today)]),
+        )
         // bound the working set: only fetch keys present in client OR for codes the client used
         .where((eb) => {
           const codes = Array.from(new Set(clientRows.map((r) => r.code)));
@@ -115,7 +132,13 @@ export class ReconciliationService {
     });
   }
 
-  async decide(orgId: string, clientRuleId: string, decision: 'accept_authoritative' | 'keep_client' | 'edit_custom' | 'intentional_deviation', note: string | null, decidedBy: string): Promise<void> {
+  async decide(
+    orgId: string,
+    clientRuleId: string,
+    decision: 'accept_authoritative' | 'keep_client' | 'edit_custom' | 'intentional_deviation',
+    note: string | null,
+    decidedBy: string,
+  ): Promise<void> {
     await runWithTenant(this.db, orgId, async (tx) => {
       await tx
         .updateTable('client_rule')
@@ -125,7 +148,11 @@ export class ReconciliationService {
     });
   }
 
-  async finalize(orgId: string, rulebookId: string, finalizedBy: string): Promise<{ integrity_hash: string }> {
+  async finalize(
+    orgId: string,
+    rulebookId: string,
+    finalizedBy: string,
+  ): Promise<{ integrity_hash: string }> {
     return runWithTenant(this.db, orgId, async (tx) => {
       const rulebook = await this.loadRulebook(tx, rulebookId);
       if (rulebook.status === 'finalized') {
@@ -170,7 +197,10 @@ export class ReconciliationService {
 
   // -------- internals --------
 
-  private async loadRulebook(tx: Tx, rulebookId: string): Promise<{ id: string; status: string; created_at: Date }> {
+  private async loadRulebook(
+    tx: Tx,
+    rulebookId: string,
+  ): Promise<{ id: string; status: string; created_at: Date }> {
     const r = await tx
       .selectFrom('client_rulebook')
       .select(['id', 'status', 'created_at'])

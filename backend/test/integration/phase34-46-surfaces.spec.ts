@@ -11,11 +11,7 @@
  * Skipped automatically when `INTEGRATION!=1`.
  */
 import { sql } from 'kysely';
-import {
-  startIntegrationContext,
-  integrationDescribe,
-  type IntegrationContext,
-} from './harness';
+import { startIntegrationContext, integrationDescribe, type IntegrationContext } from './harness';
 
 const ORG_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ORG_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -82,7 +78,7 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
       ).rejects.toThrow(/duplicate|unique/i);
     });
 
-    it('Org B cannot read Org A\'s deletion request (RLS)', async () => {
+    it("Org B cannot read Org A's deletion request (RLS)", async () => {
       const r = await ctx.appDb.transaction().execute(async (tx) => {
         await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_B)}`.execute(tx);
         return tx.selectFrom('tenant_deletion_request').selectAll().execute();
@@ -98,10 +94,13 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
         await tx
           .insertInto('rate_limit_override')
           .values({
-            org_id: ORG_A, scope: 'lookup',
-            limit: 500, refill_per_sec: '10',
+            org_id: ORG_A,
+            scope: 'lookup',
+            limit: 500,
+            refill_per_sec: '10',
             set_by_user_id: USER_A,
-            expires_at: null, reason: 'enterprise',
+            expires_at: null,
+            reason: 'enterprise',
           })
           .execute();
       });
@@ -110,11 +109,14 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
         await tx
           .insertInto('rate_limit_override')
           .values({
-            org_id: ORG_B, scope: 'lookup',
-            limit: 50, refill_per_sec: '1',
+            org_id: ORG_B,
+            scope: 'lookup',
+            limit: 50,
+            refill_per_sec: '1',
             set_by_user_id: USER_A,
             // Expired — should NOT show in cross-tenant function.
-            expires_at: new Date(Date.now() - 60_000), reason: 'lapsed',
+            expires_at: new Date(Date.now() - 60_000),
+            reason: 'lapsed',
           })
           .execute();
       });
@@ -129,7 +131,7 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
       expect(orgIds).not.toContain(ORG_B);
     });
 
-    it('RLS hides Org A\'s overrides from Org B', async () => {
+    it("RLS hides Org A's overrides from Org B", async () => {
       const seen = await ctx.appDb.transaction().execute(async (tx) => {
         await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_B)}`.execute(tx);
         return tx.selectFrom('rate_limit_override').selectAll().execute();
@@ -166,7 +168,7 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
       expect(r.rows[0]?.org_id).toBe(ORG_A);
     });
 
-    it('Org B cannot read Org A\'s SCIM token via RLS', async () => {
+    it("Org B cannot read Org A's SCIM token via RLS", async () => {
       const seen = await ctx.appDb.transaction().execute(async (tx) => {
         await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_B)}`.execute(tx);
         return tx.selectFrom('scim_token').selectAll().execute();

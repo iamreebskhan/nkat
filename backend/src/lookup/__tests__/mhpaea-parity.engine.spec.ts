@@ -74,7 +74,11 @@ describe('evaluateParity', () => {
       r({
         code: '99214',
         attribute: 'documentation_required',
-        value: { required_phrases: [], required_chart_elements: ['progress note'], mdm_elements: [] },
+        value: {
+          required_phrases: [],
+          required_chart_elements: ['progress note'],
+          mdm_elements: [],
+        },
       }),
     ];
     expect(evaluateParity('90837', '99214', bh, ms)).toEqual([
@@ -106,7 +110,9 @@ describe('evaluateParity', () => {
 
   it('coerces stringified booleans/numbers correctly', () => {
     const bh = [r({ attribute: 'prior_auth_required', value: { required: 'true' } })];
-    const ms = [r({ code: '99214', attribute: 'prior_auth_required', value: { required: 'false' } })];
+    const ms = [
+      r({ code: '99214', attribute: 'prior_auth_required', value: { required: 'false' } }),
+    ];
     expect(evaluateParity('90837', '99214', bh, ms)).toEqual([
       expect.objectContaining({ kind: 'prior_auth_more_restrictive' }),
     ]);

@@ -77,10 +77,10 @@ export interface Edi837IClaim {
   statementThrough: string;
   /** Admission info — required for inpatient. */
   admissionDate?: string;
-  admissionTime?: string;     // HHMM
+  admissionTime?: string; // HHMM
   admissionType?: '1' | '2' | '3' | '4' | '5' | '9';
   admissionSource?: string;
-  patientStatus?: string;     // UB-04 FL 17
+  patientStatus?: string; // UB-04 FL 17
   /** ICD-10 diagnoses. First is principal. */
   principalDiagnosis: string;
   admittingDiagnosis?: string;
@@ -142,11 +142,16 @@ export function generate837I(
   segs.push(
     [
       'ISA',
-      '00', '          ',
-      '00', '          ',
-      'ZZ', pad(identity.senderId, 15),
-      'ZZ', pad(identity.receiverId, 15),
-      yymmdd, hhmm,
+      '00',
+      '          ',
+      '00',
+      '          ',
+      'ZZ',
+      pad(identity.senderId, 15),
+      'ZZ',
+      pad(identity.receiverId, 15),
+      yymmdd,
+      hhmm,
       '^',
       '00501',
       pad(ctl.interchangeControlNumber, 9, '0', 'left'),
@@ -157,8 +162,17 @@ export function generate837I(
   );
 
   segs.push(
-    ['GS', 'HC', identity.senderId, identity.receiverId, yyyymmdd, hhmm,
-     ctl.groupControlNumber, 'X', '005010X223A2'].join(ELEM_SEP),
+    [
+      'GS',
+      'HC',
+      identity.senderId,
+      identity.receiverId,
+      yyyymmdd,
+      hhmm,
+      ctl.groupControlNumber,
+      'X',
+      '005010X223A2',
+    ].join(ELEM_SEP),
   );
 
   segs.push(['ST', '837', ctl.transactionSetControlNumber, '005010X223A2'].join(ELEM_SEP));
@@ -166,7 +180,9 @@ export function generate837I(
 
   // Submitter
   segs.push(
-    ['NM1', '41', '2', provider.organizationName, '', '', '', '', '46', identity.senderId].join(ELEM_SEP),
+    ['NM1', '41', '2', provider.organizationName, '', '', '', '', '46', identity.senderId].join(
+      ELEM_SEP,
+    ),
   );
   segs.push(['PER', 'IC', provider.organizationName].join(ELEM_SEP));
 
@@ -179,7 +195,9 @@ export function generate837I(
   segs.push(['HL', '1', '', '20', '1'].join(ELEM_SEP));
   segs.push(['PRV', 'BI', 'PXC', provider.taxonomy].join(ELEM_SEP));
   segs.push(
-    ['NM1', '85', '2', provider.organizationName, '', '', '', '', 'XX', provider.npi].join(ELEM_SEP),
+    ['NM1', '85', '2', provider.organizationName, '', '', '', '', 'XX', provider.npi].join(
+      ELEM_SEP,
+    ),
   );
   segs.push(['REF', provider.taxIdQualifier, provider.taxId].join(ELEM_SEP));
 
@@ -187,14 +205,27 @@ export function generate837I(
   segs.push(['HL', '2', '1', '22', '0'].join(ELEM_SEP));
   segs.push(['SBR', 'P', '18', '', '', '', '', '', 'CI'].join(ELEM_SEP));
   segs.push(
-    ['NM1', 'IL', '1', subscriber.lastName, subscriber.firstName, '', '', '', 'MI', subscriber.memberId].join(ELEM_SEP),
+    [
+      'NM1',
+      'IL',
+      '1',
+      subscriber.lastName,
+      subscriber.firstName,
+      '',
+      '',
+      '',
+      'MI',
+      subscriber.memberId,
+    ].join(ELEM_SEP),
   );
   segs.push(['N3', subscriber.address1].join(ELEM_SEP));
   segs.push(['N4', subscriber.city, subscriber.state, subscriber.zip].join(ELEM_SEP));
   segs.push(['DMG', 'D8', subscriber.dob, subscriber.gender].join(ELEM_SEP));
 
   segs.push(
-    ['NM1', 'PR', '2', payer.name, '', '', '', '', payer.payerIdQualifier, payer.payerId].join(ELEM_SEP),
+    ['NM1', 'PR', '2', payer.name, '', '', '', '', payer.payerIdQualifier, payer.payerId].join(
+      ELEM_SEP,
+    ),
   );
 
   // ----- Claim -----
@@ -209,9 +240,13 @@ export function generate837I(
       'CLM',
       claim.patientControlNumber,
       claim.totalCharge.toFixed(2),
-      '', '',
+      '',
+      '',
       `${facilityCode}${SUB_SEP}A${SUB_SEP}${claimFreq}`,
-      'Y', 'A', 'Y', 'I',
+      'Y',
+      'A',
+      'Y',
+      'I',
     ].join(ELEM_SEP),
   );
 
@@ -223,14 +258,20 @@ export function generate837I(
   // Admission info (CL1) — only when admission fields supplied (inpatient + some hospice).
   if (claim.admissionType || claim.admissionSource || claim.patientStatus) {
     segs.push(
-      ['CL1', claim.admissionType ?? '', claim.admissionSource ?? '', claim.patientStatus ?? ''].join(ELEM_SEP),
+      [
+        'CL1',
+        claim.admissionType ?? '',
+        claim.admissionSource ?? '',
+        claim.patientStatus ?? '',
+      ].join(ELEM_SEP),
     );
   }
   if (claim.admissionDate) {
     const time = claim.admissionTime ?? '';
     segs.push(
       [
-        'DTP', '435',
+        'DTP',
+        '435',
         time ? 'DT' : 'D8',
         time ? `${claim.admissionDate}${time}` : claim.admissionDate,
       ].join(ELEM_SEP),
@@ -280,13 +321,7 @@ export function generate837I(
     const sv202 = line.procedureCode
       ? `HC${SUB_SEP}${line.procedureCode}${line.modifiers.map((m) => SUB_SEP + m).join('')}`
       : '';
-    const sv2 = [
-      line.revenueCode,
-      sv202,
-      line.chargeAmount.toFixed(2),
-      'UN',
-      String(line.units),
-    ];
+    const sv2 = [line.revenueCode, sv202, line.chargeAmount.toFixed(2), 'UN', String(line.units)];
     if (line.nonCoveredCharge !== undefined) {
       sv2.push(''); // SV206 not used
       sv2.push(line.nonCoveredCharge.toFixed(2));

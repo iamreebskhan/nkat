@@ -25,7 +25,7 @@ export interface RuleSnapshot {
   value: Record<string, unknown>;
   coverage_status: CoverageStatus;
   /** For drift detection — when authoritative row changes effective_date, the diff shifts. */
-  effective_date: string;          // YYYY-MM-DD for stable hashing
+  effective_date: string; // YYYY-MM-DD for stable hashing
   /** Stable id for the upstream row (payer_rule.id or client_rule.id). */
   source_id: string;
 }
@@ -59,7 +59,13 @@ export interface DiffSet {
   integrity_hash: string;
 }
 
-function keyOf(r: { payer_id: string; state: string; product_line: string; code: string; attribute: string }): string {
+function keyOf(r: {
+  payer_id: string;
+  state: string;
+  product_line: string;
+  code: string;
+  attribute: string;
+}): string {
   return `${r.payer_id}|${r.state}|${r.product_line}|${r.code}|${r.attribute}`;
 }
 

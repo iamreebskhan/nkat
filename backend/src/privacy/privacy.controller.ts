@@ -8,12 +8,20 @@
  *   PATCH /v1/privacy/dsar/:id                      — auth required; tenant updates status
  */
 import {
-  Body, Controller, Get, Inject, NotFoundException, Param, Patch, Post, Query, Req, UseGuards,
+  Body,
+  Controller,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import {
-  IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength,
-} from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import type { Request } from 'express';
 import { sql } from 'kysely';
 import { AuthGuard } from '../auth/auth.guard';
@@ -21,19 +29,42 @@ import { assertUuid } from '../common/uuid';
 import { DB_TOKEN } from '../database/database.module';
 import type { Db } from '../database/db';
 import { runReadOnlyWithTenant, runWithTenant } from '../database/rls-transaction';
-import type { DsarRegime, DsarRequestType, DsarStatus, PrivacyRegime } from '../database/schema.types';
+import type {
+  DsarRegime,
+  DsarRequestType,
+  DsarStatus,
+  PrivacyRegime,
+} from '../database/schema.types';
 import { noticesForState } from './notices';
 
 const PRIVACY_REGIMES: PrivacyRegime[] = [
-  'wmhmda', 'ccpa', 'cpa_co', 'tdpsa_tx', 'vcdpa_va',
-  'ab3030_ai', 'sb24_205_ai_co', 'general',
+  'wmhmda',
+  'ccpa',
+  'cpa_co',
+  'tdpsa_tx',
+  'vcdpa_va',
+  'ab3030_ai',
+  'sb24_205_ai_co',
+  'general',
 ];
 const DSAR_REGIMES: DsarRegime[] = [
-  'wmhmda', 'ccpa', 'cpa_co', 'tdpsa_tx', 'vcdpa_va', 'ctdpa_ct', 'utah_ucpa', 'general',
+  'wmhmda',
+  'ccpa',
+  'cpa_co',
+  'tdpsa_tx',
+  'vcdpa_va',
+  'ctdpa_ct',
+  'utah_ucpa',
+  'general',
 ];
 const DSAR_REQUEST_TYPES: DsarRequestType[] = [
-  'access', 'deletion', 'portability', 'correction',
-  'opt_out_sale', 'opt_out_targeted_advertising', 'limit_sensitive_use',
+  'access',
+  'deletion',
+  'portability',
+  'correction',
+  'opt_out_sale',
+  'opt_out_targeted_advertising',
+  'limit_sensitive_use',
 ];
 
 class ConsentDto {
@@ -167,12 +198,8 @@ export class PrivacyController {
 
   @Patch('dsar/:id')
   @UseGuards(AuthGuard)
-  @ApiOperation({ summary: 'Tenant admin: update a DSAR\'s status' })
-  async updateDsar(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Body() body: DsarUpdateDto,
-  ) {
+  @ApiOperation({ summary: "Tenant admin: update a DSAR's status" })
+  async updateDsar(@Req() req: Request, @Param('id') id: string, @Body() body: DsarUpdateDto) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     const userId = req.auth?.userId ?? null;
     assertUuid(id, 'id');

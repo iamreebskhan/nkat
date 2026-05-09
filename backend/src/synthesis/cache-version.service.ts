@@ -41,7 +41,9 @@ export class CacheVersionService {
       const v = Number(r.rows[0]?.v);
       if (Number.isFinite(v) && v >= 1) version = v;
     } catch (e) {
-      this.log.warn(`cache version read failed; defaulting to 1: ${e instanceof Error ? e.message : String(e)}`);
+      this.log.warn(
+        `cache version read failed; defaulting to 1: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
     this.cached = { version, expiresAt: nowMs + TTL_MS };
     return version;
@@ -65,7 +67,9 @@ export class CacheVersionService {
     `.execute(this.db);
     const v = Number(r.rows[0]?.v ?? 1);
     this.cached = { version: v, expiresAt: Date.now() + TTL_MS };
-    this.log.log(`cache version bumped to ${v} by ${args.byUserId ?? 'cli'}; note=${args.note ?? '-'}`);
+    this.log.log(
+      `cache version bumped to ${v} by ${args.byUserId ?? 'cli'}; note=${args.note ?? '-'}`,
+    );
     return v;
   }
 

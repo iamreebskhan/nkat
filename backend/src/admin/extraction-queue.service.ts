@@ -17,10 +17,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'kysely';
 import { DB_TOKEN } from '../database/database.module';
 import type { Db } from '../database/db';
-import type {
-  CoverageStatus,
-  PayerRuleAttribute,
-} from '../database/schema.types';
+import type { CoverageStatus, PayerRuleAttribute } from '../database/schema.types';
 
 export interface EnqueueInput {
   source_doc_id: string;
@@ -163,7 +160,12 @@ export class ExtractionQueueService {
     return Number(result.numUpdatedRows ?? 0) === 1;
   }
 
-  async accept(candidateId: string, analystEmail: string, rationale?: string, attestationCall?: Record<string, unknown>): Promise<string> {
+  async accept(
+    candidateId: string,
+    analystEmail: string,
+    rationale?: string,
+    attestationCall?: Record<string, unknown>,
+  ): Promise<string> {
     return this.db.transaction().execute(async (tx) => {
       const cand = await tx
         .selectFrom('extraction_candidate')
@@ -216,9 +218,7 @@ export class ExtractionQueueService {
           edited_coverage_status: null,
           edited_confidence: null,
           rationale: rationale ?? null,
-          attestation_call: attestationCall
-            ? sql`${JSON.stringify(attestationCall)}::jsonb`
-            : null,
+          attestation_call: attestationCall ? sql`${JSON.stringify(attestationCall)}::jsonb` : null,
           decided_by: analystEmail,
         })
         .execute();

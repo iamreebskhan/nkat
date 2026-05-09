@@ -40,11 +40,7 @@ export class Era835Ingestor {
    * Persist one parsed 835 file. Caller is responsible for opening the
    * tenant-scoped transaction (`runWithTenant`) so RLS applies.
    */
-  async ingest(
-    tx: Tx,
-    file: Era835File,
-    ctx: IngestionContext,
-  ): Promise<IngestionReport> {
+  async ingest(tx: Tx, file: Era835File, ctx: IngestionContext): Promise<IngestionReport> {
     const report: IngestionReport = {
       total_claims: file.claims.length,
       total_lines: file.claims.reduce((n, c) => n + c.service_lines.length, 0),
@@ -157,9 +153,7 @@ export class Era835Ingestor {
       .where('code', '=', code)
       .where('attribute', '=', 'covered')
       .where('effective_date', '<=', dos)
-      .where((eb) =>
-        eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]),
-      )
+      .where((eb) => eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]))
       .orderBy('effective_date', 'desc')
       .executeTakeFirst();
     return row?.id ?? null;

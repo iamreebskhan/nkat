@@ -38,10 +38,7 @@ import { assertUuid } from '../common/uuid';
 import { DB_TOKEN } from '../database/database.module';
 import type { Db } from '../database/db';
 import { runReadOnlyWithTenant, runWithTenant } from '../database/rls-transaction';
-import {
-  earliestExecuteAt,
-  validateConfirmationPhrase,
-} from './tenant-deletion-pure';
+import { earliestExecuteAt, validateConfirmationPhrase } from './tenant-deletion-pure';
 
 class RequestDeletionDto {
   @IsString()
@@ -150,7 +147,7 @@ export class TenantDeletionController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Read the calling tenant\'s current deletion request, if any' })
+  @ApiOperation({ summary: "Read the calling tenant's current deletion request, if any" })
   async current(@Req() req: Request) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     return runReadOnlyWithTenant(this.db, orgId, async (tx) => {

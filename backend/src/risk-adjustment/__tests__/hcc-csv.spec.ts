@@ -52,10 +52,10 @@ describe('parseHccCsv', () => {
   it('records per-row errors without aborting the parse', () => {
     const csv = [
       HEADER,
-      ',HCC037,Cat,,0.3,2026',                  // missing icd10
-      'E11.21,HCC037,Cat,,not-a-number,2026',   // bad raf_weight
-      'E11.22,HCC037,Cat,,0.3,1999',            // year out of range
-      'E11.23,HCC037,Cat,,0.3,2026',            // good
+      ',HCC037,Cat,,0.3,2026', // missing icd10
+      'E11.21,HCC037,Cat,,not-a-number,2026', // bad raf_weight
+      'E11.22,HCC037,Cat,,0.3,1999', // year out of range
+      'E11.23,HCC037,Cat,,0.3,2026', // good
     ].join('\n');
     const r = parseHccCsv(csv);
     expect(r.rows).toHaveLength(1);

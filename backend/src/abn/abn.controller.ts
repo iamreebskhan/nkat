@@ -6,11 +6,29 @@
  *   POST /v1/abn/:id/pdf              — render PDF (body: notifier + patient + reason context)
  */
 import {
-  Body, Controller, Get, Header, HttpCode, Param, Post, Query, Req, Res, UseGuards,
+  Body,
+  Controller,
+  Get,
+  Header,
+  HttpCode,
+  Param,
+  Post,
+  Query,
+  Req,
+  Res,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  ArrayMaxSize, IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, MaxLength, Min,
+  ArrayMaxSize,
+  IsArray,
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
 } from 'class-validator';
 import type { Request, Response } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
@@ -39,7 +57,10 @@ class RenderPdfDto {
   @IsString() @MaxLength(200) patient_name!: string;
   @IsString() @MaxLength(2000) service_description!: string;
   @IsString() @MaxLength(2000) reason_for_noncoverage!: string;
-  @IsOptional() @IsIn(['OPTION_1', 'OPTION_2', 'OPTION_3']) option_selected?: 'OPTION_1' | 'OPTION_2' | 'OPTION_3';
+  @IsOptional() @IsIn(['OPTION_1', 'OPTION_2', 'OPTION_3']) option_selected?:
+    | 'OPTION_1'
+    | 'OPTION_2'
+    | 'OPTION_3';
 }
 
 @ApiTags('abn')

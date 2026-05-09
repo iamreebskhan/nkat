@@ -20,7 +20,12 @@ describe('computeDiff', () => {
     const d = computeDiff([], []);
     expect(d.total).toBe(0);
     expect(d.entries).toEqual([]);
-    expect(d.by_outcome).toEqual({ aligned: 0, conflicting: 0, missing_in_client: 0, missing_in_authoritative: 0 });
+    expect(d.by_outcome).toEqual({
+      aligned: 0,
+      conflicting: 0,
+      missing_in_client: 0,
+      missing_in_authoritative: 0,
+    });
   });
 
   it('marks aligned when both sides agree on value + coverage_status', () => {
@@ -72,14 +77,14 @@ describe('computeDiff', () => {
 
   it('partitions a mixed input correctly', () => {
     const a = [
-      snap({ code: '99497' }),                              // aligned
-      snap({ code: '99498' }),                              // missing in client
-      snap({ code: '99490', value: { freq: 1 } }),          // conflicting
+      snap({ code: '99497' }), // aligned
+      snap({ code: '99498' }), // missing in client
+      snap({ code: '99490', value: { freq: 1 } }), // conflicting
     ];
     const c = [
       snap({ code: '99497' }),
       snap({ code: '99490', value: { freq: 2 } }),
-      snap({ code: 'G0318' }),                              // missing in authoritative
+      snap({ code: 'G0318' }), // missing in authoritative
     ];
     const d = computeDiff(a, c);
     expect(d.by_outcome).toEqual({
@@ -92,14 +97,8 @@ describe('computeDiff', () => {
   });
 
   it('produces a stable integrity_hash regardless of input order', () => {
-    const a = [
-      snap({ code: '99497' }),
-      snap({ code: 'G0318', source_id: 'auth-g' }),
-    ];
-    const c = [
-      snap({ code: '99497' }),
-      snap({ code: 'G0318', source_id: 'client-g' }),
-    ];
+    const a = [snap({ code: '99497' }), snap({ code: 'G0318', source_id: 'auth-g' })];
+    const c = [snap({ code: '99497' }), snap({ code: 'G0318', source_id: 'client-g' })];
     const h1 = computeDiff(a, c).integrity_hash;
     const h2 = computeDiff([...a].reverse(), [...c].reverse()).integrity_hash;
     expect(h1).toBe(h2);
@@ -120,14 +119,13 @@ describe('computeDiff', () => {
     const d = computeDiff(a, c);
     expect(d.by_outcome.aligned).toBe(1);
     expect(d.by_outcome.missing_in_client).toBe(1);
-    expect(d.entries.find((e) => e.key.attribute === 'telehealth_allowed')!.outcome).toBe('missing_in_client');
+    expect(d.entries.find((e) => e.key.attribute === 'telehealth_allowed')!.outcome).toBe(
+      'missing_in_client',
+    );
   });
 
   it('discriminates by state even when payer/code/product_line match', () => {
-    const d = computeDiff(
-      [snap({ state: 'OH' })],
-      [snap({ state: 'NC' })],
-    );
+    const d = computeDiff([snap({ state: 'OH' })], [snap({ state: 'NC' })]);
     expect(d.by_outcome.missing_in_client).toBe(1);
     expect(d.by_outcome.missing_in_authoritative).toBe(1);
   });

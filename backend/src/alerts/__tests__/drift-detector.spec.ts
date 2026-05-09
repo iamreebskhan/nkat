@@ -6,7 +6,13 @@ const PAYER = '22222222-2222-4222-8222-222222222222';
 
 const entry = (over: Partial<DiffEntry>): DiffEntry => ({
   outcome: 'aligned',
-  key: { payer_id: PAYER, state: 'OH', product_line: 'medicare_ffs', code: '99497', attribute: 'covered' },
+  key: {
+    payer_id: PAYER,
+    state: 'OH',
+    product_line: 'medicare_ffs',
+    code: '99497',
+    attribute: 'covered',
+  },
   ...over,
 });
 
@@ -78,8 +84,16 @@ describe('detectDrift', () => {
       entry({ outcome: 'missing_in_client', key: { ...entry({}).key, code: '99498' } }), // → conflicting (high)
     ]);
     const current = set([
-      entry({ outcome: 'conflicting', field_diffs: ['x'], key: { ...entry({}).key, code: '99497' } }),
-      entry({ outcome: 'conflicting', field_diffs: ['y'], key: { ...entry({}).key, code: '99498' } }),
+      entry({
+        outcome: 'conflicting',
+        field_diffs: ['x'],
+        key: { ...entry({}).key, code: '99497' },
+      }),
+      entry({
+        outcome: 'conflicting',
+        field_diffs: ['y'],
+        key: { ...entry({}).key, code: '99498' },
+      }),
     ]);
     const alerts = detectDrift(RBID, baseline, current);
     expect(alerts.map((a) => a.severity)).toEqual(['critical', 'high']);

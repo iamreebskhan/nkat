@@ -25,7 +25,7 @@ import type { CmsCoverageApiClient, CmsLcdDetail } from './cms-coverage-api.clie
 
 export interface IngestionTarget {
   payer_id: string;
-  payer_name: string;            // for log clarity
+  payer_name: string; // for log clarity
   state: string;
   product_line: 'medicare_ffs' | 'medicare_advantage';
   codes: string[];
@@ -40,7 +40,11 @@ export interface IngestionReport {
   errors: { lcd_id: string; message: string }[];
 }
 
-const stripHtml = (s: string): string => s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+const stripHtml = (s: string): string =>
+  s
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
 
@@ -67,7 +71,9 @@ export class NcdLcdIngestor {
       const summaries = await this.cms.listLcds({
         state: target.state,
         cpt: code,
-        ...(target.effective_on ? { effectiveOn: target.effective_on.toISOString().slice(0, 10) } : {}),
+        ...(target.effective_on
+          ? { effectiveOn: target.effective_on.toISOString().slice(0, 10) }
+          : {}),
       });
       for (const s of summaries) {
         if (seenLcdIds.has(s.lcd_id)) continue;

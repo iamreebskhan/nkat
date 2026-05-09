@@ -27,10 +27,7 @@ export class SnsVerifier {
 
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly nowFn: () => number;
-  constructor(
-    @Optional() fetchImpl?: typeof globalThis.fetch,
-    @Optional() nowFn?: () => number,
-  ) {
+  constructor(@Optional() fetchImpl?: typeof globalThis.fetch, @Optional() nowFn?: () => number) {
     this.fetchImpl = fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.nowFn = nowFn ?? Date.now;
   }
@@ -41,7 +38,10 @@ export class SnsVerifier {
    */
   async verify(envelope: SnsEnvelope): Promise<void> {
     if (!isAllowedCertUrl(envelope.SigningCertURL)) {
-      throw new SnsVerifyError('CERT_URL_NOT_ALLOWED', `disallowed cert URL: ${envelope.SigningCertURL}`);
+      throw new SnsVerifyError(
+        'CERT_URL_NOT_ALLOWED',
+        `disallowed cert URL: ${envelope.SigningCertURL}`,
+      );
     }
     const algorithm = envelope.SignatureVersion === '2' ? 'RSA-SHA256' : 'RSA-SHA1';
     const pem = await this.getCertPem(envelope.SigningCertURL);
@@ -80,7 +80,10 @@ export class SnsVerifier {
 }
 
 export class SnsVerifyError extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
     super(message);
     this.name = 'SnsVerifyError';
   }

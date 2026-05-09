@@ -30,12 +30,22 @@ import path from 'node:path';
 const ERROR_LOG = path.resolve(__dirname, 'export-openapi.error.log');
 function logFatal(scope: string, err: unknown) {
   const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
-  try { appendFileSync(ERROR_LOG, `[${scope}] ${msg}\n`); } catch { /* */ }
+  try {
+    appendFileSync(ERROR_LOG, `[${scope}] ${msg}\n`);
+  } catch {
+    /* */
+  }
   // eslint-disable-next-line no-console
   console.error(`[${scope}]`, msg);
 }
-process.on('uncaughtException', (err) => { logFatal('uncaughtException', err); process.exit(1); });
-process.on('unhandledRejection', (err) => { logFatal('unhandledRejection', err); process.exit(1); });
+process.on('uncaughtException', (err) => {
+  logFatal('uncaughtException', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (err) => {
+  logFatal('unhandledRejection', err);
+  process.exit(1);
+});
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from '../src/app.module';
@@ -62,7 +72,9 @@ async function main(): Promise<void> {
   mkdirSync(outDir, { recursive: true });
   const outFile = path.join(outDir, 'openapi.json');
   writeFileSync(outFile, JSON.stringify(doc, null, 2));
-  console.log(`exported → ${outFile}  (${doc.info.title} ${doc.info.version}, ${Object.keys(doc.paths ?? {}).length} paths)`);
+  console.log(
+    `exported → ${outFile}  (${doc.info.title} ${doc.info.version}, ${Object.keys(doc.paths ?? {}).length} paths)`,
+  );
   await app.close();
 }
 
@@ -73,6 +85,8 @@ main().catch((err) => {
   console.error(msg);
   try {
     appendFileSync(path.resolve(__dirname, 'export-openapi.error.log'), msg + '\n');
-  } catch { /* swallow */ }
+  } catch {
+    /* swallow */
+  }
   process.exit(1);
 });

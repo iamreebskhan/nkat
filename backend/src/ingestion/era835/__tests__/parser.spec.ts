@@ -117,7 +117,8 @@ describe('parseEra835 — edge cases', () => {
 
   it('respects custom delimiters from ISA header', () => {
     // Element delimiter '|', segment terminator '#'
-    const isa = 'ISA|00|          |00|          |ZZ|P              |ZZ|R              |260415|1234|^|00501|000000001|0|P|:#';
+    const isa =
+      'ISA|00|          |00|          |ZZ|P              |ZZ|R              |260415|1234|^|00501|000000001|0|P|:#';
     const body = 'CLP|X|1|100|100#';
     const out = parseEra835(isa + body);
     expect(out.claims[0].claim_id).toBe('X');

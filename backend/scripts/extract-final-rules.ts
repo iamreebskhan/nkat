@@ -25,13 +25,12 @@
 import { readFile } from 'node:fs/promises';
 import { argv, env, exit } from 'node:process';
 import { Pool } from 'pg';
-import {
-  extractPdfText,
-  findCodeMentions,
-  proposeCandidates,
-} from '../src/final-rules/extractor';
+import { extractPdfText, findCodeMentions, proposeCandidates } from '../src/final-rules/extractor';
 
-interface Args { dryRun: boolean; limit: number }
+interface Args {
+  dryRun: boolean;
+  limit: number;
+}
 
 function parseArgs(): Args {
   const a: Args = { dryRun: false, limit: 50 };

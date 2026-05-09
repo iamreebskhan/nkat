@@ -52,7 +52,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
     const req = ctx.switchToHttp().getRequest<Request>();
     const res = ctx.switchToHttp().getResponse<Response>();
-    const rawKey = (req.headers['idempotency-key'] ?? req.headers['Idempotency-Key']) as string | undefined;
+    const rawKey = (req.headers['idempotency-key'] ?? req.headers['Idempotency-Key']) as
+      | string
+      | undefined;
     if (!rawKey) {
       // Header absent → behave as if @Idempotent() weren't applied.
       return next.handle();
@@ -101,9 +103,11 @@ export class IdempotencyInterceptor implements NestInterceptor {
             return;
           }
           try {
-            const body = (typeof resBody === 'object' && resBody !== null
-              ? (resBody as Record<string, unknown>)
-              : { value: resBody }) as Record<string, unknown>;
+            const body = (
+              typeof resBody === 'object' && resBody !== null
+                ? (resBody as Record<string, unknown>)
+                : { value: resBody }
+            ) as Record<string, unknown>;
             await this.service.store(orgId, rawKey, requestHash, status, body);
           } catch (e) {
             this.log.warn(

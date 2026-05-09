@@ -22,9 +22,9 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 export interface EncryptedPayload {
-  ciphertext: string;   // base64
-  iv: string;           // base64 (12 bytes)
-  auth_tag: string;     // base64 (16 bytes)
+  ciphertext: string; // base64
+  iv: string; // base64 (12 bytes)
+  auth_tag: string; // base64 (16 bytes)
 }
 
 const ALG = 'aes-256-gcm';
@@ -43,7 +43,7 @@ export function parseMasterKey(b64: string): Buffer {
   if (buf.length !== KEY_LEN) {
     throw new Error(
       `master key must be ${KEY_LEN} bytes (got ${buf.length}); generate one with: ` +
-      `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`,
+        `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`,
     );
   }
   return buf;

@@ -9,7 +9,9 @@ interface CapturedReport {
 
 class FakeReporter {
   events: CapturedReport[] = [];
-  capture(e: CapturedReport) { this.events.push(e); }
+  capture(e: CapturedReport) {
+    this.events.push(e);
+  }
   async flush() {}
 }
 
@@ -29,12 +31,14 @@ interface FakeRes {
   headersSent: boolean;
 }
 
-function makeHost(opts: {
-  path?: string;
-  method?: string;
-  auth?: { orgId?: string; userId?: string };
-  query?: Record<string, unknown>;
-} = {}) {
+function makeHost(
+  opts: {
+    path?: string;
+    method?: string;
+    auth?: { orgId?: string; userId?: string };
+    query?: Record<string, unknown>;
+  } = {},
+) {
   const res: FakeRes = { status: jest.fn().mockReturnThis(), json: jest.fn(), headersSent: false };
   const req = {
     path: opts.path ?? '/v1/x',
@@ -92,10 +96,7 @@ describe('UnhandledExceptionFilter', () => {
     const reporter = new FakeReporter();
     const f = new UnhandledExceptionFilter(reporter);
     const { host, res } = makeHost();
-    f.catch(
-      new HttpException({ code: 'STRIPE_DOWN' }, 503),
-      host as never,
-    );
+    f.catch(new HttpException({ code: 'STRIPE_DOWN' }, 503), host as never);
 
     expect(reporter.events).toHaveLength(1);
     expect(res.status).toHaveBeenCalledWith(503);

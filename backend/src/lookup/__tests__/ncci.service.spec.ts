@@ -6,9 +6,21 @@ const release = 'NCCI v32.1';
 
 const ptp: PtpEdit[] = [
   // 99213 + 36415 are bundled (modifier indicator 1 means override allowed)
-  { column1_code: '99213', column2_code: '36415', modifier_indicator: 1, edit_type: 'practitioner', source_release: release },
+  {
+    column1_code: '99213',
+    column2_code: '36415',
+    modifier_indicator: 1,
+    edit_type: 'practitioner',
+    source_release: release,
+  },
   // G0463 + 99211 bundled, no override (indicator 0)
-  { column1_code: 'G0463', column2_code: '99211', modifier_indicator: 0, edit_type: 'hospital_outpatient', source_release: release },
+  {
+    column1_code: 'G0463',
+    column2_code: '99211',
+    modifier_indicator: 0,
+    edit_type: 'hospital_outpatient',
+    source_release: release,
+  },
 ];
 
 const mue: MueEdit[] = [
@@ -18,7 +30,11 @@ const mue: MueEdit[] = [
 describe('evaluateNcci', () => {
   it('returns empty when no edits match', () => {
     const out = evaluateNcci(
-      { lines: [{ index: 0, code: '99497', modifiers: [], units: 1 }], setting: 'practitioner', dos },
+      {
+        lines: [{ index: 0, code: '99497', modifiers: [], units: 1 }],
+        setting: 'practitioner',
+        dos,
+      },
       ptp,
       mue,
     );
@@ -38,9 +54,7 @@ describe('evaluateNcci', () => {
       ptp,
       mue,
     );
-    expect(out).toEqual([
-      expect.objectContaining({ kind: 'ptp_bundled', carc: '97' }),
-    ]);
+    expect(out).toEqual([expect.objectContaining({ kind: 'ptp_bundled', carc: '97' })]);
   });
 
   it('reports ptp_modifier_overrides when 59 is on the column2 line', () => {
@@ -74,9 +88,7 @@ describe('evaluateNcci', () => {
       ptp,
       mue,
     );
-    expect(out).toEqual([
-      expect.objectContaining({ kind: 'ptp_bundled' }),
-    ]);
+    expect(out).toEqual([expect.objectContaining({ kind: 'ptp_bundled' })]);
   });
 
   it('skips PTP edits whose edit_type does not match the claim setting', () => {
@@ -106,9 +118,7 @@ describe('evaluateNcci', () => {
       ptp,
       mue,
     );
-    expect(out).toEqual([
-      expect.objectContaining({ kind: 'mue_exceeded', carc: '97' }),
-    ]);
+    expect(out).toEqual([expect.objectContaining({ kind: 'mue_exceeded', carc: '97' })]);
   });
 
   it('passes when units are at the MUE threshold exactly', () => {

@@ -53,7 +53,12 @@ import { DB_TOKEN } from '../database/database.module';
 import type { Db } from '../database/db';
 import { runReadOnlyWithTenant, runWithTenant } from '../database/rls-transaction';
 import { BillingService } from './billing.service';
-import { ALL_SPECIALTY_PACKS, type SpecialtyPack, type StripeClient, type SubscriptionTier } from './billing-types';
+import {
+  ALL_SPECIALTY_PACKS,
+  type SpecialtyPack,
+  type StripeClient,
+  type SubscriptionTier,
+} from './billing-types';
 import { isSelfServeTier, resolvePriceId } from './price-catalog';
 
 export const STRIPE_CLIENT_TOKEN = Symbol('STRIPE_CLIENT');
@@ -113,10 +118,10 @@ class CheckoutSessionDto {
 }
 
 const SEATS_BY_TIER: Record<SubscriptionTier, { min: number; max: number }> = {
-  solo:       { min: 1,  max: 1 },
-  team:       { min: 2,  max: 10 },
-  org:        { min: 11, max: 100 },
-  enterprise: { min: 1,  max: 10_000 }, // contracted ceilings handled out-of-band
+  solo: { min: 1, max: 1 },
+  team: { min: 2, max: 10 },
+  org: { min: 11, max: 100 },
+  enterprise: { min: 1, max: 10_000 }, // contracted ceilings handled out-of-band
 };
 
 @ApiTags('admin')
@@ -152,14 +157,16 @@ export class BillingAdminController {
     if (ent.status === 'past_due') {
       return {
         banner: 'past_due',
-        message: 'Your last invoice failed to charge. Update your payment method to avoid service interruption.',
+        message:
+          'Your last invoice failed to charge. Update your payment method to avoid service interruption.',
         days_until_period_end: daysUntil(periodEndRow?.current_period_end ?? null),
       };
     }
     if (ent.status === 'unpaid') {
       return {
         banner: 'unpaid',
-        message: 'Your subscription has unpaid invoices and is blocked from changes. Pay now to restore.',
+        message:
+          'Your subscription has unpaid invoices and is blocked from changes. Pay now to restore.',
       };
     }
     if (ent.status === 'trialing' && periodEndRow?.trial_end) {
@@ -207,7 +214,9 @@ export class BillingAdminController {
       trialDays: body.trial_days,
       ...(idempotencyKey ? { idempotencyKey } : {}),
     });
-    this.log.log(`org=${orgId} checkout session ${session.id} (tier=${body.tier} qty=${body.quantity})`);
+    this.log.log(
+      `org=${orgId} checkout session ${session.id} (tier=${body.tier} qty=${body.quantity})`,
+    );
     return { url: session.url };
   }
 

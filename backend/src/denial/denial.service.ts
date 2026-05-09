@@ -58,8 +58,12 @@ export class DenialService {
           sql<string>`unnest(carc_codes)`.as('carc'),
           fn.count<number>('id').as('count'),
           sql<number>`sum(adjustment_amount::numeric)`.as('dollar_impact'),
-          sql<number>`sum(case when preflight_warned then 1 else 0 end)`.as('preflight_caught_count'),
-          sql<number>`sum(case when preflight_warned then adjustment_amount::numeric else 0 end)`.as('preflight_caught_dollar'),
+          sql<number>`sum(case when preflight_warned then 1 else 0 end)`.as(
+            'preflight_caught_count',
+          ),
+          sql<number>`sum(case when preflight_warned then adjustment_amount::numeric else 0 end)`.as(
+            'preflight_caught_dollar',
+          ),
         ])
         .groupBy(sql`unnest(carc_codes)`)
         .orderBy('dollar_impact', 'desc')
@@ -73,7 +77,8 @@ export class DenialService {
         dollar_impact: Number(r.dollar_impact),
         preflight_caught_count: Number(r.preflight_caught_count),
         preflight_caught_dollar: Number(r.preflight_caught_dollar),
-        preflight_catch_rate: Number(r.count) > 0 ? Number(r.preflight_caught_count) / Number(r.count) : 0,
+        preflight_catch_rate:
+          Number(r.count) > 0 ? Number(r.preflight_caught_count) / Number(r.count) : 0,
       }));
     });
   }
@@ -89,7 +94,9 @@ export class DenialService {
           fn.count<number>('id').as('total'),
           sql<number>`sum(case when preflight_warned then 1 else 0 end)`.as('warned'),
           sql<number>`sum(adjustment_amount::numeric)`.as('total_dollar'),
-          sql<number>`sum(case when preflight_warned then adjustment_amount::numeric else 0 end)`.as('caught_dollar'),
+          sql<number>`sum(case when preflight_warned then adjustment_amount::numeric else 0 end)`.as(
+            'caught_dollar',
+          ),
         ])
         .executeTakeFirst();
       const total = Number(row?.total ?? 0);
@@ -113,7 +120,9 @@ export class DenialService {
         .select(({ fn }) => [
           sql<string>`to_char(service_dos, 'YYYY-MM-DD')`.as('day'),
           fn.count<number>('id').as('total'),
-          sql<number>`sum(case when array_length(carc_codes, 1) > 0 then 1 else 0 end)`.as('denied'),
+          sql<number>`sum(case when array_length(carc_codes, 1) > 0 then 1 else 0 end)`.as(
+            'denied',
+          ),
           sql<number>`sum(case when preflight_warned then 1 else 0 end)`.as('warned'),
         ])
         .groupBy(sql`to_char(service_dos, 'YYYY-MM-DD')`)

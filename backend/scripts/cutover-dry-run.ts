@@ -67,7 +67,9 @@ async function check(name: string, fn: () => Promise<string>): Promise<CheckResu
 function fetchJson(url: string, init?: RequestInit): Promise<{ status: number; body: unknown }> {
   return fetch(url, init).then(async (r) => ({
     status: r.status,
-    body: r.headers.get('content-type')?.includes('application/json') ? await r.json() : await r.text(),
+    body: r.headers.get('content-type')?.includes('application/json')
+      ? await r.json()
+      : await r.text(),
   }));
 }
 
@@ -107,7 +109,8 @@ async function main() {
           codes: ['99497'],
         }),
       });
-      if (r.status !== 200) throw new Error(`status=${r.status} body=${JSON.stringify(r.body).slice(0, 200)}`);
+      if (r.status !== 200)
+        throw new Error(`status=${r.status} body=${JSON.stringify(r.body).slice(0, 200)}`);
       const b = r.body as { findings?: unknown[]; severity_summary?: unknown };
       if (!Array.isArray(b.findings)) throw new Error('no findings array');
       if (!b.severity_summary) throw new Error('no severity_summary');
@@ -196,15 +199,12 @@ async function main() {
   await sleep(500);
   results.push(
     await check('audit-log search reflects activity', async () => {
-      const r = await fetchJson(
-        `${args.baseUrl}/v1/admin/audit-log?limit=10`,
-        {
-          headers: {
-            'x-org-id': args.orgId,
-            ...(token ? { authorization: `Bearer ${token}` } : {}),
-          },
+      const r = await fetchJson(`${args.baseUrl}/v1/admin/audit-log?limit=10`, {
+        headers: {
+          'x-org-id': args.orgId,
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
         },
-      );
+      });
       if (r.status !== 200) throw new Error(`status=${r.status}`);
       const b = r.body as { entries?: unknown[] };
       if (!Array.isArray(b.entries) || b.entries.length === 0) {

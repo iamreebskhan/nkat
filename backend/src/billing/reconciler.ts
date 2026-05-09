@@ -99,8 +99,17 @@ function extractSubscriptionId(raw: Record<string, unknown>): string | null {
   const data = (raw.data ?? {}) as Record<string, unknown>;
   const obj = (data.object ?? {}) as Record<string, unknown>;
   // customer.subscription.* → object IS the subscription
-  if (typeof obj.id === 'string' && (obj.object === 'subscription' || raw.type === 'customer.subscription.created' || raw.type === 'customer.subscription.updated' || raw.type === 'customer.subscription.deleted')) {
-    if (obj.object === 'subscription' || (typeof raw.type === 'string' && (raw.type as string).startsWith('customer.subscription.'))) {
+  if (
+    typeof obj.id === 'string' &&
+    (obj.object === 'subscription' ||
+      raw.type === 'customer.subscription.created' ||
+      raw.type === 'customer.subscription.updated' ||
+      raw.type === 'customer.subscription.deleted')
+  ) {
+    if (
+      obj.object === 'subscription' ||
+      (typeof raw.type === 'string' && (raw.type as string).startsWith('customer.subscription.'))
+    ) {
       return String(obj.id);
     }
   }

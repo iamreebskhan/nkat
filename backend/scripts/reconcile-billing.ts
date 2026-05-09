@@ -28,7 +28,11 @@ import { Pool } from 'pg';
 import { createDb } from '../src/database/db';
 import { BillingService } from '../src/billing/billing.service';
 import { StripeApiClient } from '../src/billing/stripe-api-client';
-import { buildSyntheticReconcileEvent, findStaleInvoiceEvents, type MinimalBillingEvent } from '../src/billing/reconciler';
+import {
+  buildSyntheticReconcileEvent,
+  findStaleInvoiceEvents,
+  type MinimalBillingEvent,
+} from '../src/billing/reconciler';
 
 interface Args {
   lookbackHours: number;
@@ -98,7 +102,9 @@ async function main() {
   }
   console.log(`${plan.subscriptions_to_refetch.length} subscription(s) need refetch:`);
   for (const r of plan.subscriptions_to_refetch) {
-    console.log(`  · ${r.stripe_subscription_id} (org ${r.org_id}): ${plan.reasons[r.stripe_subscription_id]}`);
+    console.log(
+      `  · ${r.stripe_subscription_id} (org ${r.org_id}): ${plan.reasons[r.stripe_subscription_id]}`,
+    );
   }
 
   if (args.dryRun) {
@@ -117,11 +123,19 @@ async function main() {
     try {
       const sub = await stripe.retrieveSubscription(r.stripe_subscription_id);
       const synthetic = buildSyntheticReconcileEvent(r.org_id, sub, Date.now());
-      const out = await billing.ingestEvent({ orgId: r.org_id, event: synthetic, subscription: sub });
-      console.log(`  ✓ ${r.stripe_subscription_id}: ${out.duplicate ? 'duplicate (idempotent)' : 'applied'}`);
+      const out = await billing.ingestEvent({
+        orgId: r.org_id,
+        event: synthetic,
+        subscription: sub,
+      });
+      console.log(
+        `  ✓ ${r.stripe_subscription_id}: ${out.duplicate ? 'duplicate (idempotent)' : 'applied'}`,
+      );
       succeeded++;
     } catch (e) {
-      console.error(`  ✗ ${r.stripe_subscription_id}: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(
+        `  ✗ ${r.stripe_subscription_id}: ${e instanceof Error ? e.message : String(e)}`,
+      );
       failed++;
     }
   }

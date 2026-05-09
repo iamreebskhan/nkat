@@ -30,10 +30,7 @@ import { assertUuid } from '../common/uuid';
 import { DB_TOKEN } from '../database/database.module';
 import type { Db } from '../database/db';
 import { runReadOnlyWithTenant } from '../database/rls-transaction';
-import {
-  AuditLogRedactionService,
-  type RedactionType,
-} from './audit-log-redaction.service';
+import { AuditLogRedactionService, type RedactionType } from './audit-log-redaction.service';
 
 class RedactDto {
   @IsIn(['payload_scrub', 'payload_remove'])
@@ -56,14 +53,9 @@ export class AuditLogRedactionController {
 
   @Post(':id/redact')
   @ApiOperation({
-    summary:
-      'Scrub or remove a single audit_log row\'s payload. Records a hash + meta-audit row.',
+    summary: "Scrub or remove a single audit_log row's payload. Records a hash + meta-audit row.",
   })
-  async redact(
-    @Req() req: Request,
-    @Param('id') id: string,
-    @Body() body: RedactDto,
-  ) {
+  async redact(@Req() req: Request, @Param('id') id: string, @Body() body: RedactDto) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     const userId = assertUuid(req.auth?.userId, 'userId');
     assertUuid(id, 'id');

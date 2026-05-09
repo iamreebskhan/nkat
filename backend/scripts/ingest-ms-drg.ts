@@ -72,9 +72,16 @@ async function main() {
          effective_date = EXCLUDED.effective_date,
          expiration_date = EXCLUDED.expiration_date`,
       [
-        row.code, row.description, row.mdc, row.type, row.relative_weight,
-        row.geometric_mean_los, row.arithmetic_mean_los,
-        row.fy_version, row.effective_date, row.expiration_date,
+        row.code,
+        row.description,
+        row.mdc,
+        row.type,
+        row.relative_weight,
+        row.geometric_mean_los,
+        row.arithmetic_mean_los,
+        row.fy_version,
+        row.effective_date,
+        row.expiration_date,
       ],
     );
     written += 1;

@@ -62,8 +62,8 @@ CREATE TABLE denial_event (
 
 CREATE INDEX denial_event_org_period_idx ON denial_event USING gist (org_id, period);
 
--- gist needed for the EXCLUDE constraint above.
--- (btree_gist included by default in pgvector image.)
+-- btree_gist (enabled in 0001) provides the GiST opclass for UUID
+-- columns used by the EXCLUDE constraint above.
 
 -- ---------------------------------------------------------------------------
 -- abn_record: signed Advance Beneficiary Notice tracking.

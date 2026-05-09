@@ -23,13 +23,21 @@ describe('buildCanonicalString — Notification with Subject', () => {
     const c = buildCanonicalString(env);
     expect(c).toBe(
       [
-        'Message', '{"notificationType":"Bounce"}',
-        'MessageId', 'mid-1',
-        'Subject', 'Amazon SES Email Event Notification',
-        'Timestamp', '2026-05-06T09:30:15.123Z',
-        'TopicArn', 'arn:aws:sns:us-east-1:123:Topic',
-        'Type', 'Notification',
-      ].map((s) => s + '\n').join(''),
+        'Message',
+        '{"notificationType":"Bounce"}',
+        'MessageId',
+        'mid-1',
+        'Subject',
+        'Amazon SES Email Event Notification',
+        'Timestamp',
+        '2026-05-06T09:30:15.123Z',
+        'TopicArn',
+        'arn:aws:sns:us-east-1:123:Topic',
+        'Type',
+        'Notification',
+      ]
+        .map((s) => s + '\n')
+        .join(''),
     );
   });
 
@@ -57,7 +65,9 @@ describe('buildCanonicalString — SubscriptionConfirmation', () => {
       SigningCertURL: 'https://sns.us-east-1.amazonaws.com/x.pem',
     };
     const c = buildCanonicalString(env);
-    expect(c).toContain('SubscribeURL\nhttps://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&...\n');
+    expect(c).toContain(
+      'SubscribeURL\nhttps://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&...\n',
+    );
     expect(c).toContain('Token\ntok\n');
   });
 });
@@ -67,11 +77,11 @@ describe('isAllowedCertUrl', () => {
     ['https://sns.us-east-1.amazonaws.com/SimpleNotificationService-abc.pem', true],
     ['https://sns.eu-west-1.amazonaws.com/x.pem', true],
     ['https://sns.cn-north-1.amazonaws.com.cn/x.pem', true],
-    ['http://sns.us-east-1.amazonaws.com/x.pem', false],          // not https
-    ['https://attacker.com/x.pem', false],                        // wrong host
-    ['https://evil.sns.us-east-1.amazonaws.com/x.pem', false],    // subdomain trick
+    ['http://sns.us-east-1.amazonaws.com/x.pem', false], // not https
+    ['https://attacker.com/x.pem', false], // wrong host
+    ['https://evil.sns.us-east-1.amazonaws.com/x.pem', false], // subdomain trick
     ['https://sns.us-east-1.amazonaws.com.attacker.com/x.pem', false], // suffix trick
-    ['https://sns.us-east-1.amazonaws.com/x.txt', false],         // wrong ext
+    ['https://sns.us-east-1.amazonaws.com/x.txt', false], // wrong ext
     ['not-a-url', false],
   ])('%s → %s', (url, expected) => {
     expect(isAllowedCertUrl(url)).toBe(expected);
@@ -151,13 +161,14 @@ describe('parseSesFeedbackPayload — guards', () => {
   it('returns null on empty bounced recipients', () => {
     expect(
       parseSesFeedbackPayload(
-        JSON.stringify({ notificationType: 'Bounce', bounce: { bounceType: 'Permanent', bouncedRecipients: [] } }),
+        JSON.stringify({
+          notificationType: 'Bounce',
+          bounce: { bounceType: 'Permanent', bouncedRecipients: [] },
+        }),
       ),
     ).toBeNull();
   });
   it('ignores unknown notification types (e.g. Delivery)', () => {
-    expect(
-      parseSesFeedbackPayload(JSON.stringify({ notificationType: 'Delivery' })),
-    ).toBeNull();
+    expect(parseSesFeedbackPayload(JSON.stringify({ notificationType: 'Delivery' }))).toBeNull();
   });
 });

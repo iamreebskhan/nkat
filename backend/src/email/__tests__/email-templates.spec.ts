@@ -16,9 +16,9 @@ describe('escapeHtml', () => {
 
 describe('escapeAttr', () => {
   it('drops control chars + escapes html', () => {
-    expect(escapeAttr('a\x07b')).toBe('ab');         // bell stripped
-    expect(escapeAttr('a\nb')).toBe('ab');           // newline stripped
-    expect(escapeAttr('a"b')).toBe('a&quot;b');      // html escape preserved
+    expect(escapeAttr('a\x07b')).toBe('ab'); // bell stripped
+    expect(escapeAttr('a\nb')).toBe('ab'); // newline stripped
+    expect(escapeAttr('a"b')).toBe('a&quot;b'); // html escape preserved
   });
 });
 
@@ -44,19 +44,30 @@ describe('renderInvite', () => {
 describe('renderWelcome / renderTrialEnding / renderDunning', () => {
   it('all include the platform footer', () => {
     expect(renderWelcome({ org_name: 'X', app_url: 'https://x' }).html).toContain('do NOT include');
-    expect(renderTrialEnding({ org_name: 'X', days_left: 7, manage_url: 'https://x/billing' }).html).toContain('do NOT include');
-    expect(renderDunning({ org_name: 'X', manage_url: 'https://x/billing' }).html).toContain('do NOT include');
+    expect(
+      renderTrialEnding({ org_name: 'X', days_left: 7, manage_url: 'https://x/billing' }).html,
+    ).toContain('do NOT include');
+    expect(renderDunning({ org_name: 'X', manage_url: 'https://x/billing' }).html).toContain(
+      'do NOT include',
+    );
   });
 
   it('trial-ending pluralizes correctly', () => {
-    expect(renderTrialEnding({ org_name: 'X', days_left: 1, manage_url: 'u' }).subject).toContain('1 day');
-    expect(renderTrialEnding({ org_name: 'X', days_left: 7, manage_url: 'u' }).subject).toContain('7 days');
+    expect(renderTrialEnding({ org_name: 'X', days_left: 1, manage_url: 'u' }).subject).toContain(
+      '1 day',
+    );
+    expect(renderTrialEnding({ org_name: 'X', days_left: 7, manage_url: 'u' }).subject).toContain(
+      '7 days',
+    );
   });
 });
 
 describe('renderTemplate dispatches by tag', () => {
   it.each([
-    ['invite', { org_name: 'X', redeem_url: 'https://x', expires_at: '2026-01-01T00:00:00Z' }] as const,
+    [
+      'invite',
+      { org_name: 'X', redeem_url: 'https://x', expires_at: '2026-01-01T00:00:00Z' },
+    ] as const,
     ['welcome', { org_name: 'X', app_url: 'https://x' }] as const,
     ['trial_ending', { org_name: 'X', days_left: 5, manage_url: 'https://x' }] as const,
     ['dunning_past_due', { org_name: 'X', manage_url: 'https://x' }] as const,

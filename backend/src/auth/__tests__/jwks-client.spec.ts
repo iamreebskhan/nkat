@@ -73,9 +73,7 @@ describe('JwksClient', () => {
 
   it('throws KID_NOT_FOUND when neither cache nor refresh has the kid', async () => {
     const { publicKey } = genRsa();
-    const { fn, callCount } = fakeFetch([
-      { ok: true, body: { keys: [jwkOf(publicKey, 'k1')] } },
-    ]);
+    const { fn, callCount } = fakeFetch([{ ok: true, body: { keys: [jwkOf(publicKey, 'k1')] } }]);
     const client = new JwksClient(URL, fn);
     await expect(client.resolveKey('nope')).rejects.toMatchObject({ code: 'KID_NOT_FOUND' });
     // Force-refresh fired exactly once; both fetches returned the same doc.
@@ -101,10 +99,7 @@ describe('JwksClient', () => {
       {
         ok: true,
         body: {
-          keys: [
-            jwkOf(enc.publicKey, 'enc-kid', 'enc'),
-            jwkOf(sig.publicKey, 'sig-kid', 'sig'),
-          ],
+          keys: [jwkOf(enc.publicKey, 'enc-kid', 'enc'), jwkOf(sig.publicKey, 'sig-kid', 'sig')],
         },
       },
     ]);
@@ -121,7 +116,13 @@ describe('JwksClient', () => {
       {
         ok: true,
         body: {
-          keys: Array.from({ length: 64 }, (_, i) => ({ kty: 'RSA', kid: `k${i}`, n: 'x', e: 'AQAB', use: 'sig' })),
+          keys: Array.from({ length: 64 }, (_, i) => ({
+            kty: 'RSA',
+            kid: `k${i}`,
+            n: 'x',
+            e: 'AQAB',
+            use: 'sig',
+          })),
         },
       },
     ]);
@@ -131,18 +132,14 @@ describe('JwksClient', () => {
 
   it('throws NO_USABLE_KEYS when all keys are encryption-only', async () => {
     const enc = genRsa();
-    const { fn } = fakeFetch([
-      { ok: true, body: { keys: [jwkOf(enc.publicKey, 'enc', 'enc')] } },
-    ]);
+    const { fn } = fakeFetch([{ ok: true, body: { keys: [jwkOf(enc.publicKey, 'enc', 'enc')] } }]);
     const client = new JwksClient(URL, fn);
     await expect(client.resolveKey('enc')).rejects.toMatchObject({ code: 'NO_USABLE_KEYS' });
   });
 
   it('coalesces concurrent in-flight fetches', async () => {
     const { publicKey } = genRsa();
-    const { fn, callCount } = fakeFetch([
-      { ok: true, body: { keys: [jwkOf(publicKey, 'k1')] } },
-    ]);
+    const { fn, callCount } = fakeFetch([{ ok: true, body: { keys: [jwkOf(publicKey, 'k1')] } }]);
     const client = new JwksClient(URL, fn);
     const [a, b, c] = await Promise.all([
       client.resolveKey('k1'),
@@ -165,12 +162,17 @@ describe('JwksClient', () => {
     const { fn } = fakeFetch([{ ok: true, body: { keys: [fixedJwk] } }]);
     const client = new JwksClient(URL, fn);
 
-    const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'k-1' })).toString('base64url');
+    const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'k-1' })).toString(
+      'base64url',
+    );
     const payload = Buffer.from(
       JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 3600 }),
     ).toString('base64url');
     const signed = `${header}.${payload}`;
-    const sig = createSign('RSA-SHA256').update(signed, 'utf8').sign(privateKey).toString('base64url');
+    const sig = createSign('RSA-SHA256')
+      .update(signed, 'utf8')
+      .sign(privateKey)
+      .toString('base64url');
     const token = `${signed}.${sig}`;
 
     await expect(
@@ -188,12 +190,17 @@ describe('JwksClient', () => {
     const { fn } = fakeFetch([{ ok: true, body: { keys: [fullJwk] } }]);
     const client = new JwksClient(URL, fn);
 
-    const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'k-1' })).toString('base64url');
+    const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'k-1' })).toString(
+      'base64url',
+    );
     const payload = Buffer.from(
       JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 3600 }),
     ).toString('base64url');
     const signed = `${header}.${payload}`;
-    const sig = createSign('RSA-SHA256').update(signed, 'utf8').sign(privateKey).toString('base64url');
+    const sig = createSign('RSA-SHA256')
+      .update(signed, 'utf8')
+      .sign(privateKey)
+      .toString('base64url');
     const token = `${signed}.${sig}`;
 
     const claims = await verifyJwt({ token, keyResolver: (kid) => client.resolveKey(kid) });
@@ -206,12 +213,21 @@ describe('JwksClient', () => {
     const { fn } = fakeFetch([{ ok: true, body: { keys: [jwkOf(publicKey, 'k-1')] } }]);
     const client = new JwksClient(URL, fn);
     // Sign a token with the private key, kid=k-1.
-    const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'k-1' })).toString('base64url');
+    const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'k-1' })).toString(
+      'base64url',
+    );
     const payload = Buffer.from(
-      JSON.stringify({ sub: 'user-1', iss: 'https://idp.example.com', exp: Math.floor(Date.now() / 1000) + 3600 }),
+      JSON.stringify({
+        sub: 'user-1',
+        iss: 'https://idp.example.com',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      }),
     ).toString('base64url');
     const signed = `${header}.${payload}`;
-    const sig = createSign('RSA-SHA256').update(signed, 'utf8').sign(privateKey).toString('base64url');
+    const sig = createSign('RSA-SHA256')
+      .update(signed, 'utf8')
+      .sign(privateKey)
+      .toString('base64url');
     const token = `${signed}.${sig}`;
 
     const claims = await verifyJwt({

@@ -1,7 +1,10 @@
 import { FeatureFlagService } from '../feature-flag.service';
 import type { Db } from '../../database/db';
 
-interface ScriptRow { enabled: boolean; config: Record<string, unknown> }
+interface ScriptRow {
+  enabled: boolean;
+  config: Record<string, unknown>;
+}
 interface Script {
   tenantHit?: ScriptRow;
   globalHit?: ScriptRow;
@@ -22,8 +25,7 @@ function makeDb(script: Script): Db {
           if (col === 'org_id' && op === 'is') mode = 'global';
           return chain;
         },
-        executeTakeFirst: async () =>
-          mode === 'tenant' ? script.tenantHit : script.globalHit,
+        executeTakeFirst: async () => (mode === 'tenant' ? script.tenantHit : script.globalHit),
       };
       return chain;
     },
@@ -48,9 +50,7 @@ describe('FeatureFlagService.resolve', () => {
   });
 
   it('falls back to global default when tenant has no row', async () => {
-    const svc = new FeatureFlagService(
-      makeDb({ globalHit: { enabled: true, config: { x: 1 } } }),
-    );
+    const svc = new FeatureFlagService(makeDb({ globalHit: { enabled: true, config: { x: 1 } } }));
     const r = await svc.resolve('flag.x', ORG);
     expect(r.origin).toBe('global');
     expect(r.enabled).toBe(true);

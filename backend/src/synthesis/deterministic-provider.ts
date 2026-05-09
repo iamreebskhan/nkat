@@ -95,9 +95,11 @@ export class DeterministicSynthesisProvider implements SynthesisProvider {
     const citations = dedupeCitations(sortedFindings.flatMap((f) => f.citations ?? []));
 
     const lead = `${SEVERITY_LEAD[overall]} for claim on ${req.date_of_service}.`;
-    const counts_line =
-      `${counts.critical} critical, ${counts.warning} warning, ${counts.info} info, ${counts.ok} ok findings.`;
-    const bullets = sortedFindings.map(bulletForFinding).map((b) => `  • ${b}`).join('\n');
+    const counts_line = `${counts.critical} critical, ${counts.warning} warning, ${counts.info} info, ${counts.ok} ok findings.`;
+    const bullets = sortedFindings
+      .map(bulletForFinding)
+      .map((b) => `  • ${b}`)
+      .join('\n');
     const audienceFooter = audienceFooterFor(req.audience);
 
     const narrative = [lead, counts_line, '', bullets, '', audienceFooter].join('\n');

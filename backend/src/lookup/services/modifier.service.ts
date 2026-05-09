@@ -9,10 +9,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '../../database/db';
-import type {
-  ModifierType,
-  ModifierRelationshipType,
-} from '../../database/schema.types';
+import type { ModifierType, ModifierRelationshipType } from '../../database/schema.types';
 
 export interface ModifierRecord {
   modifier: string;
@@ -167,15 +164,28 @@ export class ModifierService {
     const [modifiers, relationships] = await Promise.all([
       this.db
         .selectFrom('modifier')
-        .select(['modifier', 'description', 'modifier_type', 'payer_applicability', 'effective_date', 'expiration_date'])
+        .select([
+          'modifier',
+          'description',
+          'modifier_type',
+          'payer_applicability',
+          'effective_date',
+          'expiration_date',
+        ])
         .execute(),
       this.db
         .selectFrom('modifier_relationship')
-        .select(['modifier_a', 'modifier_b', 'relationship_type', 'rationale', 'source_url', 'effective_date', 'expiration_date'])
+        .select([
+          'modifier_a',
+          'modifier_b',
+          'relationship_type',
+          'rationale',
+          'source_url',
+          'effective_date',
+          'expiration_date',
+        ])
         .where('effective_date', '<=', dos)
-        .where((eb) =>
-          eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]),
-        )
+        .where((eb) => eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]))
         .execute(),
     ]);
     return validateModifierSet(input, modifiers, relationships);

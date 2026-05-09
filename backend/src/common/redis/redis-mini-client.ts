@@ -112,7 +112,11 @@ export class RedisMiniClient {
         // Failure isolates this command; the socket may stay alive.
         const idx = this.inFlight.findIndex((x) => x.timeoutHandle === timeoutHandle);
         if (idx >= 0) this.inFlight.splice(idx, 1);
-        reject(new Error(`redis ${parts[0]} timed out after ${this.opts.commandTimeoutMs ?? DEFAULT_TIMEOUT}ms`));
+        reject(
+          new Error(
+            `redis ${parts[0]} timed out after ${this.opts.commandTimeoutMs ?? DEFAULT_TIMEOUT}ms`,
+          ),
+        );
       }, this.opts.commandTimeoutMs ?? DEFAULT_TIMEOUT);
       this.inFlight.push({ resolve, reject, timeoutHandle });
       sock.write(payload);
@@ -138,7 +142,11 @@ export class RedisMiniClient {
     // Duplex but not all Duplex have it. Best-effort.
     const sockTcp = sock as Socket;
     if (typeof sockTcp.setNoDelay === 'function') {
-      try { sockTcp.setNoDelay(true); } catch { /* */ }
+      try {
+        sockTcp.setNoDelay(true);
+      } catch {
+        /* */
+      }
     }
     this.socket = sock;
     sock.on('data', (chunk: Buffer) => this.onData(chunk));

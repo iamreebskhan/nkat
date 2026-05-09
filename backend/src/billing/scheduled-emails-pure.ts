@@ -59,7 +59,8 @@ export function planTrialEndingEmails(
     if (!window) continue;
     // Bucket on the calendar day so daily re-runs are idempotent
     // within a window.
-    const dayBucket = Math.floor(s.trial_end.getTime() / 86_400_000) - Math.floor(nowMs / 86_400_000);
+    const dayBucket =
+      Math.floor(s.trial_end.getTime() / 86_400_000) - Math.floor(nowMs / 86_400_000);
     out.push({
       org_id: s.org_id,
       to: s.primary_contact_email,

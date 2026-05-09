@@ -3,12 +3,7 @@
  * The UDP-emit path is environment-coupled and gets exercised in
  * the integration suite (testcontainer datadog mock).
  */
-import {
-  buildTagList,
-  formatMetricLine,
-  NoopMetrics,
-  sanitizeTagPart,
-} from '../metrics.service';
+import { buildTagList, formatMetricLine, NoopMetrics, sanitizeTagPart } from '../metrics.service';
 
 describe('formatMetricLine', () => {
   it('encodes a counter with no tags', () => {
@@ -21,7 +16,7 @@ describe('formatMetricLine', () => {
 
   it('encodes fractional values without trailing zeros', () => {
     expect(formatMetricLine('m', 1.5, 'h', [])).toBe('m:1.5|h');
-    expect(formatMetricLine('m', 1.5000, 'h', [])).toBe('m:1.5|h');
+    expect(formatMetricLine('m', 1.5, 'h', [])).toBe('m:1.5|h');
   });
 
   it('encodes timing values', () => {
@@ -34,15 +29,19 @@ describe('formatMetricLine', () => {
   });
 
   it('appends tags joined by commas after |#', () => {
-    expect(formatMetricLine('m', 1, 'c', ['env:prod', 'scope:lookup']))
-      .toBe('m:1|c|#env:prod,scope:lookup');
+    expect(formatMetricLine('m', 1, 'c', ['env:prod', 'scope:lookup'])).toBe(
+      'm:1|c|#env:prod,scope:lookup',
+    );
   });
 });
 
 describe('buildTagList', () => {
   it('combines global tags with per-call kv pairs', () => {
-    expect(buildTagList(['env:prod'], { scope: 'lookup', orgId: 'abc' }))
-      .toEqual(['env:prod', 'scope:lookup', 'orgId:abc']);
+    expect(buildTagList(['env:prod'], { scope: 'lookup', orgId: 'abc' })).toEqual([
+      'env:prod',
+      'scope:lookup',
+      'orgId:abc',
+    ]);
   });
 
   it('handles missing per-call tags', () => {

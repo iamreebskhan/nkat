@@ -128,12 +128,15 @@ export function renderDunning(a: DunningArgs, meta: FooterMeta = {}): RenderedEm
   };
 }
 
-export type RenderArgsFor<T extends EmailTemplate> =
-  T extends 'invite' ? InviteArgs :
-  T extends 'welcome' ? WelcomeArgs :
-  T extends 'trial_ending' ? TrialEndingArgs :
-  T extends 'dunning_past_due' ? DunningArgs :
-  never;
+export type RenderArgsFor<T extends EmailTemplate> = T extends 'invite'
+  ? InviteArgs
+  : T extends 'welcome'
+    ? WelcomeArgs
+    : T extends 'trial_ending'
+      ? TrialEndingArgs
+      : T extends 'dunning_past_due'
+        ? DunningArgs
+        : never;
 
 export function renderTemplate<T extends EmailTemplate>(
   t: T,
@@ -141,10 +144,14 @@ export function renderTemplate<T extends EmailTemplate>(
   meta: FooterMeta = {},
 ): RenderedEmail {
   switch (t) {
-    case 'invite':            return renderInvite(args as InviteArgs, meta);
-    case 'welcome':           return renderWelcome(args as WelcomeArgs, meta);
-    case 'trial_ending':      return renderTrialEnding(args as TrialEndingArgs, meta);
-    case 'dunning_past_due':  return renderDunning(args as DunningArgs, meta);
+    case 'invite':
+      return renderInvite(args as InviteArgs, meta);
+    case 'welcome':
+      return renderWelcome(args as WelcomeArgs, meta);
+    case 'trial_ending':
+      return renderTrialEnding(args as TrialEndingArgs, meta);
+    case 'dunning_past_due':
+      return renderDunning(args as DunningArgs, meta);
     default: {
       const exhaustive: never = t;
       throw new Error(`unknown template: ${exhaustive}`);

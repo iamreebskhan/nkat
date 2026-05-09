@@ -6,11 +6,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '../../database/db';
-import {
-  evaluateParity,
-  type ParityFlag,
-  type ParityRuleInput,
-} from './mhpaea-parity.engine';
+import { evaluateParity, type ParityFlag, type ParityRuleInput } from './mhpaea-parity.engine';
 import type { MhpaeaClassification } from '../../database/schema.types';
 
 export interface MhpaeaCheckInput {
@@ -39,7 +35,9 @@ export class MhpaeaParityService {
       .select(['med_surg_code', 'classification'])
       .where('behavioral_health_code', '=', input.bh_code)
       .where('effective_date', '<=', input.dos)
-      .where((eb) => eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', input.dos)]));
+      .where((eb) =>
+        eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', input.dos)]),
+      );
     if (input.classification) {
       pairsQuery = pairsQuery.where('classification', '=', input.classification);
     }
@@ -52,13 +50,22 @@ export class MhpaeaParityService {
     for (const pair of pairs) {
       const [bhRules, msRules] = await Promise.all([
         this.loadRules(input.payer_id, input.state, input.product_line, input.bh_code, input.dos),
-        this.loadRules(input.payer_id, input.state, input.product_line, pair.med_surg_code, input.dos),
+        this.loadRules(
+          input.payer_id,
+          input.state,
+          input.product_line,
+          pair.med_surg_code,
+          input.dos,
+        ),
       ]);
       flags.push(...evaluateParity(input.bh_code, pair.med_surg_code, bhRules, msRules));
     }
     return {
       bh_code: input.bh_code,
-      pairs_checked: pairs.map((p) => ({ med_surg_code: p.med_surg_code, classification: p.classification })),
+      pairs_checked: pairs.map((p) => ({
+        med_surg_code: p.med_surg_code,
+        classification: p.classification,
+      })),
       flags,
     };
   }

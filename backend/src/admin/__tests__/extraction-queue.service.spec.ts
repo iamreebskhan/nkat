@@ -56,7 +56,12 @@ function makeDb(script: DbScript): Db {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tx: any = {
     selectFrom: (table: string) => ({
-      selectAll: () => ({ where: () => ({ executeTakeFirst: async () => (table === 'extraction_candidate' ? script.candidate : undefined) }) }),
+      selectAll: () => ({
+        where: () => ({
+          executeTakeFirst: async () =>
+            table === 'extraction_candidate' ? script.candidate : undefined,
+        }),
+      }),
       select: () => ({ where: () => ({ executeTakeFirst: async () => undefined }) }),
     }),
     updateTable: passthrough,

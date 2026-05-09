@@ -14,14 +14,14 @@
 import type { Era835Adjustment, Era835Claim, Era835File, Era835ServiceLine } from './types';
 
 interface Delimiters {
-  element: string;       // typically '*'
-  subElement: string;    // typically ':' or ''
-  segment: string;       // typically '~'
+  element: string; // typically '*'
+  subElement: string; // typically ':' or ''
+  segment: string; // typically '~'
 }
 
 interface Segment {
   tag: string;
-  fields: string[];      // 1-indexed in spec; we store 0-indexed for code clarity
+  fields: string[]; // 1-indexed in spec; we store 0-indexed for code clarity
   raw: string;
 }
 
@@ -103,7 +103,13 @@ function parseLqRarc(seg: Segment): string | null {
   return seg.fields[1] ?? null;
 }
 
-function parseSvc(seg: Segment, delim: Delimiters): Pick<Era835ServiceLine, 'service_code' | 'modifiers' | 'billed_amount' | 'paid_amount' | 'units' | 'revenue_code'> {
+function parseSvc(
+  seg: Segment,
+  delim: Delimiters,
+): Pick<
+  Era835ServiceLine,
+  'service_code' | 'modifiers' | 'billed_amount' | 'paid_amount' | 'units' | 'revenue_code'
+> {
   // SVC01 is composite: <qualifier>:<code>:<modifier1>:<modifier2>:<modifier3>:<modifier4>[:<description>][:<units>]
   const composite = (seg.fields[0] ?? '').split(delim.subElement);
   const code = composite[1] ?? '';
@@ -122,7 +128,17 @@ function parseSvc(seg: Segment, delim: Delimiters): Pick<Era835ServiceLine, 'ser
   };
 }
 
-function parseClp(seg: Segment): Pick<Era835Claim, 'claim_id' | 'status_code' | 'billed_amount' | 'paid_amount' | 'patient_responsibility' | 'payer_claim_control_number'> {
+function parseClp(
+  seg: Segment,
+): Pick<
+  Era835Claim,
+  | 'claim_id'
+  | 'status_code'
+  | 'billed_amount'
+  | 'paid_amount'
+  | 'patient_responsibility'
+  | 'payer_claim_control_number'
+> {
   return {
     claim_id: seg.fields[0] ?? '',
     status_code: seg.fields[1] ?? '',

@@ -1,10 +1,4 @@
-import {
-  Module,
-  type OnApplicationBootstrap,
-  Logger,
-  Inject,
-  Optional,
-} from '@nestjs/common';
+import { Module, type OnApplicationBootstrap, Logger, Inject, Optional } from '@nestjs/common';
 import { ENV_TOKEN } from '../config/config.module';
 import type { Env } from '../config/env';
 import { MetricsService } from '../observability/metrics.service';
@@ -45,8 +39,7 @@ class JwksPrewarmer implements OnApplicationBootstrap {
     {
       provide: JWKS_CLIENT_TOKEN,
       inject: [ENV_TOKEN],
-      useFactory: (env: Env) =>
-        env.JWT_JWKS_URL ? new JwksClient(env.JWT_JWKS_URL) : undefined,
+      useFactory: (env: Env) => (env.JWT_JWKS_URL ? new JwksClient(env.JWT_JWKS_URL) : undefined),
     },
     JwksPrewarmer,
   ],

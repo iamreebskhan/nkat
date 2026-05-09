@@ -85,7 +85,8 @@ async function main() {
     }),
   });
 
-  const sent: Array<{ case: 'bounce' | 'complaint' | 'success'; to: string; messageId: string }> = [];
+  const sent: Array<{ case: 'bounce' | 'complaint' | 'success'; to: string; messageId: string }> =
+    [];
 
   for (const c of args.cases) {
     const to = SIMULATOR[c];
@@ -113,9 +114,11 @@ async function main() {
 
   // Poll suppression list for the bounce + complaint addresses.
   console.log(`\nPolling email_suppression for up to ${args.waitSeconds}s…`);
-  const expected = sent.filter((s) => s.case === 'bounce' || s.case === 'complaint').map((s) => s.to);
+  const expected = sent
+    .filter((s) => s.case === 'bounce' || s.case === 'complaint')
+    .map((s) => s.to);
   const start = Date.now();
-  let outstanding = new Set(expected);
+  const outstanding = new Set(expected);
   while (outstanding.size > 0 && (Date.now() - start) / 1000 < args.waitSeconds) {
     const rows = await db
       .selectFrom('email_suppression')
@@ -133,7 +136,9 @@ async function main() {
 
   if (outstanding.size > 0) {
     console.error(`\n✗ Did not observe suppression rows for: ${[...outstanding].join(', ')}`);
-    console.error('  Check: SNS topic subscription confirmed? /v1/internal/ses-feedback reachable from SNS? Topic ARN allowlisted?');
+    console.error(
+      '  Check: SNS topic subscription confirmed? /v1/internal/ses-feedback reachable from SNS? Topic ARN allowlisted?',
+    );
     await pool.end();
     exit(1);
   }

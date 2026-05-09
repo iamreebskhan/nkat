@@ -27,9 +27,13 @@ describe('runWithTenant', () => {
 
   it('rejects SQL-injection-shaped strings', async () => {
     await expect(
-      runWithTenant(stubDb, "11111111-1111-1111-1111-111111111111'; DROP TABLE org;--", async () => {
-        throw new Error('should never run');
-      }),
+      runWithTenant(
+        stubDb,
+        "11111111-1111-1111-1111-111111111111'; DROP TABLE org;--",
+        async () => {
+          throw new Error('should never run');
+        },
+      ),
     ).rejects.toThrow(/orgId must be a UUID/);
   });
 });

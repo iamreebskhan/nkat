@@ -53,9 +53,9 @@ integrationDescribe('RLS isolation (integration)', () => {
   });
 
   it('app role without app.current_org_id returns zero rows from tenant-scoped tables', async () => {
-    const r = await sql<{ count: number }>`SELECT count(*)::int AS count FROM client_company`.execute(
-      ctx.appDb,
-    );
+    const r = await sql<{
+      count: number;
+    }>`SELECT count(*)::int AS count FROM client_company`.execute(ctx.appDb);
     expect(Number(r.rows[0].count)).toBe(0);
   });
 

@@ -22,12 +22,36 @@ import { CmsCoverageApiClient } from '../src/ingestion/cms-coverage-api.client';
 import { NcdLcdIngestor } from '../src/ingestion/ncd-lcd.ingestor';
 
 const PALLIATIVE_CODES = [
-  '99341', '99342', '99344', '99345', '99347', '99348', '99349', '99350', // home visits
-  '99497', '99498',                                                       // ACP
-  'G0318',                                                                // palliative E/M longitudinal
-  '98000', '98001', '98002', '98003', '98004', '98005', '98006', '98007',
-  '98008', '98009', '98010', '98011', '98012', '98013', '98014', '98015', // audio-visual telemedicine
-  'G0568', 'G0569', 'G0570',                                              // psych collab care
+  '99341',
+  '99342',
+  '99344',
+  '99345',
+  '99347',
+  '99348',
+  '99349',
+  '99350', // home visits
+  '99497',
+  '99498', // ACP
+  'G0318', // palliative E/M longitudinal
+  '98000',
+  '98001',
+  '98002',
+  '98003',
+  '98004',
+  '98005',
+  '98006',
+  '98007',
+  '98008',
+  '98009',
+  '98010',
+  '98011',
+  '98012',
+  '98013',
+  '98014',
+  '98015', // audio-visual telemedicine
+  'G0568',
+  'G0569',
+  'G0570', // psych collab care
 ];
 
 interface CliArgs {
@@ -39,7 +63,11 @@ function parseArgs(argv: string[]): CliArgs {
   let states = ['OH', 'NC', 'SC'];
   let dryRun = false;
   for (const arg of argv.slice(2)) {
-    if (arg.startsWith('--states=')) states = arg.slice('--states='.length).split(',').map((s) => s.trim().toUpperCase());
+    if (arg.startsWith('--states='))
+      states = arg
+        .slice('--states='.length)
+        .split(',')
+        .map((s) => s.trim().toUpperCase());
     else if (arg === '--dry-run') dryRun = true;
     else if (arg === '--help' || arg === '-h') {
       console.log('Usage: ingest-palliative [--states=OH,NC,SC] [--dry-run]');
@@ -59,7 +87,9 @@ async function main(): Promise<void> {
   const db = createDb(pool);
   const cms = new CmsCoverageApiClient(env);
 
-  console.log(`Targets: states=${args.states.join(',')} codes=${PALLIATIVE_CODES.length} dry=${args.dryRun}`);
+  console.log(
+    `Targets: states=${args.states.join(',')} codes=${PALLIATIVE_CODES.length} dry=${args.dryRun}`,
+  );
 
   if (args.dryRun) {
     console.log('Dry run: would call listLcds() per (state, code) and persist results.');

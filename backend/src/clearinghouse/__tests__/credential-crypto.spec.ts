@@ -1,9 +1,4 @@
-import {
-  decrypt,
-  displaySuffix,
-  encrypt,
-  parseMasterKey,
-} from '../credential-crypto';
+import { decrypt, displaySuffix, encrypt, parseMasterKey } from '../credential-crypto';
 import { randomBytes } from 'node:crypto';
 
 const MASTER_B64 = randomBytes(32).toString('base64');

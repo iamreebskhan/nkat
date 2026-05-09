@@ -1,8 +1,4 @@
-import {
-  findCodeMentions,
-  proposeCandidates,
-  scoreCoverageStance,
-} from '../extractor';
+import { findCodeMentions, proposeCandidates, scoreCoverageStance } from '../extractor';
 
 describe('findCodeMentions', () => {
   it('finds CPT codes', () => {
@@ -37,7 +33,8 @@ describe('findCodeMentions', () => {
   });
 
   it('keeps separate mentions of the same code at different offsets', () => {
-    const text = '99213 first reference.\n' + '\n'.repeat(40) + '99213 second reference much later.';
+    const text =
+      '99213 first reference.\n' + '\n'.repeat(40) + '99213 second reference much later.';
     // Force 2k+ chars between by padding.
     const padded = text + ' '.repeat(2000);
     const r = findCodeMentions(padded);
@@ -55,7 +52,7 @@ describe('scoreCoverageStance', () => {
   it('flags positive cues → covered', () => {
     const r = scoreCoverageStance('CMS will cover and reimburse 99213.');
     expect(r.status).toBe('covered');
-    expect(r.confidence).toBeGreaterThan(0.10);
+    expect(r.confidence).toBeGreaterThan(0.1);
   });
 
   it('flags negative cues → not_covered', () => {
@@ -71,7 +68,7 @@ describe('scoreCoverageStance', () => {
   it('no cues → unknown low-confidence', () => {
     const r = scoreCoverageStance('The code 99213 appears in Table 4-2.');
     expect(r.status).toBe('unknown');
-    expect(r.confidence).toBeLessThan(0.20);
+    expect(r.confidence).toBeLessThan(0.2);
   });
 });
 

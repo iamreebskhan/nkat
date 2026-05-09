@@ -7,8 +7,16 @@
  */
 import { randomBytes, createHash } from 'node:crypto';
 import {
-  Body, Controller, Delete, Get, Inject, NotFoundException, Param,
-  Post, Req, UseGuards,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Post,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsDateString, IsOptional, IsString, MaxLength } from 'class-validator';
@@ -39,8 +47,13 @@ export class ScimTokenController {
       const rows = await tx
         .selectFrom('scim_token')
         .select([
-          'id', 'display_suffix', 'description', 'expires_at',
-          'revoked_at', 'last_used_at', 'created_at',
+          'id',
+          'display_suffix',
+          'description',
+          'expires_at',
+          'revoked_at',
+          'last_used_at',
+          'created_at',
         ])
         .where('org_id', '=', orgId)
         .orderBy('created_at', 'desc')

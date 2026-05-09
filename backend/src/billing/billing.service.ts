@@ -27,9 +27,9 @@ export interface Entitlement {
   states: string[];
   specialty_packs: string[];
   status: SubscriptionStatus;
-  active: boolean;          // true when status ∈ {trialing, active}
+  active: boolean; // true when status ∈ {trialing, active}
   in_grace_period: boolean; // true when past_due / unpaid (read-only access allowed)
-  current_period_end: string | null;  // ISO timestamp for UI display
+  current_period_end: string | null; // ISO timestamp for UI display
   trial_end: string | null;
 }
 
@@ -139,7 +139,7 @@ export class BillingService {
           stripe_event_id: args.event.id,
           event_type: args.event.type,
           computed_state: computed,
-          raw_payload: (args.event as unknown) as Record<string, unknown>,
+          raw_payload: args.event as unknown as Record<string, unknown>,
           occurred_at: new Date(args.event.created * 1000),
         })
         .execute();
@@ -173,13 +173,11 @@ export class BillingService {
       // Fire welcome email on `customer.subscription.created` only.
       // Best-effort + idempotent on stripe_event_id so duplicate
       // delivery never re-mails the customer.
-      if (
-        !r.duplicate &&
-        args.event.type === 'customer.subscription.created' &&
-        this.email
-      ) {
+      if (!r.duplicate && args.event.type === 'customer.subscription.created' && this.email) {
         await this.maybeSendWelcomeEmail(args.orgId, args.event.id).catch((e) =>
-          this.log.warn(`welcome email failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`),
+          this.log.warn(
+            `welcome email failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+          ),
         );
       }
       return r;

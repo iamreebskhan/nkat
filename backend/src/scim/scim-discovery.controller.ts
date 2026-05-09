@@ -110,10 +110,7 @@ const USER_ATTRS = [
   attr('active', 'boolean'),
   attr('roles', 'complex', {
     multiValued: true,
-    subAttributes: [
-      attr('value', 'string'),
-      attr('primary', 'boolean'),
-    ],
+    subAttributes: [attr('value', 'string'), attr('primary', 'boolean')],
   }),
 ];
 
@@ -121,10 +118,7 @@ const GROUP_ATTRS = [
   attr('displayName', 'string', { required: true }),
   attr('members', 'complex', {
     multiValued: true,
-    subAttributes: [
-      attr('value', 'string'),
-      attr('display', 'string'),
-    ],
+    subAttributes: [attr('value', 'string'), attr('display', 'string')],
   }),
 ];
 

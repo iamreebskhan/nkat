@@ -19,20 +19,20 @@ export interface Edi837Identity {
 export interface Edi837Provider {
   organizationName: string;
   npi: string;
-  taxId: string;          // EIN — used in REF segment with EI qualifier
+  taxId: string; // EIN — used in REF segment with EI qualifier
   taxIdQualifier: 'EI' | 'SY'; // EI = Employer ID, SY = SSN
-  taxonomy?: string;      // Optional — REF segment with PXC qualifier
+  taxonomy?: string; // Optional — REF segment with PXC qualifier
 }
 
 export interface Edi837Subscriber {
   memberId: string;
   firstName: string;
   lastName: string;
-  dob: string;            // YYYYMMDD
+  dob: string; // YYYYMMDD
   gender: 'M' | 'F' | 'U';
   address1: string;
   city: string;
-  state: string;          // 2-letter
+  state: string; // 2-letter
   zip: string;
 }
 
@@ -134,11 +134,16 @@ export function generate837P(
   segs.push(
     [
       'ISA',
-      '00', '          ',
-      '00', '          ',
-      'ZZ', pad(identity.senderId, 15),
-      'ZZ', pad(identity.receiverId, 15),
-      yymmdd, hhmm,
+      '00',
+      '          ',
+      '00',
+      '          ',
+      'ZZ',
+      pad(identity.senderId, 15),
+      'ZZ',
+      pad(identity.receiverId, 15),
+      yymmdd,
+      hhmm,
       '^',
       '00501',
       pad(ctl.interchangeControlNumber, 9, '0', 'left'),
@@ -150,21 +155,30 @@ export function generate837P(
 
   // GS — functional group header. 837 functional ID = HC.
   segs.push(
-    ['GS', 'HC', identity.senderId, identity.receiverId, yyyymmdd, hhmm,
-     ctl.groupControlNumber, 'X', '005010X222A1'].join(ELEM_SEP),
+    [
+      'GS',
+      'HC',
+      identity.senderId,
+      identity.receiverId,
+      yyyymmdd,
+      hhmm,
+      ctl.groupControlNumber,
+      'X',
+      '005010X222A1',
+    ].join(ELEM_SEP),
   );
 
   // ST — transaction set.
   segs.push(['ST', '837', ctl.transactionSetControlNumber, '005010X222A1'].join(ELEM_SEP));
 
   // BHT — beginning of hierarchical transaction. 0019 = Information Source.
-  segs.push(
-    ['BHT', '0019', '00', ctl.referenceId, yyyymmdd, hhmm, 'CH'].join(ELEM_SEP),
-  );
+  segs.push(['BHT', '0019', '00', ctl.referenceId, yyyymmdd, hhmm, 'CH'].join(ELEM_SEP));
 
   // ----- Submitter (Loop 1000A) -----
   segs.push(
-    ['NM1', '41', '2', provider.organizationName, '', '', '', '', '46', identity.senderId].join(ELEM_SEP),
+    ['NM1', '41', '2', provider.organizationName, '', '', '', '', '46', identity.senderId].join(
+      ELEM_SEP,
+    ),
   );
   segs.push(['PER', 'IC', provider.organizationName].join(ELEM_SEP));
 
@@ -177,7 +191,9 @@ export function generate837P(
   segs.push(['HL', '1', '', '20', '1'].join(ELEM_SEP));
   segs.push(['PRV', 'BI', 'PXC', provider.taxonomy ?? '193200000X'].join(ELEM_SEP));
   segs.push(
-    ['NM1', '85', '2', provider.organizationName, '', '', '', '', 'XX', provider.npi].join(ELEM_SEP),
+    ['NM1', '85', '2', provider.organizationName, '', '', '', '', 'XX', provider.npi].join(
+      ELEM_SEP,
+    ),
   );
   segs.push(['REF', provider.taxIdQualifier, provider.taxId].join(ELEM_SEP));
 
@@ -185,7 +201,18 @@ export function generate837P(
   segs.push(['HL', '2', '1', '22', '0'].join(ELEM_SEP));
   segs.push(['SBR', 'P', '18', '', '', '', '', '', 'CI'].join(ELEM_SEP));
   segs.push(
-    ['NM1', 'IL', '1', subscriber.lastName, subscriber.firstName, '', '', '', 'MI', subscriber.memberId].join(ELEM_SEP),
+    [
+      'NM1',
+      'IL',
+      '1',
+      subscriber.lastName,
+      subscriber.firstName,
+      '',
+      '',
+      '',
+      'MI',
+      subscriber.memberId,
+    ].join(ELEM_SEP),
   );
   segs.push(['N3', subscriber.address1].join(ELEM_SEP));
   segs.push(['N4', subscriber.city, subscriber.state, subscriber.zip].join(ELEM_SEP));
@@ -193,15 +220,24 @@ export function generate837P(
 
   // Payer Name (Loop 2010BB)
   segs.push(
-    ['NM1', 'PR', '2', payer.name, '', '', '', '', payer.payerIdQualifier, payer.payerId].join(ELEM_SEP),
+    ['NM1', 'PR', '2', payer.name, '', '', '', '', payer.payerIdQualifier, payer.payerId].join(
+      ELEM_SEP,
+    ),
   );
 
   // ----- Claim (CLM segment) -----
   segs.push(
     [
-      'CLM', claim.patientControlNumber, claim.totalCharge.toFixed(2), '', '',
-      `${claim.lines[0].placeOfService}${SUB_SEP}B${SUB_SEP}1`,  // 11:B:1 facility code:freq:claim freq
-      'Y', 'A', 'Y', 'I',
+      'CLM',
+      claim.patientControlNumber,
+      claim.totalCharge.toFixed(2),
+      '',
+      '',
+      `${claim.lines[0].placeOfService}${SUB_SEP}B${SUB_SEP}1`, // 11:B:1 facility code:freq:claim freq
+      'Y',
+      'A',
+      'Y',
+      'I',
     ].join(ELEM_SEP),
   );
 
@@ -216,7 +252,9 @@ export function generate837P(
   if (claim.secondaryPayer) {
     const sp = claim.secondaryPayer;
     // SBR — second occurrence inside the claim. Filing indicator 'CI' = commercial.
-    segs.push(['SBR', sp.payerResponsibility, sp.relationship, '', '', '', '', '', 'CI'].join(ELEM_SEP));
+    segs.push(
+      ['SBR', sp.payerResponsibility, sp.relationship, '', '', '', '', '', 'CI'].join(ELEM_SEP),
+    );
     // AMT*D — payer-paid amount.
     segs.push(['AMT', 'D', sp.paidAmount.toFixed(2)].join(ELEM_SEP));
     // OI — Other Insurance Coverage Information.
@@ -224,15 +262,31 @@ export function generate837P(
     // Other-subscriber identity.
     segs.push(
       [
-        'NM1', 'IL', '1', sp.otherSubscriberLastName, sp.otherSubscriberFirstName,
-        '', '', '', 'MI', sp.otherSubscriberMemberId,
+        'NM1',
+        'IL',
+        '1',
+        sp.otherSubscriberLastName,
+        sp.otherSubscriberFirstName,
+        '',
+        '',
+        '',
+        'MI',
+        sp.otherSubscriberMemberId,
       ].join(ELEM_SEP),
     );
     // Other-payer identity.
     segs.push(
       [
-        'NM1', 'PR', '2', sp.payer.name, '', '', '', '',
-        sp.payer.payerIdQualifier, sp.payer.payerId,
+        'NM1',
+        'PR',
+        '2',
+        sp.payer.name,
+        '',
+        '',
+        '',
+        '',
+        sp.payer.payerIdQualifier,
+        sp.payer.payerId,
       ].join(ELEM_SEP),
     );
   }

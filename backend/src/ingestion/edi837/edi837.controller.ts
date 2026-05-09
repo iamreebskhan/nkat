@@ -6,7 +6,18 @@
 import { Body, Controller, Header, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, Length, Matches, MaxLength, Min,
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  MaxLength,
+  Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
@@ -77,11 +88,16 @@ class ServiceLineDto {
 class ClaimDto {
   @IsString() @MaxLength(38) patientControlNumber!: string;
   @IsNumber() @Min(0) totalCharge!: number;
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(12)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(12)
   @IsString({ each: true })
   @Matches(/^[A-TV-Z][0-9][0-9A-Z](?:\.[0-9A-Z]{1,4})?$/, { each: true })
   diagnoses!: string[];
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @Type(() => ServiceLineDto)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @Type(() => ServiceLineDto)
   lines!: ServiceLineDto[];
 }
 

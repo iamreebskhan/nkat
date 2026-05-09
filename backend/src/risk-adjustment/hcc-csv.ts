@@ -72,7 +72,10 @@ export function splitCsvLine(line: string): string[] {
 
 export function parseHccCsv(input: string): HccCsvParseResult {
   const result: HccCsvParseResult = { rows: [], errors: [], total_lines: 0 };
-  const lines = input.replace(/\r\n/g, '\n').split('\n').filter((l) => l.length > 0);
+  const lines = input
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .filter((l) => l.length > 0);
   if (lines.length === 0) return result;
 
   const headers = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
@@ -117,8 +120,8 @@ export function parseHccCsv(input: string): HccCsvParseResult {
     result.rows.push({
       icd10,
       hcc_code: hccCode,
-      category: categoryIdx >= 0 ? (fields[categoryIdx] || null) : null,
-      rxhcc_code: rxIdx >= 0 ? (fields[rxIdx] || null) : null,
+      category: categoryIdx >= 0 ? fields[categoryIdx] || null : null,
+      rxhcc_code: rxIdx >= 0 ? fields[rxIdx] || null : null,
       raf_weight: rafWeight,
       effective_year: effYear,
     });

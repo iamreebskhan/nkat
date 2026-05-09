@@ -69,7 +69,9 @@ export class InviteService {
         .returning('id')
         .executeTakeFirstOrThrow(),
     );
-    this.log.log(`invite issued org=${input.orgId} user=${input.userId} role=${input.role} id=${tokenRow.id}`);
+    this.log.log(
+      `invite issued org=${input.orgId} user=${input.userId} role=${input.role} id=${tokenRow.id}`,
+    );
 
     // Best-effort email send. Failure does NOT block issue — the caller
     // gets the raw token in the response and can hand-deliver if needed.
@@ -105,21 +107,25 @@ export class InviteService {
       }
     } catch (e) {
       // Email is observability noise here; never fail the issue path.
-      this.log.warn(`invite email send failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+      this.log.warn(
+        `invite email send failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
 
     return { rawToken: raw, expiresAt, tokenId: tokenRow.id };
   }
 
   /** Admin: list outstanding invites for the calling tenant. */
-  async listForOrg(orgId: string): Promise<Array<{
-    id: string;
-    user_id: string;
-    role: 'employee' | 'reviewer' | 'admin' | 'consultant';
-    created_at: Date;
-    expires_at: Date;
-    consumed_at: Date | null;
-  }>> {
+  async listForOrg(orgId: string): Promise<
+    Array<{
+      id: string;
+      user_id: string;
+      role: 'employee' | 'reviewer' | 'admin' | 'consultant';
+      created_at: Date;
+      expires_at: Date;
+      consumed_at: Date | null;
+    }>
+  > {
     return runWithTenant(this.db, orgId, (tx) =>
       tx
         .selectFrom('invite_token')

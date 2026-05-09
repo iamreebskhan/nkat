@@ -47,9 +47,7 @@ export interface VerifyResult {
 
 export function verifyStripeSignature(args: VerifyArgs): VerifyResult {
   const { header, rawBody } = args;
-  const secrets = Array.isArray(args.signingSecret)
-    ? args.signingSecret
-    : [args.signingSecret];
+  const secrets = Array.isArray(args.signingSecret) ? args.signingSecret : [args.signingSecret];
   if (secrets.length === 0) {
     throw new InvalidWebhookSignatureError('no signing secrets configured');
   }

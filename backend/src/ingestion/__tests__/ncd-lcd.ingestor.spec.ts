@@ -98,7 +98,8 @@ const detail: CmsLcdDetail = {
   contractor: 'Palmetto',
   effective_date: '2024-04-01',
   url: 'https://cms/lcd/L33834',
-  body_html: '<p>Voluntary advance care planning discussion is covered when reasonable and necessary.</p>',
+  body_html:
+    '<p>Voluntary advance care planning discussion is covered when reasonable and necessary.</p>',
   cpt_codes: ['99497', '99498'],
   hcpcs_codes: [],
   icd10_covered: ['Z51.5', 'Z66'],
@@ -107,7 +108,12 @@ const detail: CmsLcdDetail = {
 describe('NcdLcdIngestor', () => {
   it('persists a new source_document and 4 payer_rule rows for two matching codes', async () => {
     const log: DbCallLog = { selects: [], insertedDocs: 0, insertedRules: 0, existingDocId: null };
-    const client = makeClient({ summaries: [{ lcd_id: 'L33834', title: 'ACP', contractor: 'Palmetto', effective_date: '2024-04-01' }], detail });
+    const client = makeClient({
+      summaries: [
+        { lcd_id: 'L33834', title: 'ACP', contractor: 'Palmetto', effective_date: '2024-04-01' },
+      ],
+      detail,
+    });
     const ingestor = new NcdLcdIngestor(makeDb(log), client);
     const report = await ingestor.ingest(targetBase);
 
@@ -125,7 +131,12 @@ describe('NcdLcdIngestor', () => {
       insertedRules: 0,
       existingDocId: 'EXISTING_DOC_ID',
     };
-    const client = makeClient({ summaries: [{ lcd_id: 'L33834', title: 'ACP', contractor: 'P', effective_date: '2024-04-01' }], detail });
+    const client = makeClient({
+      summaries: [
+        { lcd_id: 'L33834', title: 'ACP', contractor: 'P', effective_date: '2024-04-01' },
+      ],
+      detail,
+    });
     const ingestor = new NcdLcdIngestor(makeDb(log), client);
     const report = await ingestor.ingest(targetBase);
 
@@ -155,7 +166,9 @@ describe('NcdLcdIngestor', () => {
     const log: DbCallLog = { selects: [], insertedDocs: 0, insertedRules: 0, existingDocId: null };
     // Same LCD returned for both codes
     const client = makeClient({
-      summaries: [{ lcd_id: 'L33834', title: 'ACP', contractor: 'P', effective_date: '2024-04-01' }],
+      summaries: [
+        { lcd_id: 'L33834', title: 'ACP', contractor: 'P', effective_date: '2024-04-01' },
+      ],
       detail,
     });
     const ingestor = new NcdLcdIngestor(makeDb(log), client);

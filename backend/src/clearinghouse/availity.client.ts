@@ -141,7 +141,9 @@ export class AvailityClient {
   }
 
   /** Test seam: drops the cached token so the next call re-mints. */
-  _resetTokenCache(): void { this.cached = null; }
+  _resetTokenCache(): void {
+    this.cached = null;
+  }
 }
 
 export class AvailityError extends Error {

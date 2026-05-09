@@ -78,8 +78,7 @@ export function evaluateParity(
   msRules: ParityRuleInput[],
 ): ParityFlag[] {
   const flags: ParityFlag[] = [];
-  const idx = (rules: ParityRuleInput[]) =>
-    new Map(rules.map((r) => [r.attribute, r]));
+  const idx = (rules: ParityRuleInput[]) => new Map(rules.map((r) => [r.attribute, r]));
   const bh = idx(bhRules);
   const ms = idx(msRules);
 

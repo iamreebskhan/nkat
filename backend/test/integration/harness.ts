@@ -18,10 +18,10 @@ import type { Db } from '../../src/database/db';
 
 export interface IntegrationContext {
   container: StartedTestContainer;
-  pool: Pool;          // admin (BYPASSRLS) connection
-  db: Db;              // Kysely bound to admin pool
-  appPool: Pool;       // app-role (NOBYPASSRLS) connection — use for RLS tests
-  appDb: Db;           // Kysely bound to app pool
+  pool: Pool; // admin (BYPASSRLS) connection
+  db: Db; // Kysely bound to admin pool
+  appPool: Pool; // app-role (NOBYPASSRLS) connection — use for RLS tests
+  appDb: Db; // Kysely bound to app pool
   stop: () => Promise<void>;
 }
 
@@ -64,27 +64,35 @@ export async function startIntegrationContext(): Promise<IntegrationContext> {
   const host = container.getHost();
   const port = container.getMappedPort(5432);
   const adminCfg = {
-    host, port,
-    user: 'admin', password: 'admin_dev_only_change_in_prod',
+    host,
+    port,
+    user: 'admin',
+    password: 'admin_dev_only_change_in_prod',
     database: 'billing_rules',
   };
   const pool = new Pool(adminCfg);
 
   // Apply migrations in order.
-  for (const f of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort()) {
+  for (const f of readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()) {
     const sql = readFileSync(path.join(MIGRATIONS_DIR, f), 'utf8');
     await pool.query(sql);
   }
   // Apply seed data in order.
-  for (const f of readdirSync(SEED_DIR).filter((f) => f.endsWith('.sql')).sort()) {
+  for (const f of readdirSync(SEED_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()) {
     const sql = readFileSync(path.join(SEED_DIR, f), 'utf8');
     await pool.query(sql);
   }
 
   // App-role pool (NOBYPASSRLS) — used for tests that exercise RLS.
   const appPool = new Pool({
-    host, port,
-    user: 'app', password: 'app_dev_only_change_in_prod',
+    host,
+    port,
+    user: 'app',
+    password: 'app_dev_only_change_in_prod',
     database: 'billing_rules',
   });
 

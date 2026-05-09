@@ -17,7 +17,7 @@ export interface RedactInput {
   org_id: string;
   upload_id: string;
   raw_text: string;
-  performed_by: string;          // 'system' or analyst email
+  performed_by: string; // 'system' or analyst email
 }
 
 export interface RedactOutput {
@@ -40,7 +40,10 @@ export class RedactionService {
       .updateTable('client_doc_upload')
       .set({
         redacted_text: result.redacted,
-        redaction_summary: { category_counts: result.category_counts, total_redactions: result.total_redactions },
+        redaction_summary: {
+          category_counts: result.category_counts,
+          total_redactions: result.total_redactions,
+        },
         status: 'redacted',
       })
       .where('id', '=', input.upload_id)

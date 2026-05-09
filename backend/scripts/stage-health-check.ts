@@ -34,7 +34,9 @@ function runStep(step: Step): Promise<{ name: string; ok: boolean; durationMs: n
   return new Promise((resolve) => {
     const t0 = Date.now();
     const p = spawn(step.cmd, step.args, { stdio: 'inherit', env: process.env, shell: true });
-    p.on('exit', (code) => resolve({ name: step.name, ok: code === 0, durationMs: Date.now() - t0 }));
+    p.on('exit', (code) =>
+      resolve({ name: step.name, ok: code === 0, durationMs: Date.now() - t0 }),
+    );
     p.on('error', () => resolve({ name: step.name, ok: false, durationMs: Date.now() - t0 }));
   });
 }
@@ -58,7 +60,13 @@ async function main() {
     {
       name: 'cutover-dry-run',
       cmd: tsNode,
-      args: [`"${path.join(here, 'cutover-dry-run.ts')}"`, '--base-url', baseUrl, '--org-id', orgId],
+      args: [
+        `"${path.join(here, 'cutover-dry-run.ts')}"`,
+        '--base-url',
+        baseUrl,
+        '--org-id',
+        orgId,
+      ],
     },
     {
       name: 'billing-reconcile (dry)',
@@ -87,7 +95,9 @@ async function main() {
   console.log('Stage health-check report');
   console.log('=========================');
   for (const r of results) {
-    console.log(`  [${r.ok ? 'PASS' : 'FAIL'}] ${r.durationMs.toString().padStart(6)}ms  ${r.name}`);
+    console.log(
+      `  [${r.ok ? 'PASS' : 'FAIL'}] ${r.durationMs.toString().padStart(6)}ms  ${r.name}`,
+    );
   }
   const failed = results.filter((r) => !r.ok).length;
   console.log(`\n${results.length - failed}/${results.length} steps passed.`);

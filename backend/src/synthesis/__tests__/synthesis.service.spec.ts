@@ -1,5 +1,9 @@
 import { SynthesisService } from '../synthesis.service';
-import { SynthesisRefusedError, type SynthesisProvider, type SynthesisRequest } from '../synthesis-types';
+import {
+  SynthesisRefusedError,
+  type SynthesisProvider,
+  type SynthesisRequest,
+} from '../synthesis-types';
 import type { FeatureFlagService } from '../../feature-flags/feature-flag.service';
 import type { DeterministicSynthesisProvider } from '../deterministic-provider';
 import type { BedrockSynthesisProvider } from '../bedrock-provider';

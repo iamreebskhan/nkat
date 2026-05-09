@@ -36,13 +36,7 @@ export function canonicalize(v: unknown): string {
   }
   const obj = v as Record<string, unknown>;
   const keys = Object.keys(obj).sort();
-  return (
-    '{' +
-    keys
-      .map((k) => JSON.stringify(k) + ':' + canonicalize(obj[k]))
-      .join(',') +
-    '}'
-  );
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalize(obj[k])).join(',') + '}';
 }
 
 /**

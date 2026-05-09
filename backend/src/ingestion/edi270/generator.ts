@@ -97,25 +97,37 @@ export function generate270(
   segs.push(
     [
       'ISA',
-      '00', '          ',                                  // 01,02 auth info
-      '00', '          ',                                  // 03,04 security
-      'ZZ', pad(identity.senderId, 15),                    // 05,06
-      'ZZ', pad(identity.receiverId, 15),                  // 07,08
-      yymmdd, hhmm,                                        // 09,10
-      '^',                                                 // 11 repetition sep
-      '00501',                                             // 12 version
-      pad(ctl.interchangeControlNumber, 9, '0', 'left'),   // 13
-      '0',                                                 // 14 ack requested
-      identity.usage,                                      // 15 P/T
-      SUB_SEP,                                             // 16 sub-element sep
+      '00',
+      '          ', // 01,02 auth info
+      '00',
+      '          ', // 03,04 security
+      'ZZ',
+      pad(identity.senderId, 15), // 05,06
+      'ZZ',
+      pad(identity.receiverId, 15), // 07,08
+      yymmdd,
+      hhmm, // 09,10
+      '^', // 11 repetition sep
+      '00501', // 12 version
+      pad(ctl.interchangeControlNumber, 9, '0', 'left'), // 13
+      '0', // 14 ack requested
+      identity.usage, // 15 P/T
+      SUB_SEP, // 16 sub-element sep
     ].join(ELEM_SEP),
   );
 
   // GS — functional group header. Functional ID for 270 = HS.
   segs.push(
     [
-      'GS', 'HS', identity.senderId, identity.receiverId,
-      yyyymmdd, hhmm, ctl.groupControlNumber, 'X', '005010X279A1',
+      'GS',
+      'HS',
+      identity.senderId,
+      identity.receiverId,
+      yyyymmdd,
+      hhmm,
+      ctl.groupControlNumber,
+      'X',
+      '005010X279A1',
     ].join(ELEM_SEP),
   );
 
@@ -123,9 +135,7 @@ export function generate270(
   segs.push(['ST', '270', ctl.transactionSetControlNumber, '005010X279A1'].join(ELEM_SEP));
 
   // BHT — beginning of hierarchical transaction. 0022 = Information Source.
-  segs.push(
-    ['BHT', '0022', '13', ctl.referenceId, yyyymmdd, hhmm].join(ELEM_SEP),
-  );
+  segs.push(['BHT', '0022', '13', ctl.referenceId, yyyymmdd, hhmm].join(ELEM_SEP));
 
   // ----- Information Source (Payer) — HL=1 -----
   segs.push(['HL', '1', '', '20', '1'].join(ELEM_SEP));
@@ -145,9 +155,18 @@ export function generate270(
   const subHasChildren = info.dependent ? '1' : '0';
   segs.push(['HL', '3', '2', '22', subHasChildren].join(ELEM_SEP));
   segs.push(
-    ['NM1', 'IL', '1', info.subscriberLastName, info.subscriberFirstName, '', '', '', 'MI', info.subscriberMemberId].join(
-      ELEM_SEP,
-    ),
+    [
+      'NM1',
+      'IL',
+      '1',
+      info.subscriberLastName,
+      info.subscriberFirstName,
+      '',
+      '',
+      '',
+      'MI',
+      info.subscriberMemberId,
+    ].join(ELEM_SEP),
   );
   segs.push(['DMG', 'D8', info.subscriberDob, info.subscriberGender].join(ELEM_SEP));
 
@@ -156,9 +175,7 @@ export function generate270(
     // them as "not subscriber" (Y for INS01 = is-the-subscriber-the-insured).
     segs.push(['HL', '4', '3', '23', '0'].join(ELEM_SEP));
     segs.push(['INS', 'N', info.dependent.relationship].join(ELEM_SEP));
-    segs.push(
-      ['NM1', '03', '1', info.dependent.lastName, info.dependent.firstName].join(ELEM_SEP),
-    );
+    segs.push(['NM1', '03', '1', info.dependent.lastName, info.dependent.firstName].join(ELEM_SEP));
     segs.push(['DMG', 'D8', info.dependent.dob, info.dependent.gender].join(ELEM_SEP));
     segs.push(['DTP', '291', 'D8', info.serviceDate].join(ELEM_SEP));
   } else {
@@ -198,12 +215,7 @@ export function formatTime(d: Date): string {
   return `${h}${m}`;
 }
 
-export function pad(
-  s: string,
-  len: number,
-  fill = ' ',
-  side: 'left' | 'right' = 'right',
-): string {
+export function pad(s: string, len: number, fill = ' ', side: 'left' | 'right' = 'right'): string {
   if (s.length >= len) return s.slice(0, len);
   const f = fill.repeat(len - s.length);
   return side === 'left' ? f + s : s + f;

@@ -36,8 +36,7 @@ export interface RequiresEntitlement {
 }
 
 export const REQUIRES_KEY = 'tier-guard:requires';
-export const RequiresEntitlement = (req: RequiresEntitlement) =>
-  SetMetadata(REQUIRES_KEY, req);
+export const RequiresEntitlement = (req: RequiresEntitlement) => SetMetadata(REQUIRES_KEY, req);
 
 @Injectable()
 export class TierGuard implements CanActivate {

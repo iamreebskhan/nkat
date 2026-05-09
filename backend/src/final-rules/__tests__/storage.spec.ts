@@ -33,16 +33,36 @@ describe('LocalDiskStorage', () => {
 
   it('produces the same storage_uri for identical content (dedup)', async () => {
     const s = new LocalDiskStorage(root);
-    const a = await s.put({ orgId: 'a-org', filename: 'x.pdf', contentType: 'application/pdf', data: Buffer.from('x') });
-    const b = await s.put({ orgId: 'a-org', filename: 'y.pdf', contentType: 'application/pdf', data: Buffer.from('x') });
+    const a = await s.put({
+      orgId: 'a-org',
+      filename: 'x.pdf',
+      contentType: 'application/pdf',
+      data: Buffer.from('x'),
+    });
+    const b = await s.put({
+      orgId: 'a-org',
+      filename: 'y.pdf',
+      contentType: 'application/pdf',
+      data: Buffer.from('x'),
+    });
     expect(a.storage_uri).toBe(b.storage_uri);
     expect(a.sha256).toBe(b.sha256);
   });
 
   it('namespaces by org', async () => {
     const s = new LocalDiskStorage(root);
-    const a = await s.put({ orgId: 'org-a', filename: 'x.pdf', contentType: 'application/pdf', data: Buffer.from('x') });
-    const b = await s.put({ orgId: 'org-b', filename: 'x.pdf', contentType: 'application/pdf', data: Buffer.from('x') });
+    const a = await s.put({
+      orgId: 'org-a',
+      filename: 'x.pdf',
+      contentType: 'application/pdf',
+      data: Buffer.from('x'),
+    });
+    const b = await s.put({
+      orgId: 'org-b',
+      filename: 'x.pdf',
+      contentType: 'application/pdf',
+      data: Buffer.from('x'),
+    });
     expect(a.storage_uri).not.toBe(b.storage_uri);
     expect(a.storage_uri).toContain('/org-a/');
     expect(b.storage_uri).toContain('/org-b/');

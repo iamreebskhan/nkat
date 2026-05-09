@@ -28,9 +28,7 @@ describe('parseMsDrg', () => {
   });
 
   it('zero-pads short DRG codes', () => {
-    const partial =
-      'MS-DRG,MDC,Type,MS-DRG Title,Weight\n' +
-      '1,01,SURG,Test entry,1.0\n';
+    const partial = 'MS-DRG,MDC,Type,MS-DRG Title,Weight\n' + '1,01,SURG,Test entry,1.0\n';
     const r = parseMsDrg(partial, { fyVersion: 'v43', effectiveDate: new Date() });
     expect(r.rows[0].code).toBe('001');
   });
@@ -41,9 +39,7 @@ describe('parseMsDrg', () => {
   });
 
   it('errors on non-numeric weight', () => {
-    const bad =
-      'MS-DRG,Type,MS-DRG Title,Weight\n' +
-      '999,SURG,Bogus,abc\n';
+    const bad = 'MS-DRG,Type,MS-DRG Title,Weight\n' + '999,SURG,Bogus,abc\n';
     const r = parseMsDrg(bad, { fyVersion: 'v43', effectiveDate: new Date() });
     expect(r.errors).toHaveLength(1);
   });

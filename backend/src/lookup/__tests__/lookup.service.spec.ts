@@ -58,17 +58,53 @@ function makeServices(): Services {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ncci: { evaluate: jest.fn().mockResolvedValue([]) } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    timely: { check: jest.fn().mockResolvedValue({ status: 'unknown', window_days: null, days_elapsed: 0, days_remaining: null }) } as any,
+    timely: {
+      check: jest.fn().mockResolvedValue({
+        status: 'unknown',
+        window_days: null,
+        days_elapsed: 0,
+        days_remaining: null,
+      }),
+    } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    cob: { determine: jest.fn().mockResolvedValue({ status: 'unknown', rationale: null, source_url: null }) } as any,
+    cob: {
+      determine: jest
+        .fn()
+        .mockResolvedValue({ status: 'unknown', rationale: null, source_url: null }),
+    } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    medNec: { check: jest.fn().mockResolvedValue({ status: 'unknown', matched_diagnoses: [], required_one_of: null, rule_id: null, source_url: null, source_quote: null, effective_date: null }) } as any,
+    medNec: {
+      check: jest.fn().mockResolvedValue({
+        status: 'unknown',
+        matched_diagnoses: [],
+        required_one_of: null,
+        rule_id: null,
+        source_url: null,
+        source_quote: null,
+        effective_date: null,
+      }),
+    } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tax: { check: jest.fn().mockResolvedValue({ status: 'unknown', allowed_taxonomies: [], rule_id: null, source_url: null }) } as any,
+    tax: {
+      check: jest.fn().mockResolvedValue({
+        status: 'unknown',
+        allowed_taxonomies: [],
+        rule_id: null,
+        source_url: null,
+      }),
+    } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    sud: { check: jest.fn().mockResolvedValue({ status: 'no_sud_codes', flagged_codes: [], required_scopes: ['TPO_payment'] }) } as any,
+    sud: {
+      check: jest.fn().mockResolvedValue({
+        status: 'no_sud_codes',
+        flagged_codes: [],
+        required_scopes: ['TPO_payment'],
+      }),
+    } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    parity: { check: jest.fn().mockResolvedValue({ bh_code: '', pairs_checked: [], flags: [] }) } as any,
+    parity: {
+      check: jest.fn().mockResolvedValue({ bh_code: '', pairs_checked: [], flags: [] }),
+    } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dme: { evaluate: jest.fn().mockResolvedValue([]) } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -77,7 +113,19 @@ function makeServices(): Services {
 }
 
 function build(rules: PayerRuleRepository, s: Services): LookupService {
-  return new LookupService(rules, s.modifier, s.ncci, s.timely, s.cob, s.medNec, s.tax, s.sud, s.parity, s.dme, s.asc);
+  return new LookupService(
+    rules,
+    s.modifier,
+    s.ncci,
+    s.timely,
+    s.cob,
+    s.medNec,
+    s.tax,
+    s.sud,
+    s.parity,
+    s.dme,
+    s.asc,
+  );
 }
 
 const ORG = '11111111-1111-4111-8111-111111111111';
@@ -116,7 +164,10 @@ describe('LookupService.run', () => {
   it('marks not_covered as critical and includes recommendation about ABN', async () => {
     const svc = build(makeRulesRepo(baseHit({ coverage_status: 'not_covered' })), makeServices());
     const r = await svc.run(baseReq, ORG);
-    expect(r.lines[0].findings[0]).toMatchObject({ severity: 'critical', carc_class: 'coverage_50' });
+    expect(r.lines[0].findings[0]).toMatchObject({
+      severity: 'critical',
+      carc_class: 'coverage_50',
+    });
     expect(r.lines[0].findings[0].recommendation).toMatch(/ABN/);
     expect(r.overall_severity).toBe('critical');
   });
@@ -149,7 +200,11 @@ describe('LookupService.run', () => {
     const svc = build(makeRulesRepo(baseHit()), services);
     const r = await svc.run({ ...baseReq, diagnoses: ['Z51.5'] }, ORG);
     expect(services.medNec.check).toHaveBeenCalledTimes(1);
-    expect(r.lines[0].findings.some((f) => f.carc_class === 'medical_necessity_11' && f.severity === 'ok')).toBe(true);
+    expect(
+      r.lines[0].findings.some(
+        (f) => f.carc_class === 'medical_necessity_11' && f.severity === 'ok',
+      ),
+    ).toBe(true);
   });
 
   it('promotes overall_severity to critical when timely-filing fails', async () => {
@@ -165,7 +220,11 @@ describe('LookupService.run', () => {
     });
     const svc = build(makeRulesRepo(baseHit()), services);
     const r = await svc.run(baseReq, ORG);
-    expect(r.cross_line_findings.some((f) => f.carc_class === 'timely_filing_29' && f.severity === 'critical')).toBe(true);
+    expect(
+      r.cross_line_findings.some(
+        (f) => f.carc_class === 'timely_filing_29' && f.severity === 'critical',
+      ),
+    ).toBe(true);
     expect(r.overall_severity).toBe('critical');
   });
 
@@ -214,7 +273,11 @@ describe('LookupService.run', () => {
     });
     const svc = build(makeRulesRepo(baseHit()), services);
     const r = await svc.run(
-      { ...baseReq, client_id: '22222222-2222-4222-8222-222222222222', patient_external_id: 'PHASH1' },
+      {
+        ...baseReq,
+        client_id: '22222222-2222-4222-8222-222222222222',
+        patient_external_id: 'PHASH1',
+      },
       ORG,
     );
     const consent = r.cross_line_findings.find((f) => f.carc_class === 'part2_consent');

@@ -99,7 +99,9 @@ describe('redactPhi — phone, email, name', () => {
 describe('redactPhi — totals + idempotency', () => {
   it('sums total_redactions across categories', () => {
     const r = redactPhi('SSN 123-45-6789 DOB: 4/12/1950 phone (614) 555-1212');
-    expect(r.total_redactions).toBe(r.category_counts.ssn + r.category_counts.dob + r.category_counts.phone);
+    expect(r.total_redactions).toBe(
+      r.category_counts.ssn + r.category_counts.dob + r.category_counts.phone,
+    );
     expect(r.total_redactions).toBe(3);
   });
 

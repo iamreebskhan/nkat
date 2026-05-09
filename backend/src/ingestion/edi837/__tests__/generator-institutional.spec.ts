@@ -88,7 +88,7 @@ describe('generate837I', () => {
       lines: [
         {
           lineNumber: 1,
-          revenueCode: '0510',          // outpatient clinic
+          revenueCode: '0510', // outpatient clinic
           procedureCode: '99213',
           modifiers: ['25'],
           chargeAmount: 150.0,
@@ -175,13 +175,23 @@ describe('generate837I', () => {
 
   it('rejects malformed type-of-bill', () => {
     expect(() =>
-      generate837I(identity, provider, subscriber, payer, { ...hospiceClaim, typeOfBill: 'XYZ' }, ctl),
+      generate837I(
+        identity,
+        provider,
+        subscriber,
+        payer,
+        { ...hospiceClaim, typeOfBill: 'XYZ' },
+        ctl,
+      ),
     ).toThrow(/typeOfBill/);
   });
 
   it('SE segment count matches actual segments', () => {
     const out = generate837I(identity, provider, subscriber, payer, hospiceClaim, ctl);
-    const segs = out.split('~').filter((s) => s.length > 0).map((s) => s.trim());
+    const segs = out
+      .split('~')
+      .filter((s) => s.length > 0)
+      .map((s) => s.trim());
     const stIdx = segs.findIndex((s) => s.startsWith('ST*'));
     const seIdx = segs.findIndex((s) => s.startsWith('SE*'));
     const declared = parseInt(segs[seIdx].split('*')[1], 10);

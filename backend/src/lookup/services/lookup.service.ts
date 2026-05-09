@@ -121,7 +121,11 @@ export class LookupService {
 
   // ----- per-attribute checks -----
 
-  private async checkCoverage(req: LookupRequestDto, line: ClaimLineDto, dos: Date): Promise<FindingDto[]> {
+  private async checkCoverage(
+    req: LookupRequestDto,
+    line: ClaimLineDto,
+    dos: Date,
+  ): Promise<FindingDto[]> {
     const hit = await this.rules.fetchOne({
       payer_id: req.payer_id,
       state: req.state,
@@ -146,7 +150,11 @@ export class LookupService {
     return [coverageFinding(hit, line.code)];
   }
 
-  private async checkModifiers(line: ClaimLineDto, payerType: string, dos: Date): Promise<FindingDto[]> {
+  private async checkModifiers(
+    line: ClaimLineDto,
+    payerType: string,
+    dos: Date,
+  ): Promise<FindingDto[]> {
     const modifiers = line.modifiers ?? [];
     if (modifiers.length === 0) return [];
     const issues = await this.modifier.validate({
@@ -177,7 +185,11 @@ export class LookupService {
     });
   }
 
-  private async checkNcci(req: LookupRequestDto, dos: Date, setting: 'practitioner' | 'outpatient_hospital' | 'dme'): Promise<FindingDto[]> {
+  private async checkNcci(
+    req: LookupRequestDto,
+    dos: Date,
+    setting: 'practitioner' | 'outpatient_hospital' | 'dme',
+  ): Promise<FindingDto[]> {
     if (req.lines.length < 2) return [];
     const issues = await this.ncci.evaluate({
       lines: req.lines.map((l, idx) => ({
@@ -198,7 +210,8 @@ export class LookupService {
       citations: [
         {
           source_doc_id: i.source_release,
-          source_url: 'https://www.cms.gov/medicare/coding-billing/national-correct-coding-initiative-ncci-edits',
+          source_url:
+            'https://www.cms.gov/medicare/coding-billing/national-correct-coding-initiative-ncci-edits',
           retrieved_at: new Date().toISOString(),
           verbatim_quote: i.source_release,
         },
@@ -206,7 +219,11 @@ export class LookupService {
     }));
   }
 
-  private async checkTimelyFiling(req: LookupRequestDto, dos: Date, filing_date: Date): Promise<FindingDto[]> {
+  private async checkTimelyFiling(
+    req: LookupRequestDto,
+    dos: Date,
+    filing_date: Date,
+  ): Promise<FindingDto[]> {
     const r = await this.timely.check({
       payer_id: req.payer_id,
       state: req.state,
@@ -240,7 +257,11 @@ export class LookupService {
     ];
   }
 
-  private async checkCob(req: LookupRequestDto, dos: Date, cobCurrentCoverage: string): Promise<FindingDto[]> {
+  private async checkCob(
+    req: LookupRequestDto,
+    dos: Date,
+    cobCurrentCoverage: string,
+  ): Promise<FindingDto[]> {
     const r = await this.cob.determine({
       current_payer_type: cobCurrentCoverage,
       other_coverage: req.cob_other_coverage as string,
@@ -255,7 +276,15 @@ export class LookupService {
           title: 'COB: current payer is primary',
           detail: r.rationale ?? '',
           confidence: 1,
-          citations: r.source_url ? [{ source_doc_id: r.rule_id ?? '', source_url: r.source_url, retrieved_at: new Date().toISOString() }] : [],
+          citations: r.source_url
+            ? [
+                {
+                  source_doc_id: r.rule_id ?? '',
+                  source_url: r.source_url,
+                  retrieved_at: new Date().toISOString(),
+                },
+              ]
+            : [],
         },
       ];
     }
@@ -267,8 +296,18 @@ export class LookupService {
           title: 'COB: current payer is secondary',
           detail: r.rationale ?? `Bill ${r.primary_coverage_type ?? 'other coverage'} first`,
           confidence: 1,
-          citations: r.source_url ? [{ source_doc_id: r.rule_id ?? '', source_url: r.source_url, retrieved_at: new Date().toISOString() }] : [],
-          recommendation: r.primary_coverage_type ? `Bill ${r.primary_coverage_type} as primary first.` : undefined,
+          citations: r.source_url
+            ? [
+                {
+                  source_doc_id: r.rule_id ?? '',
+                  source_url: r.source_url,
+                  retrieved_at: new Date().toISOString(),
+                },
+              ]
+            : [],
+          recommendation: r.primary_coverage_type
+            ? `Bill ${r.primary_coverage_type} as primary first.`
+            : undefined,
         },
       ];
     }
@@ -279,12 +318,24 @@ export class LookupService {
         title: 'COB: depends on facts',
         detail: r.rationale ?? 'Primary determination depends on conditions that must be verified',
         confidence: 0.7,
-        citations: r.source_url ? [{ source_doc_id: r.rule_id ?? '', source_url: r.source_url, retrieved_at: new Date().toISOString() }] : [],
+        citations: r.source_url
+          ? [
+              {
+                source_doc_id: r.rule_id ?? '',
+                source_url: r.source_url,
+                retrieved_at: new Date().toISOString(),
+              },
+            ]
+          : [],
       },
     ];
   }
 
-  private async checkSudConsent(req: LookupRequestDto, dos: Date, orgId: string): Promise<FindingDto[]> {
+  private async checkSudConsent(
+    req: LookupRequestDto,
+    dos: Date,
+    orgId: string,
+  ): Promise<FindingDto[]> {
     const r: SudConsentResult = await this.sud.check({
       org_id: orgId,
       client_id: req.client_id as string,
@@ -303,8 +354,15 @@ export class LookupService {
           title: '42 CFR Part 2: SUD code submitted without patient identifier',
           detail: `Codes ${codes} are SUD-Part-2 protected. patient_external_id is required to verify TPO consent.`,
           confidence: 1,
-          citations: [{ source_doc_id: '', source_url: 'https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2', retrieved_at: new Date().toISOString() }],
-          recommendation: 'Add patient_external_id and confirm a signed TPO consent is on file before submission.',
+          citations: [
+            {
+              source_doc_id: '',
+              source_url: 'https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2',
+              retrieved_at: new Date().toISOString(),
+            },
+          ],
+          recommendation:
+            'Add patient_external_id and confirm a signed TPO consent is on file before submission.',
         },
       ];
     }
@@ -316,8 +374,15 @@ export class LookupService {
           title: '42 CFR Part 2: TPO consent has been revoked',
           detail: `Consent ${r.consent_id} was revoked at ${r.revoked_at?.toISOString() ?? '?'}. Cannot submit SUD codes ${codes}.`,
           confidence: 1,
-          citations: [{ source_doc_id: r.consent_id ?? '', source_url: 'https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2', retrieved_at: new Date().toISOString() }],
-          recommendation: 'Obtain a new signed TPO consent (treatment + payment + operations) before re-submission.',
+          citations: [
+            {
+              source_doc_id: r.consent_id ?? '',
+              source_url: 'https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2',
+              retrieved_at: new Date().toISOString(),
+            },
+          ],
+          recommendation:
+            'Obtain a new signed TPO consent (treatment + payment + operations) before re-submission.',
         },
       ];
     }
@@ -328,7 +393,13 @@ export class LookupService {
         title: '42 CFR Part 2: no active TPO consent on file',
         detail: `Codes ${codes} are SUD-Part-2 protected. Required scope: ${r.required_scopes.join(', ')}.`,
         confidence: 1,
-        citations: [{ source_doc_id: '', source_url: 'https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2', retrieved_at: new Date().toISOString() }],
+        citations: [
+          {
+            source_doc_id: '',
+            source_url: 'https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2',
+            retrieved_at: new Date().toISOString(),
+          },
+        ],
         recommendation: 'Obtain a signed TPO consent before submitting these claims.',
       },
     ];
@@ -368,8 +439,7 @@ export class LookupService {
       dos,
     );
     return issues.map((i) => {
-      const severity: Severity =
-        i.kind === 'master_list_below_threshold' ? 'info' : 'warning';
+      const severity: Severity = i.kind === 'master_list_below_threshold' ? 'info' : 'warning';
       return {
         severity,
         carc_class: 'dmepos_master_list',
@@ -411,18 +481,24 @@ export class LookupService {
           citations: [
             {
               source_doc_id: '',
-              source_url: 'https://www.dol.gov/agencies/ebsa/laws-and-regulations/laws/mental-health-parity',
+              source_url:
+                'https://www.dol.gov/agencies/ebsa/laws-and-regulations/laws/mental-health-parity',
               retrieved_at: new Date().toISOString(),
             },
           ],
-          recommendation: 'Review with parity counsel; this is a candidate violation, not a confirmed one.',
+          recommendation:
+            'Review with parity counsel; this is a candidate violation, not a confirmed one.',
         });
       }
     }
     return findings;
   }
 
-  private async checkMedicalNecessity(req: LookupRequestDto, line: ClaimLineDto, dos: Date): Promise<FindingDto[]> {
+  private async checkMedicalNecessity(
+    req: LookupRequestDto,
+    line: ClaimLineDto,
+    dos: Date,
+  ): Promise<FindingDto[]> {
     const r = await this.medNec.check({
       payer_id: req.payer_id,
       state: req.state,
@@ -457,7 +533,11 @@ export class LookupService {
     ];
   }
 
-  private async checkProviderTaxonomy(req: LookupRequestDto, line: ClaimLineDto, dos: Date): Promise<FindingDto[]> {
+  private async checkProviderTaxonomy(
+    req: LookupRequestDto,
+    line: ClaimLineDto,
+    dos: Date,
+  ): Promise<FindingDto[]> {
     const r = await this.tax.check({
       payer_id: req.payer_id,
       state: req.state,
@@ -477,7 +557,15 @@ export class LookupService {
         title: 'Provider taxonomy not allowed for this code',
         detail: `Allowed: ${r.allowed_taxonomies.join(', ')}; submitted: ${req.provider_taxonomy}`,
         confidence: 1,
-        citations: r.source_url ? [{ source_doc_id: r.rule_id ?? '', source_url: r.source_url, retrieved_at: new Date().toISOString() }] : [],
+        citations: r.source_url
+          ? [
+              {
+                source_doc_id: r.rule_id ?? '',
+                source_url: r.source_url,
+                retrieved_at: new Date().toISOString(),
+              },
+            ]
+          : [],
       },
     ];
   }
@@ -511,7 +599,9 @@ function coverageFinding(hit: PayerRuleHit, code: string): FindingDto {
     source_url: hit.source_url ?? '',
     retrieved_at: new Date().toISOString(),
     effective_date: hit.effective_date.toISOString().slice(0, 10),
-    ...(hit.expiration_date ? { expiration_date: hit.expiration_date.toISOString().slice(0, 10) } : {}),
+    ...(hit.expiration_date
+      ? { expiration_date: hit.expiration_date.toISOString().slice(0, 10) }
+      : {}),
     ...(hit.source_quote ? { verbatim_quote: hit.source_quote } : {}),
     ...(hit.source_page !== null ? { page_number: hit.source_page } : {}),
   };
@@ -557,7 +647,11 @@ function coverageFinding(hit: PayerRuleHit, code: string): FindingDto {
   };
 }
 
-function withCitation(r: { source_doc_id?: string; source_quote?: string; source_url?: string }): CitationDto {
+function withCitation(r: {
+  source_doc_id?: string;
+  source_quote?: string;
+  source_url?: string;
+}): CitationDto {
   return {
     source_doc_id: r.source_doc_id ?? '',
     source_url: r.source_url ?? '',
@@ -566,7 +660,12 @@ function withCitation(r: { source_doc_id?: string; source_quote?: string; source
   };
 }
 
-function withMedNecCitation(r: { rule_id: string | null; source_url: string | null; source_quote: string | null; effective_date: Date | null }): CitationDto {
+function withMedNecCitation(r: {
+  rule_id: string | null;
+  source_url: string | null;
+  source_quote: string | null;
+  effective_date: Date | null;
+}): CitationDto {
   return {
     source_doc_id: r.rule_id ?? '',
     source_url: r.source_url ?? '',

@@ -92,7 +92,7 @@ describe('realDbPing / realRedisPing — production code paths', () => {
     const { realRedisPing } = await import('../health.controller');
     const store = {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      consume: async () => ({ allowed: false, retryAfterMs: 1000, remaining: 0 } as any),
+      consume: async () => ({ allowed: false, retryAfterMs: 1000, remaining: 0 }) as any,
     };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await expect(realRedisPing(store as any)).rejects.toThrow(/unexpectedly rejected/);

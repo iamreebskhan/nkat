@@ -21,10 +21,14 @@ export function resolvePriceId(
   envSource: NodeJS.ProcessEnv = process.env,
 ): string | null {
   switch (tier) {
-    case 'solo':       return envSource.STRIPE_PRICE_SOLO ?? null;
-    case 'team':       return envSource.STRIPE_PRICE_TEAM ?? null;
-    case 'org':        return envSource.STRIPE_PRICE_ORG ?? null;
-    case 'enterprise': return envSource.STRIPE_PRICE_ENTERPRISE ?? null;
+    case 'solo':
+      return envSource.STRIPE_PRICE_SOLO ?? null;
+    case 'team':
+      return envSource.STRIPE_PRICE_TEAM ?? null;
+    case 'org':
+      return envSource.STRIPE_PRICE_ORG ?? null;
+    case 'enterprise':
+      return envSource.STRIPE_PRICE_ENTERPRISE ?? null;
   }
 }
 

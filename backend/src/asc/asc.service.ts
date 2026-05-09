@@ -24,8 +24,8 @@ export interface AscIndicatorMatch {
 }
 
 export type AscIssueKind =
-  | 'asc_not_payable'      // no indicator on file → hospital-only
-  | 'asc_office_based';    // A2 → typically not paid in ASC; office-based procedure
+  | 'asc_not_payable' // no indicator on file → hospital-only
+  | 'asc_office_based'; // A2 → typically not paid in ASC; office-based procedure
 
 export interface AscIssue {
   kind: AscIssueKind;
@@ -79,7 +79,14 @@ export class AscService {
     const year = dos.getUTCFullYear();
     const rows = await this.db
       .selectFrom('asc_payment_indicator')
-      .select(['code', 'payment_indicator', 'payment_group', 'payment_rate', 'source_url', 'effective_year'])
+      .select([
+        'code',
+        'payment_indicator',
+        'payment_group',
+        'payment_rate',
+        'source_url',
+        'effective_year',
+      ])
       .where('code', 'in', codes)
       .where('effective_year', '=', year)
       .execute();

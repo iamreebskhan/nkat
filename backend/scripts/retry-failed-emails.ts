@@ -96,10 +96,23 @@ async function main() {
     try {
       const r = await email.retryFailedSend(row.id);
       switch (r.status) {
-        case 'sent': sent++; console.log(`  ✓ ${row.id} (${row.template}) → sent`); break;
-        case 'failed': stillFailed++; console.log(`  • ${row.id} (${row.template}) → still failed (attempt ${row.retry_count + 1})`); break;
-        case 'dead_lettered': dead++; console.log(`  ✗ ${row.id} (${row.template}) → DEAD (max retries)`); break;
-        case 'noop': noop++; break;
+        case 'sent':
+          sent++;
+          console.log(`  ✓ ${row.id} (${row.template}) → sent`);
+          break;
+        case 'failed':
+          stillFailed++;
+          console.log(
+            `  • ${row.id} (${row.template}) → still failed (attempt ${row.retry_count + 1})`,
+          );
+          break;
+        case 'dead_lettered':
+          dead++;
+          console.log(`  ✗ ${row.id} (${row.template}) → DEAD (max retries)`);
+          break;
+        case 'noop':
+          noop++;
+          break;
       }
     } catch (e) {
       stillFailed++;
@@ -107,9 +120,7 @@ async function main() {
     }
   }
 
-  console.log(
-    `\nDone: sent=${sent} still_failed=${stillFailed} dead=${dead} noop=${noop}.`,
-  );
+  console.log(`\nDone: sent=${sent} still_failed=${stillFailed} dead=${dead} noop=${noop}.`);
   await pool.end();
   exit(stillFailed === 0 && dead === 0 ? 0 : 0); // never red-fail the cron — dead-letter is expected behavior
 }

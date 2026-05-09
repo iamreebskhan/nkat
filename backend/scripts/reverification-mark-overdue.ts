@@ -24,7 +24,9 @@ async function main(): Promise<void> {
 
   const due = await svc.listDue();
   for (const item of due) {
-    console.log(`  rule=${item.payer_rule_id} reverify_by=${item.reverify_by.toISOString().slice(0, 10)} days_overdue=${item.days_overdue}`);
+    console.log(
+      `  rule=${item.payer_rule_id} reverify_by=${item.reverify_by.toISOString().slice(0, 10)} days_overdue=${item.days_overdue}`,
+    );
   }
 
   await pool.end();

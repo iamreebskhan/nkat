@@ -33,7 +33,10 @@ export function slugFromCompanyName(name: string): string {
  * Deterministic given a seed (used in tests); random in production.
  */
 export function suffixedSlug(base: string, suffix: string): string {
-  const safe = suffix.replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 6);
+  const safe = suffix
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase()
+    .slice(0, 6);
   if (!safe) return base;
   return `${base}-${safe}`;
 }

@@ -1,4 +1,8 @@
-import { findStaleInvoiceEvents, buildSyntheticReconcileEvent, type MinimalBillingEvent } from '../reconciler';
+import {
+  findStaleInvoiceEvents,
+  buildSyntheticReconcileEvent,
+  type MinimalBillingEvent,
+} from '../reconciler';
 import type { StripeSubscriptionLike } from '../billing-types';
 
 const ORG = '11111111-1111-4111-8111-111111111111';
@@ -11,7 +15,11 @@ function ev(type: string, ageSec: number, payload?: Record<string, unknown>): Mi
     occurred_at: new Date(Date.now() - ageSec * 1000),
     raw_payload: payload ?? {
       type,
-      data: { object: type.startsWith('customer.subscription.') ? { id: SUB, object: 'subscription' } : { subscription: SUB } },
+      data: {
+        object: type.startsWith('customer.subscription.')
+          ? { id: SUB, object: 'subscription' }
+          : { subscription: SUB },
+      },
     },
   };
 }
@@ -31,10 +39,7 @@ describe('findStaleInvoiceEvents', () => {
 
   it('does NOT flag when a subscription event arrived after the invoice', () => {
     const out = findStaleInvoiceEvents({
-      events: [
-        ev('invoice.paid', 600),
-        ev('customer.subscription.updated', 120),
-      ],
+      events: [ev('invoice.paid', 600), ev('customer.subscription.updated', 120)],
       nowMs: Date.now(),
       staleSeconds: 300,
     });
@@ -52,21 +57,28 @@ describe('findStaleInvoiceEvents', () => {
 
   it('flags invoice.payment_failed and invoice.uncollectible too', () => {
     const out = findStaleInvoiceEvents({
-      events: [ev('invoice.payment_failed', 600), ev('invoice.uncollectible', 600, {
-        type: 'invoice.uncollectible',
-        data: { object: { subscription: 'sub_2' } },
-      })],
+      events: [
+        ev('invoice.payment_failed', 600),
+        ev('invoice.uncollectible', 600, {
+          type: 'invoice.uncollectible',
+          data: { object: { subscription: 'sub_2' } },
+        }),
+      ],
       nowMs: Date.now(),
       staleSeconds: 300,
     });
-    expect(out.subscriptions_to_refetch.map((x) => x.stripe_subscription_id).sort()).toEqual(['sub_1', 'sub_2']);
+    expect(out.subscriptions_to_refetch.map((x) => x.stripe_subscription_id).sort()).toEqual([
+      'sub_1',
+      'sub_2',
+    ]);
   });
 
   it('groups events per subscription correctly', () => {
     const out = findStaleInvoiceEvents({
       events: [
-        ev('invoice.paid', 600),                                   // sub_1, stale
-        ev('customer.subscription.updated', 1200, {                // sub_1 BEFORE invoice — doesn't count as follow-up
+        ev('invoice.paid', 600), // sub_1, stale
+        ev('customer.subscription.updated', 1200, {
+          // sub_1 BEFORE invoice — doesn't count as follow-up
           type: 'customer.subscription.updated',
           data: { object: { id: 'sub_1', object: 'subscription' } },
         }),

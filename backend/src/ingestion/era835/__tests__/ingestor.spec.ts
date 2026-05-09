@@ -193,9 +193,7 @@ describe('Era835Ingestor.ingest', () => {
       claims: [
         {
           ...baseFile.claims[0],
-          service_lines: [
-            { ...baseFile.claims[0].service_lines[0], adjustments: [] },
-          ],
+          service_lines: [{ ...baseFile.claims[0].service_lines[0], adjustments: [] }],
         },
       ],
     };
@@ -262,8 +260,6 @@ describe('Era835Ingestor.ingest', () => {
     const ingestor = new Era835Ingestor();
     const report = await ingestor.ingest(tx, baseFile, { org_id: ORG_ID, client_id: CLIENT_ID });
     expect(report.records_persisted).toBe(1);
-    expect(report.errors).toEqual([
-      { claim_id: 'C2', message: 'db boom' },
-    ]);
+    expect(report.errors).toEqual([{ claim_id: 'C2', message: 'db boom' }]);
   });
 });

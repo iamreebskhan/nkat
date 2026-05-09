@@ -74,11 +74,7 @@ async function main() {
       'o.name as org_name',
     ])
     .where('s.status', 'in', ['trialing', 'active'])
-    .where(
-      sql`s.current_period_end`,
-      '<=',
-      sql`now() + ${`${args.noticeDays} days`}::interval`,
-    )
+    .where(sql`s.current_period_end`, '<=', sql`now() + ${`${args.noticeDays} days`}::interval`)
     .where(sql`s.current_period_end`, '>', sql`now()`)
     .execute();
 
@@ -98,10 +94,7 @@ async function main() {
     console.log(line);
 
     if (!args.dryRun && args.slackWebhook) {
-      await postSlack(
-        args.slackWebhook,
-        `:hourglass_flowing_sand: *Renewal motion*: ${line}`,
-      );
+      await postSlack(args.slackWebhook, `:hourglass_flowing_sand: *Renewal motion*: ${line}`);
     }
   }
 

@@ -9,11 +9,7 @@
  */
 import { sql } from 'kysely';
 import { randomBytes } from 'node:crypto';
-import {
-  startIntegrationContext,
-  integrationDescribe,
-  type IntegrationContext,
-} from './harness';
+import { startIntegrationContext, integrationDescribe, type IntegrationContext } from './harness';
 import { encrypt, parseMasterKey } from '../../src/clearinghouse/credential-crypto';
 
 const ORG_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -58,25 +54,35 @@ integrationDescribe('Phase 64–65 surfaces (integration)', () => {
     it('upsert is unique per (org_id, clearinghouse) — second SET replaces, not appends', async () => {
       // Two writes of the same clearinghouse for one org should leave
       // exactly ONE row (UNIQUE constraint + ON CONFLICT path in service).
-      const enc1 = encrypt({ master, plaintext: JSON.stringify({ clientId: 'a-1', clientSecret: 's1' }) });
-      const enc2 = encrypt({ master, plaintext: JSON.stringify({ clientId: 'a-2', clientSecret: 's2' }) });
-
-      await ctx.appDb.transaction().execute(async (tx) => {
-        await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_A)}`.execute(tx);
-        await tx.insertInto('tenant_clearinghouse_credential').values({
-          org_id: ORG_A,
-          clearinghouse: 'availity',
-          ciphertext: enc1.ciphertext,
-          iv: enc1.iv,
-          auth_tag: enc1.auth_tag,
-          display_suffix: 'aaa1',
-          created_by_user_id: USER_A,
-        }).execute();
+      const enc1 = encrypt({
+        master,
+        plaintext: JSON.stringify({ clientId: 'a-1', clientSecret: 's1' }),
+      });
+      const enc2 = encrypt({
+        master,
+        plaintext: JSON.stringify({ clientId: 'a-2', clientSecret: 's2' }),
       });
 
       await ctx.appDb.transaction().execute(async (tx) => {
         await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_A)}`.execute(tx);
-        await tx.insertInto('tenant_clearinghouse_credential')
+        await tx
+          .insertInto('tenant_clearinghouse_credential')
+          .values({
+            org_id: ORG_A,
+            clearinghouse: 'availity',
+            ciphertext: enc1.ciphertext,
+            iv: enc1.iv,
+            auth_tag: enc1.auth_tag,
+            display_suffix: 'aaa1',
+            created_by_user_id: USER_A,
+          })
+          .execute();
+      });
+
+      await ctx.appDb.transaction().execute(async (tx) => {
+        await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_A)}`.execute(tx);
+        await tx
+          .insertInto('tenant_clearinghouse_credential')
           .values({
             org_id: ORG_A,
             clearinghouse: 'availity',
@@ -110,13 +116,10 @@ integrationDescribe('Phase 64–65 surfaces (integration)', () => {
       expect(rows[0].display_suffix).toBe('aaa2');
     });
 
-    it('Org B cannot read Org A\'s credentials (RLS)', async () => {
+    it("Org B cannot read Org A's credentials (RLS)", async () => {
       const seen = await ctx.appDb.transaction().execute(async (tx) => {
         await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_B)}`.execute(tx);
-        return tx
-          .selectFrom('tenant_clearinghouse_credential')
-          .select('id')
-          .execute();
+        return tx.selectFrom('tenant_clearinghouse_credential').select('id').execute();
       });
       expect(seen).toHaveLength(0);
     });
@@ -172,10 +175,7 @@ integrationDescribe('Phase 64–65 surfaces (integration)', () => {
     it('lists for the right org via RLS', async () => {
       const seen = await ctx.appDb.transaction().execute(async (tx) => {
         await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_A)}`.execute(tx);
-        return tx
-          .selectFrom('client_company')
-          .select(['id', 'name'])
-          .execute();
+        return tx.selectFrom('client_company').select(['id', 'name']).execute();
       });
       expect(seen.find((r) => r.id === CLIENT_A)).toBeDefined();
     });
@@ -183,10 +183,7 @@ integrationDescribe('Phase 64–65 surfaces (integration)', () => {
     it('Org B sees zero clients via RLS even though they exist for Org A', async () => {
       const seen = await ctx.appDb.transaction().execute(async (tx) => {
         await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_B)}`.execute(tx);
-        return tx
-          .selectFrom('client_company')
-          .select('id')
-          .execute();
+        return tx.selectFrom('client_company').select('id').execute();
       });
       expect(seen).toHaveLength(0);
     });

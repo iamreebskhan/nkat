@@ -1,4 +1,10 @@
-import { Module, type DynamicModule, Logger, type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
+import {
+  Module,
+  type DynamicModule,
+  Logger,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
+} from '@nestjs/common';
 import {
   InMemoryRateLimitStore,
   RedisRateLimitStore,
@@ -94,11 +100,7 @@ export class RateLimitModule {
         },
         RateLimitInterceptor,
       ],
-      exports: [
-        RateLimitInterceptor,
-        RATE_LIMIT_STORE_TOKEN,
-        OVERRIDE_RESOLVER_TOKEN,
-      ],
+      exports: [RateLimitInterceptor, RATE_LIMIT_STORE_TOKEN, OVERRIDE_RESOLVER_TOKEN],
     };
   }
 }

@@ -17,11 +17,11 @@ export type PhiCategory =
   | 'dob'
   | 'phone'
   | 'email'
-  | 'icn'      // claim/encounter ID candidate
+  | 'icn' // claim/encounter ID candidate
   | 'name_titled'
-  | 'address'  // street address with house number + street type
-  | 'zip'      // 5- or 9-digit ZIP, only when paired with city/state context
-  | 'npi'      // 10-digit NPI when labelled
+  | 'address' // street address with house number + street type
+  | 'zip' // 5- or 9-digit ZIP, only when paired with city/state context
+  | 'npi' // 10-digit NPI when labelled
   | 'account'; // account-number labelled run
 
 export interface RedactionResult {
@@ -54,13 +54,15 @@ const MRN_LABELED = /\b(?:mrn|medical record(?:\s+number)?|chart\s*#)[\s:#]*([A-
  * `patient` alone is intentionally NOT a label here — it would collide with
  * `Patient: <Name>` and consume names. We require `patient id`.
  */
-const MEMBER_LABELED = /\b(?:member(?:\s+id)?|subscriber(?:\s+id)?|patient\s+id)[\s:#]*([A-Z0-9-]{4,18})\b/gi;
+const MEMBER_LABELED =
+  /\b(?:member(?:\s+id)?|subscriber(?:\s+id)?|patient\s+id)[\s:#]*([A-Z0-9-]{4,18})\b/gi;
 
 /**
  * Dates of birth: explicit DOB labels OR clearly-DOB-shaped dates that match
  * common formats. We're aggressive — billers often write "DOB 4/12/1950" inline.
  */
-const DOB_LABELED = /\b(?:dob|date\s+of\s+birth|d\.o\.b\.?|born)[\s:]*((?:\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})|(?:\d{4}-\d{2}-\d{2}))\b/gi;
+const DOB_LABELED =
+  /\b(?:dob|date\s+of\s+birth|d\.o\.b\.?|born)[\s:]*((?:\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})|(?:\d{4}-\d{2}-\d{2}))\b/gi;
 
 /** US phone numbers — XXX-XXX-XXXX, (XXX) XXX-XXXX, +1-XXX-XXX-XXXX. */
 const PHONE = /(?:\+1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
@@ -72,19 +74,22 @@ const EMAIL = /\b[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g;
  * Internal Control Number / claim ID candidate. We only flag when paired with
  * an "ICN" / "control number" label so we don't redact every 8-digit code.
  */
-const ICN_LABELED = /\b(?:ICN|control\s+number|claim\s*#|claim\s+control)[\s:#]*([A-Z0-9-]{6,24})\b/gi;
+const ICN_LABELED =
+  /\b(?:ICN|control\s+number|claim\s*#|claim\s+control)[\s:#]*([A-Z0-9-]{6,24})\b/gi;
 
 /**
  * "Patient: <FirstName LastName>" style — high-signal when the literal label
  * is present, low false-positive risk because we require the label.
  */
-const NAME_TITLED = /\b(?:patient(?:\s+name)?|name)[\s:]+([A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-z]+)+)\b/gi;
+const NAME_TITLED =
+  /\b(?:patient(?:\s+name)?|name)[\s:]+([A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-z]+)+)\b/gi;
 
 /**
  * Street address — house number + street name + common street type.
  * Avoids matching mailing addresses without house numbers.
  */
-const ADDRESS = /\b\d{1,5}\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl|Highway|Hwy|Parkway|Pkwy|Terrace|Ter)\b\.?/g;
+const ADDRESS =
+  /\b\d{1,5}\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl|Highway|Hwy|Parkway|Pkwy|Terrace|Ter)\b\.?/g;
 
 /**
  * NPI: 10-digit National Provider Identifier, only when explicitly
@@ -116,25 +121,51 @@ const DEFAULT_REPLACEMENT = (cat: PhiCategory): string => `[REDACTED:${cat.toUpp
  * SSN runs last to claim only what remains.
  */
 const PATTERNS: Pattern[] = [
-  { category: 'icn',         re: ICN_LABELED,     replacement: (cat) => `ICN: ${DEFAULT_REPLACEMENT(cat)}` },
-  { category: 'mrn',         re: MRN_LABELED,     replacement: (cat) => `MRN: ${DEFAULT_REPLACEMENT(cat)}` },
-  { category: 'npi',         re: NPI_LABELED,     replacement: (cat) => `NPI: ${DEFAULT_REPLACEMENT(cat)}` },
-  { category: 'account',     re: ACCOUNT_LABELED, replacement: (cat) => `Account: ${DEFAULT_REPLACEMENT(cat)}` },
-  { category: 'member_id',   re: MEMBER_LABELED,  replacement: (cat) => `Member ID: ${DEFAULT_REPLACEMENT(cat)}` },
-  { category: 'dob',         re: DOB_LABELED,     replacement: (cat) => `DOB: ${DEFAULT_REPLACEMENT(cat)}` },
-  { category: 'name_titled', re: NAME_TITLED,     replacement: (cat) => `Patient: ${DEFAULT_REPLACEMENT(cat)}` },
-  { category: 'address',     re: ADDRESS,         replacement: DEFAULT_REPLACEMENT },
-  { category: 'zip',         re: ZIP_CONTEXTUAL,  replacement: (cat, m) =>
+  { category: 'icn', re: ICN_LABELED, replacement: (cat) => `ICN: ${DEFAULT_REPLACEMENT(cat)}` },
+  { category: 'mrn', re: MRN_LABELED, replacement: (cat) => `MRN: ${DEFAULT_REPLACEMENT(cat)}` },
+  { category: 'npi', re: NPI_LABELED, replacement: (cat) => `NPI: ${DEFAULT_REPLACEMENT(cat)}` },
+  {
+    category: 'account',
+    re: ACCOUNT_LABELED,
+    replacement: (cat) => `Account: ${DEFAULT_REPLACEMENT(cat)}`,
+  },
+  {
+    category: 'member_id',
+    re: MEMBER_LABELED,
+    replacement: (cat) => `Member ID: ${DEFAULT_REPLACEMENT(cat)}`,
+  },
+  { category: 'dob', re: DOB_LABELED, replacement: (cat) => `DOB: ${DEFAULT_REPLACEMENT(cat)}` },
+  {
+    category: 'name_titled',
+    re: NAME_TITLED,
+    replacement: (cat) => `Patient: ${DEFAULT_REPLACEMENT(cat)}`,
+  },
+  { category: 'address', re: ADDRESS, replacement: DEFAULT_REPLACEMENT },
+  {
+    category: 'zip',
+    re: ZIP_CONTEXTUAL,
+    replacement: (cat, m) =>
       // Preserve the leading ", ST " portion so the structural shape is intact.
-      m.replace(/\d{5}(?:-\d{4})?/, DEFAULT_REPLACEMENT(cat)) },
-  { category: 'email',       re: EMAIL,           replacement: DEFAULT_REPLACEMENT },
-  { category: 'phone',       re: PHONE,           replacement: DEFAULT_REPLACEMENT },
-  { category: 'ssn',         re: SSN,             replacement: DEFAULT_REPLACEMENT },
+      m.replace(/\d{5}(?:-\d{4})?/, DEFAULT_REPLACEMENT(cat)),
+  },
+  { category: 'email', re: EMAIL, replacement: DEFAULT_REPLACEMENT },
+  { category: 'phone', re: PHONE, replacement: DEFAULT_REPLACEMENT },
+  { category: 'ssn', re: SSN, replacement: DEFAULT_REPLACEMENT },
 ];
 
 const ZERO_COUNTS = (): Record<PhiCategory, number> => ({
-  ssn: 0, mrn: 0, member_id: 0, dob: 0, phone: 0, email: 0, icn: 0, name_titled: 0,
-  address: 0, zip: 0, npi: 0, account: 0,
+  ssn: 0,
+  mrn: 0,
+  member_id: 0,
+  dob: 0,
+  phone: 0,
+  email: 0,
+  icn: 0,
+  name_titled: 0,
+  address: 0,
+  zip: 0,
+  npi: 0,
+  account: 0,
 });
 
 export const REDACTOR_NAME = 'regex_v2';

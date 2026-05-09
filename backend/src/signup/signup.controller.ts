@@ -9,14 +9,7 @@
  * the ALB does the heavier lifting; this is the application-level
  * defense-in-depth.
  */
-import {
-  Body,
-  Controller,
-  ForbiddenException,
-  Headers,
-  Post,
-  Req,
-} from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Headers, Post, Req } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   ArrayUnique,
