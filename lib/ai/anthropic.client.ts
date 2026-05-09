@@ -23,6 +23,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 import { env } from "@/lib/env";
+import { assertNoPhi } from "./phi-guard";
 
 const QUERY_PARSER_MODEL = "claude-haiku-4-5";
 const RULE_SYNTHESIS_MODEL = "claude-sonnet-4-6";
@@ -80,6 +81,7 @@ export type ParsedQuery = z.infer<typeof ParsedQuery>;
  * tight system prompt, but if it happens we want a clean failure mode).
  */
 export async function parseRuleQuery(query: string): Promise<ParsedQuery> {
+  assertNoPhi(query, "parseRuleQuery");
   const response = await client().messages.create({
     model: QUERY_PARSER_MODEL,
     max_tokens: 400,
@@ -173,6 +175,7 @@ export async function synthesizeRuleAnswer(args: {
     .filter(Boolean)
     .join("\n\n---\n\n");
 
+  assertNoPhi([query, context], "synthesizeRuleAnswer");
   const response = await client().messages.create({
     model: RULE_SYNTHESIS_MODEL,
     max_tokens: 600,
@@ -228,31 +231,5 @@ export async function synthesizeRuleAnswer(args: {
   };
 }
 
-/**
- * PHI-detection guard — call BEFORE sending any user input to Anthropic.
- * Naive but tuned for known leak patterns: SSN-like, MRN-prefixed,
- * member-ID-prefixed, DOB-shaped strings.
- *
- * Returns the input untouched if clean; throws if PHI detected. The
- * caller surfaces this as a 422 to the user.
- */
-const PHI_PATTERNS: { name: string; re: RegExp }[] = [
-  // SSN xxx-xx-xxxx
-  { name: "SSN", re: /\b\d{3}-\d{2}-\d{4}\b/ },
-  // MRN-: any 6+ digits after MRN, MR, or "patient ID"
-  { name: "MRN", re: /\b(?:MRN|MR|patient\s*id)[#:\s]+\d{6,}/i },
-  // Member ID prefix common payer formats: W123456789, 1A2B3C4D5E6 etc.
-  { name: "MemberID", re: /\b(?:member\s*id|policy\s*#?)[#:\s]+[A-Z0-9]{8,}/i },
-  // DOB-like: 4 digits or M(M)?/D(D)?/YYYY in a date-of-birth context
-  { name: "DOB", re: /\b(?:DOB|date of birth)[:\s]+[\d/\-.]+/i },
-];
-
-export function assertNoPhi(input: string): void {
-  for (const { name, re } of PHI_PATTERNS) {
-    if (re.test(input)) {
-      throw new Error(
-        `Possible PHI detected (${name}). Rule queries must contain only payer/state/code information per pallio_complete_vision_v3 §15.4.`,
-      );
-    }
-  }
-}
+// Pre-launch PHI guard moved to lib/ai/phi-guard.ts (Phase 7) — kept
+// the import + call sites; the regex set there is more comprehensive.

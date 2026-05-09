@@ -10,17 +10,26 @@ import {
   updatePatient,
 } from "@/lib/features/patients/patient.service";
 import { UpdatePatientSchema } from "@/lib/features/patients/patient.types";
+import { logPhiAccess } from "@/lib/hipaa/phi-access-log";
 
 interface Params {
   params: Promise<{ id: string }>;
 }
 
-export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
+export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["patients.view"]);
   if (session instanceof Response) return session;
   const { id } = await ctx.params;
   const patient = await getPatient({ orgId: session.orgId, id });
   if (!patient) return fail("Patient not found.", { status: 404 });
+  void logPhiAccess({
+    orgId: session.orgId,
+    userId: session.userId,
+    patientId: id,
+    accessType: "view",
+    context: "patient_record",
+    request: req,
+  });
   return ok(patient);
 }
 
@@ -34,6 +43,14 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
   const { id } = await ctx.params;
   try {
     const r = await updatePatient({ orgId: session.orgId, id, payload: body });
+    void logPhiAccess({
+      orgId: session.orgId,
+      userId: session.userId,
+      patientId: id,
+      accessType: "edit",
+      context: "patient_record",
+      request: req,
+    });
     return ok(r);
   } catch (err) {
     return fail(err instanceof Error ? err.message : "Update failed", {
