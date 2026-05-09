@@ -59,37 +59,42 @@ export class IdempotencyService {
     body: Record<string, unknown>,
   ): Promise<{ status: number; body: Record<string, unknown> }> {
     return runWithTenant(this.db, orgId, async (tx) => {
-      try {
-        await tx
-          .insertInto('idempotency_record')
-          .values({
-            org_id: orgId,
-            key,
-            request_hash: requestHash,
-            response_status: status,
-            response_body: body,
-          })
-          .execute();
+      // INSERT with ON CONFLICT DO NOTHING. If a peer wrote first the
+      // INSERT no-ops (no exception); we then re-read the winner. We
+      // can't catch+retry across a thrown duplicate-key inside the
+      // same transaction — Postgres aborts the whole tx on any
+      // error, so the subsequent SELECT would fail too.
+      const inserted = await tx
+        .insertInto('idempotency_record')
+        .values({
+          org_id: orgId,
+          key,
+          request_hash: requestHash,
+          response_status: status,
+          response_body: body,
+        })
+        .onConflict((oc) => oc.columns(['org_id', 'key']).doNothing())
+        .returning('org_id')
+        .executeTakeFirst();
+
+      if (inserted) {
+        // We won the race — our row landed.
         return { status, body };
-      } catch (e) {
-        // Race-lost on (org_id, key) PK. Re-read the winner's row.
-        if (!(e instanceof Error) || !/duplicate|unique/i.test(e.message)) {
-          throw e;
-        }
-        const winner = await tx
-          .selectFrom('idempotency_record')
-          .select(['request_hash', 'response_status', 'response_body'])
-          .where('org_id', '=', orgId)
-          .where('key', '=', key)
-          .executeTakeFirstOrThrow();
-        if (winner.request_hash !== requestHash) {
-          // We finished work, but the winning request had different
-          // body — surface as conflict to the caller. The work we did
-          // is wasted; the winner's response is what the client gets.
-          this.log.warn(`idempotency race produced conflict org=${orgId} key=${key}`);
-        }
-        return { status: winner.response_status, body: winner.response_body };
       }
+
+      // We lost — re-read the winner's response.
+      const winner = await tx
+        .selectFrom('idempotency_record')
+        .select(['request_hash', 'response_status', 'response_body'])
+        .where('org_id', '=', orgId)
+        .where('key', '=', key)
+        .executeTakeFirstOrThrow();
+      if (winner.request_hash !== requestHash) {
+        // Same key + different request body — log + still return the
+        // winner's response per Stripe-style idempotency semantics.
+        this.log.warn(`idempotency race produced conflict org=${orgId} key=${key}`);
+      }
+      return { status: winner.response_status, body: winner.response_body };
     });
   }
 }
