@@ -95,6 +95,7 @@ export const MANIFESTS: Record<RoleKey, Manifest> = {
       { label: "Payers", href: "/payers", icon: "ScrollText", requires: "knowledge.view" },
       { label: "Reports", href: "/reports", icon: "LineChart", requires: "reports.view" },
       { label: "Team", href: "/team", icon: "ShieldCheck", requires: "team.view" },
+      { label: "Audit log", href: "/audit", icon: "FileText", requires: "audit.view" },
       { label: "Settings", href: "/settings", icon: "Settings", requires: "settings.view" },
     ],
     cards: ["kpis", "alerts", "recent_activity"],
