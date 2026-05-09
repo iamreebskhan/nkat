@@ -11,9 +11,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export interface SignedPayload {
-  timestamp: number;            // unix millis
-  body: string;                  // canonical JSON string
-  signature: string;             // 'sha256=<hex>'
+  timestamp: number; // unix millis
+  body: string; // canonical JSON string
+  signature: string; // 'sha256=<hex>'
 }
 
 export function canonicalJson(input: unknown): string {
@@ -21,7 +21,9 @@ export function canonicalJson(input: unknown): string {
   if (input === null || typeof input !== 'object') return JSON.stringify(input);
   if (Array.isArray(input)) return `[${input.map(canonicalJson).join(',')}]`;
   const keys = Object.keys(input as Record<string, unknown>).sort();
-  const inner = keys.map((k) => `${JSON.stringify(k)}:${canonicalJson((input as Record<string, unknown>)[k])}`).join(',');
+  const inner = keys
+    .map((k) => `${JSON.stringify(k)}:${canonicalJson((input as Record<string, unknown>)[k])}`)
+    .join(',');
   return `{${inner}}`;
 }
 

@@ -111,7 +111,10 @@ describe('generate837P', () => {
 
   it('SE segment count is exact', () => {
     const out = generate837P(identity, provider, subscriber, payer, baseClaim, ctl);
-    const segs = out.split('~').filter((s) => s.length > 0).map((s) => s.trim());
+    const segs = out
+      .split('~')
+      .filter((s) => s.length > 0)
+      .map((s) => s.trim());
     const stIdx = segs.findIndex((s) => s.startsWith('ST*'));
     const seIdx = segs.findIndex((s) => s.startsWith('SE*'));
     const declared = parseInt(segs[seIdx].split('*')[1], 10);
@@ -138,7 +141,10 @@ describe('generate837P', () => {
     expect(out).toContain('NM1*IL*1*PUBLIC*JOHN****MI*X1234567~');
     expect(out).toContain('NM1*PR*2*BCBS*****PI*BCBSOH~');
     // SE count must update.
-    const segs = out.split('~').filter((s) => s.length > 0).map((s) => s.trim());
+    const segs = out
+      .split('~')
+      .filter((s) => s.length > 0)
+      .map((s) => s.trim());
     const stIdx = segs.findIndex((s) => s.startsWith('ST*'));
     const seIdx = segs.findIndex((s) => s.startsWith('SE*'));
     const declared = parseInt(segs[seIdx].split('*')[1], 10);

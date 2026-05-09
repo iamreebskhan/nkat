@@ -66,9 +66,10 @@ export function signRequest(args: SignArgs): SignedHeaders {
     reqHeaders['x-amz-security-token'] = args.credentials.sessionToken;
   }
   // Lowercase header names; trim values.
-  const lowered: Array<[string, string]> = Object.entries(reqHeaders).map(
-    ([k, v]) => [k.toLowerCase(), String(v).trim().replace(/\s+/g, ' ')],
-  );
+  const lowered: Array<[string, string]> = Object.entries(reqHeaders).map(([k, v]) => [
+    k.toLowerCase(),
+    String(v).trim().replace(/\s+/g, ' '),
+  ]);
   lowered.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const canonicalHeaders = lowered.map(([k, v]) => `${k}:${v}\n`).join('');
   const signedHeaders = lowered.map(([k]) => k).join(';');
@@ -142,26 +143,33 @@ export function canonicalUri(path: string): string {
   // single-encode default that matches SES + most services.
   return (path || '/')
     .split('/')
-    .map((seg) => encodeURIComponent(seg).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase()))
+    .map((seg) =>
+      encodeURIComponent(seg).replace(
+        /[!'()*]/g,
+        (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase(),
+      ),
+    )
     .join('/');
 }
 
 export function canonicalQuery(query: string): string {
   if (!query) return '';
-  const pairs = query.split('&').filter(Boolean).map((kv) => {
-    const eq = kv.indexOf('=');
-    const k = eq >= 0 ? kv.slice(0, eq) : kv;
-    const v = eq >= 0 ? kv.slice(eq + 1) : '';
-    return [decodeURIComponent(k), decodeURIComponent(v)] as const;
-  });
+  const pairs = query
+    .split('&')
+    .filter(Boolean)
+    .map((kv) => {
+      const eq = kv.indexOf('=');
+      const k = eq >= 0 ? kv.slice(0, eq) : kv;
+      const v = eq >= 0 ? kv.slice(eq + 1) : '';
+      return [decodeURIComponent(k), decodeURIComponent(v)] as const;
+    });
   pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return pairs
-    .map(([k, v]) => `${encodeRfc3986(k)}=${encodeRfc3986(v)}`)
-    .join('&');
+  return pairs.map(([k, v]) => `${encodeRfc3986(k)}=${encodeRfc3986(v)}`).join('&');
 }
 
 function encodeRfc3986(s: string): string {
-  return encodeURIComponent(s).replace(/[!'()*]/g, (c) =>
-    '%' + c.charCodeAt(0).toString(16).toUpperCase(),
+  return encodeURIComponent(s).replace(
+    /[!'()*]/g,
+    (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase(),
   );
 }

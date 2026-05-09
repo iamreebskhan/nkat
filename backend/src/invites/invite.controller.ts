@@ -139,7 +139,11 @@ export class InviteRedeemController {
 
   @Post('redeem')
   @ApiOperation({ summary: 'Redeem a magic-link invite. Anonymous + rate-limited.' })
-  async redeem(@Req() req: Request, @Headers('user-agent') _ua: string | undefined, @Body() body: RedeemDto) {
+  async redeem(
+    @Req() req: Request,
+    @Headers('user-agent') _ua: string | undefined,
+    @Body() body: RedeemDto,
+  ) {
     const ip = (req.ip ?? req.socket?.remoteAddress ?? '').toString();
     if (!rateLimit(ip || 'unknown')) {
       throw new ForbiddenException({ code: 'RATE_LIMITED' });

@@ -48,7 +48,10 @@ export interface JwksDocument {
 }
 
 export class JwksError extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
     super(message);
     this.name = 'JwksError';
   }
@@ -184,7 +187,9 @@ export class JwksClient {
         const key = jwkToPublicKey(jwk);
         byKid.set(jwk.kid, { key, alg: jwk.alg });
       } catch (e) {
-        this.log.warn(`skipping malformed JWK kid=${jwk.kid}: ${e instanceof Error ? e.message : String(e)}`);
+        this.log.warn(
+          `skipping malformed JWK kid=${jwk.kid}: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }
     if (byKid.size === 0) {

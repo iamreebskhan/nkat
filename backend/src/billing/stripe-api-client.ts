@@ -15,11 +15,7 @@
  *   - PaymentMethod / SetupIntent — handled by Stripe Checkout/Portal in the
  *     UI; we never see card data.
  */
-import type {
-  StripeClient,
-  StripeEventLike,
-  StripeSubscriptionLike,
-} from './billing-types';
+import type { StripeClient, StripeEventLike, StripeSubscriptionLike } from './billing-types';
 
 export interface StripeApiClientOptions {
   /** sk_live_... or sk_test_... */
@@ -68,7 +64,10 @@ export class StripeApiClient implements StripeClient {
    * These methods are no-op'd in prod by ops policy (we never construct
    * a clock against `sk_live_...`); they exist for stage scripts only.
    */
-  async createTestClock(args: { frozenTime: number; name?: string }): Promise<{ id: string; status: string }> {
+  async createTestClock(args: {
+    frozenTime: number;
+    name?: string;
+  }): Promise<{ id: string; status: string }> {
     const body = new URLSearchParams();
     body.set('frozen_time', String(args.frozenTime));
     if (args.name) body.set('name', args.name);
@@ -76,7 +75,10 @@ export class StripeApiClient implements StripeClient {
     return { id: String(r.id), status: String(r.status) };
   }
 
-  async advanceTestClock(args: { id: string; frozenTime: number }): Promise<{ id: string; status: string }> {
+  async advanceTestClock(args: {
+    id: string;
+    frozenTime: number;
+  }): Promise<{ id: string; status: string }> {
     const body = new URLSearchParams();
     body.set('frozen_time', String(args.frozenTime));
     const r = (await this.post(
@@ -87,10 +89,13 @@ export class StripeApiClient implements StripeClient {
   }
 
   async deleteTestClock(id: string): Promise<{ id: string; deleted: boolean }> {
-    const r = await this.fetch(`${this.baseUrl}/v1/test_helpers/test_clocks/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: this.headers(),
-    });
+    const r = await this.fetch(
+      `${this.baseUrl}/v1/test_helpers/test_clocks/${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE',
+        headers: this.headers(),
+      },
+    );
     if (!r.ok) {
       const text = await r.text();
       throw new StripeApiError(r.status, `/v1/test_helpers/test_clocks/${id}`, text);
@@ -207,10 +212,7 @@ export class StripeApiClient implements StripeClient {
     const body = new URLSearchParams();
     body.set(`items[0][id]`, args.subscriptionItemId);
     body.set(`items[0][quantity]`, String(args.quantity));
-    body.set(
-      'proration_behavior',
-      args.prorate === false ? 'none' : 'create_prorations',
-    );
+    body.set('proration_behavior', args.prorate === false ? 'none' : 'create_prorations');
     const r = await this.post(
       `/v1/subscriptions/${encodeURIComponent(args.subscriptionId)}`,
       body,
@@ -299,8 +301,6 @@ function toSubscriptionLike(raw: unknown): StripeSubscriptionLike {
     current_period_end: Number(r.current_period_end),
     trial_end: r.trial_end == null ? null : Number(r.trial_end),
     cancel_at_period_end: Boolean(r.cancel_at_period_end),
-    metadata: Object.fromEntries(
-      Object.entries(md).map(([k, v]) => [k, String(v ?? '')]),
-    ),
+    metadata: Object.fromEntries(Object.entries(md).map(([k, v]) => [k, String(v ?? '')])),
   };
 }

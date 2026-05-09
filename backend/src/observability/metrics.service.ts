@@ -93,9 +93,7 @@ export class MetricsService implements IMetrics, OnApplicationShutdown {
   private socket: Socket | null = null;
   private readonly cfg: MetricsConfig;
 
-  constructor(
-    @Optional() @Inject(METRICS_CONFIG_TOKEN) cfg?: MetricsConfig,
-  ) {
+  constructor(@Optional() @Inject(METRICS_CONFIG_TOKEN) cfg?: MetricsConfig) {
     this.cfg = cfg ?? {
       host: process.env.DD_AGENT_HOST ?? '',
       port: parseInt(process.env.DD_DOGSTATSD_PORT ?? '8125', 10),
@@ -130,7 +128,11 @@ export class MetricsService implements IMetrics, OnApplicationShutdown {
 
   onApplicationShutdown(): void {
     if (this.socket) {
-      try { this.socket.close(); } catch { /* ignore */ }
+      try {
+        this.socket.close();
+      } catch {
+        /* ignore */
+      }
       this.socket = null;
     }
   }

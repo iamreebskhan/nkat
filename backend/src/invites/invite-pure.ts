@@ -28,9 +28,9 @@ export const RAW_TOKEN_BYTES = 32;
 export const PREFIX_CHARS = 12;
 
 export interface GeneratedToken {
-  raw: string;     // base64url, ~43 chars, NEVER stored
-  prefix: string;  // first PREFIX_CHARS of raw — stored for index
-  hash: string;    // 64 hex chars of sha256(raw) — stored for compare
+  raw: string; // base64url, ~43 chars, NEVER stored
+  prefix: string; // first PREFIX_CHARS of raw — stored for index
+  hash: string; // 64 hex chars of sha256(raw) — stored for compare
 }
 
 /**

@@ -51,10 +51,7 @@ interface CodeRowFromDb {
 /**
  * Pure helper: apply the AMA license gate to a row set.
  */
-export function gateAmaDescriptors(
-  rows: CodeRowFromDb[],
-  hasLicense: boolean,
-): CodeView[] {
+export function gateAmaDescriptors(rows: CodeRowFromDb[], hasLicense: boolean): CodeView[] {
   return rows.map((r) => {
     const isCpt = r.code_system === 'CPT';
     const redact = isCpt && !hasLicense;
@@ -86,7 +83,14 @@ export class CodeService {
     const upper = code.toUpperCase();
     const r = await this.db
       .selectFrom('code')
-      .select(['code', 'code_system', 'short_descriptor', 'category', 'effective_date', 'expiration_date'])
+      .select([
+        'code',
+        'code_system',
+        'short_descriptor',
+        'category',
+        'effective_date',
+        'expiration_date',
+      ])
       .where('code', '=', upper)
       .executeTakeFirst();
     if (!r) throw new NotFoundException({ code: 'CODE_NOT_FOUND' });
@@ -102,7 +106,14 @@ export class CodeService {
     const limit = Math.min(50, Math.max(1, args.limit ?? 20));
     let q = this.db
       .selectFrom('code')
-      .select(['code', 'code_system', 'short_descriptor', 'category', 'effective_date', 'expiration_date'])
+      .select([
+        'code',
+        'code_system',
+        'short_descriptor',
+        'category',
+        'effective_date',
+        'expiration_date',
+      ])
       .where('expiration_date', 'is', null)
       .orderBy('code', 'asc')
       .limit(limit);

@@ -37,9 +37,12 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg.startsWith('--org=')) orgId = arg.slice('--org='.length);
     else if (arg.startsWith('--client=')) clientId = arg.slice('--client='.length);
     else if (arg.startsWith('--dir=')) dir = arg.slice('--dir='.length);
-    else if (arg.startsWith('--source-prefix=')) sourcePrefix = arg.slice('--source-prefix='.length);
+    else if (arg.startsWith('--source-prefix='))
+      sourcePrefix = arg.slice('--source-prefix='.length);
     else if (arg === '--help' || arg === '-h') {
-      console.log('Usage: ingest-era835-batch --org=<uuid> --client=<uuid> --dir=<path> [--source-prefix=s3://x/]');
+      console.log(
+        'Usage: ingest-era835-batch --org=<uuid> --client=<uuid> --dir=<path> [--source-prefix=s3://x/]',
+      );
       process.exit(0);
     }
   }
@@ -86,7 +89,9 @@ async function main(): Promise<void> {
     );
   }
 
-  console.log(`\nTotal persisted=${totalPersisted} dup=${totalDup} warned=${totalWarned} errors=${totalErrors}`);
+  console.log(
+    `\nTotal persisted=${totalPersisted} dup=${totalDup} warned=${totalWarned} errors=${totalErrors}`,
+  );
   await pool.end();
 }
 

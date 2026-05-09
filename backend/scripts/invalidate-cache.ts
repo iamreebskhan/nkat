@@ -37,7 +37,10 @@ async function main() {
   pool.on('error', (e) => console.error('[pg.Pool]', e.message));
   const db = createDb(pool);
   const svc = new CacheVersionService(db);
-  const v = await svc.bump({ byUserId: null, note: args.note ?? `cli-${new Date().toISOString()}` });
+  const v = await svc.bump({
+    byUserId: null,
+    note: args.note ?? `cli-${new Date().toISOString()}`,
+  });
   console.log(`synthesis_cache.version → ${v} (note: ${args.note ?? '(cli)'})`);
   await pool.end();
   exit(0);

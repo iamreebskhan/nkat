@@ -10,10 +10,13 @@ import type { SubscriptionStatus, SubscriptionTier } from '../database/schema.ty
 
 export type { SubscriptionStatus, SubscriptionTier };
 
-export const TIER_DEFAULTS: Record<SubscriptionTier, { seats: number; price_per_seat_usd: number }> = {
-  solo:       { seats: 1,   price_per_seat_usd: 79 },
-  team:       { seats: 10,  price_per_seat_usd: 69 },
-  org:        { seats: 100, price_per_seat_usd: 59 },
+export const TIER_DEFAULTS: Record<
+  SubscriptionTier,
+  { seats: number; price_per_seat_usd: number }
+> = {
+  solo: { seats: 1, price_per_seat_usd: 79 },
+  team: { seats: 10, price_per_seat_usd: 69 },
+  org: { seats: 100, price_per_seat_usd: 59 },
   enterprise: { seats: 999, price_per_seat_usd: 0 /* contracted */ },
 };
 
@@ -35,8 +38,8 @@ export interface StripeSubscriptionLike {
   id: string;
   customer: string;
   status: SubscriptionStatus;
-  current_period_start: number;   // unix seconds
-  current_period_end: number;     // unix seconds
+  current_period_start: number; // unix seconds
+  current_period_end: number; // unix seconds
   trial_end: number | null;
   cancel_at_period_end: boolean;
   metadata: Record<string, string>;
@@ -44,9 +47,9 @@ export interface StripeSubscriptionLike {
 
 /** A subset of the Stripe Event object — only the fields we route on. */
 export interface StripeEventLike {
-  id: string;            // evt_...
-  type: string;          // customer.subscription.updated, invoice.paid, ...
-  created: number;       // unix seconds
+  id: string; // evt_...
+  type: string; // customer.subscription.updated, invoice.paid, ...
+  created: number; // unix seconds
   data: { object: unknown };
 }
 

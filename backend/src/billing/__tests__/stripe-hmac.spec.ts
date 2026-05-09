@@ -15,7 +15,12 @@ function sign(timestamp: number, body: string, secret = SECRET): string {
 describe('verifyStripeSignature', () => {
   it('accepts a fresh, well-formed signature', () => {
     const header = sign(NOW_S, BODY);
-    const r = verifyStripeSignature({ header, rawBody: BODY, signingSecret: SECRET, nowMs: NOW_MS });
+    const r = verifyStripeSignature({
+      header,
+      rawBody: BODY,
+      signingSecret: SECRET,
+      nowMs: NOW_MS,
+    });
     expect(r.timestamp).toBe(NOW_S);
   });
 
@@ -27,7 +32,12 @@ describe('verifyStripeSignature', () => {
 
   it('rejects a malformed header', () => {
     expect(() =>
-      verifyStripeSignature({ header: 'totally-bogus', rawBody: BODY, signingSecret: SECRET, nowMs: NOW_MS }),
+      verifyStripeSignature({
+        header: 'totally-bogus',
+        rawBody: BODY,
+        signingSecret: SECRET,
+        nowMs: NOW_MS,
+      }),
     ).toThrow(/malformed/);
   });
 
@@ -61,7 +71,12 @@ describe('verifyStripeSignature', () => {
   it('accepts when the header carries multiple v1 candidates and any match', () => {
     const good = createHmac('sha256', SECRET).update(`${NOW_S}.${BODY}`).digest('hex');
     const header = `t=${NOW_S},v1=baadcafe,v1=${good}`;
-    const r = verifyStripeSignature({ header, rawBody: BODY, signingSecret: SECRET, nowMs: NOW_MS });
+    const r = verifyStripeSignature({
+      header,
+      rawBody: BODY,
+      signingSecret: SECRET,
+      nowMs: NOW_MS,
+    });
     expect(r.timestamp).toBe(NOW_S);
     expect(r.secretIndex).toBe(0);
   });

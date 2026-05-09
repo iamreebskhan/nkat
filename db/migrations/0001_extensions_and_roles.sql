@@ -10,6 +10,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;     -- gen_random_uuid, crypto helpers
 CREATE EXTENSION IF NOT EXISTS citext;       -- case-insensitive text
 CREATE EXTENSION IF NOT EXISTS vector;       -- pgvector for embeddings
 CREATE EXTENSION IF NOT EXISTS btree_gin;    -- GIN over scalar types in composite indexes
+CREATE EXTENSION IF NOT EXISTS btree_gist;   -- GiST opclass for UUID/text used by EXCLUDE constraints
 
 -- ----------------------------------------------------------------------------
 -- Roles

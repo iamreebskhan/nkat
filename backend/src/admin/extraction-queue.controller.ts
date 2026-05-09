@@ -1,7 +1,17 @@
 import { Body, Controller, Get, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEmail, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsEmail,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsObject,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 import type { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { isUuid } from '../common/uuid';
@@ -76,11 +86,16 @@ export class ExtractionQueueController {
   @Post(':id/edit')
   @ApiOperation({ summary: 'Accept with edits and insert edited payer_rule' })
   async edit(@Param('id') id: string, @Body() body: EditDto) {
-    const ruleId = await this.svc.edit(uuidOrThrow(id), body.analyst_email, {
-      edited_value: body.edited_value,
-      edited_coverage_status: body.edited_coverage_status,
-      edited_confidence: body.edited_confidence,
-    }, body.rationale);
+    const ruleId = await this.svc.edit(
+      uuidOrThrow(id),
+      body.analyst_email,
+      {
+        edited_value: body.edited_value,
+        edited_coverage_status: body.edited_coverage_status,
+        edited_confidence: body.edited_confidence,
+      },
+      body.rationale,
+    );
     return { rule_id: ruleId };
   }
 }

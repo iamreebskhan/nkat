@@ -62,8 +62,8 @@ CREATE TABLE denial_event (
 
 CREATE INDEX denial_event_org_period_idx ON denial_event USING gist (org_id, period);
 
--- gist needed for the EXCLUDE constraint above.
--- (btree_gist included by default in pgvector image.)
+-- btree_gist (enabled in 0001) provides the GiST opclass for UUID
+-- columns used by the EXCLUDE constraint above.
 
 -- ---------------------------------------------------------------------------
 -- abn_record: signed Advance Beneficiary Notice tracking.
@@ -89,5 +89,8 @@ CREATE TABLE abn_record (
 
 CREATE INDEX abn_record_lookup_idx ON abn_record
   (org_id, client_id, patient_external_id, signed_at DESC);
-CREATE INDEX abn_record_retain_idx ON abn_record (retain_until)
-  WHERE retain_until > CURRENT_DATE;
+-- Full index — Postgres rejects CURRENT_DATE in partial index predicates
+-- because it's STABLE not IMMUTABLE (changes per session day). The
+-- "still in retention" filter happens at query time:
+--   SELECT ... FROM abn_record WHERE retain_until > now()::date AND ...
+CREATE INDEX abn_record_retain_idx ON abn_record (retain_until);

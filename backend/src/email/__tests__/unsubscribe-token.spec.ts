@@ -10,10 +10,15 @@ describe('signUnsubscribeToken / verifyUnsubscribeToken — round trip', () => {
       secret: SECRET,
       nowMs: NOW_MS,
     });
-    const r = verifyUnsubscribeToken({ token: t, secret: SECRET, nowMs: NOW_MS, expectScope: 'manual_optout' });
+    const r = verifyUnsubscribeToken({
+      token: t,
+      secret: SECRET,
+      nowMs: NOW_MS,
+      expectScope: 'manual_optout',
+    });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.payload.email).toBe('a@example.com');  // lower-cased on sign
+      expect(r.payload.email).toBe('a@example.com'); // lower-cased on sign
       expect(r.payload.scope).toBe('manual_optout');
     }
   });
@@ -76,7 +81,12 @@ describe('signUnsubscribeToken / verifyUnsubscribeToken — round trip', () => {
       nowMs: NOW_MS,
     });
     expect(
-      verifyUnsubscribeToken({ token: t, secret: SECRET, nowMs: NOW_MS, expectScope: 'manual_optout' }),
+      verifyUnsubscribeToken({
+        token: t,
+        secret: SECRET,
+        nowMs: NOW_MS,
+        expectScope: 'manual_optout',
+      }),
     ).toEqual({ ok: false, reason: 'wrong_scope' });
   });
 
@@ -87,10 +97,18 @@ describe('signUnsubscribeToken / verifyUnsubscribeToken — round trip', () => {
       nowMs: NOW_MS,
     });
     // 89 days from issue: still valid
-    const ok = verifyUnsubscribeToken({ token: t, secret: SECRET, nowMs: NOW_MS + 89 * 86_400_000 });
+    const ok = verifyUnsubscribeToken({
+      token: t,
+      secret: SECRET,
+      nowMs: NOW_MS + 89 * 86_400_000,
+    });
     expect(ok.ok).toBe(true);
     // 91 days: expired
-    const expired = verifyUnsubscribeToken({ token: t, secret: SECRET, nowMs: NOW_MS + 91 * 86_400_000 });
+    const expired = verifyUnsubscribeToken({
+      token: t,
+      secret: SECRET,
+      nowMs: NOW_MS + 91 * 86_400_000,
+    });
     expect(expired.ok).toBe(false);
   });
 });

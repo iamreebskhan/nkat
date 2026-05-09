@@ -6,8 +6,10 @@
 -- ============================================================================
 
 -- The default design-partner org id used across seeds + integration tests.
-INSERT INTO org (id, name, status)
-VALUES ('11111111-1111-4111-8111-111111111111', 'Design Partner Co', 'active')
+-- `slug` is NOT NULL UNIQUE on the `org` table (see 0005_tenant.sql), so
+-- every seed insert must provide one.
+INSERT INTO org (id, name, slug, status)
+VALUES ('11111111-1111-4111-8111-111111111111', 'Design Partner Co', 'design-partner', 'active')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO subscription (

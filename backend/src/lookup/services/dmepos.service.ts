@@ -158,9 +158,7 @@ export class DmepostService {
       ])
       .where('code', 'in', codes)
       .where('effective_date', '<=', dos)
-      .where((eb) =>
-        eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]),
-      )
+      .where((eb) => eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]))
       .execute();
 
     const byCode = new Map<string, DmeMasterListEntry>(

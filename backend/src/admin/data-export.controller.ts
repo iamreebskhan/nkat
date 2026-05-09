@@ -42,7 +42,7 @@ export class DataExportController {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
   @Get('rulebooks')
-  @ApiOperation({ summary: 'Export the caller tenant\'s finalized rulebook history (JSON)' })
+  @ApiOperation({ summary: "Export the caller tenant's finalized rulebook history (JSON)" })
   async rulebooks(@Req() req: Request, @Res() res: Response): Promise<void> {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     const rows = await runReadOnlyWithTenant(this.db, orgId, (tx) =>
@@ -54,16 +54,25 @@ export class DataExportController {
         .execute(),
     );
     res.setHeader('content-type', 'application/json');
-    res.setHeader(
-      'content-disposition',
-      `attachment; filename="rulebooks-${orgId}-${ymd()}.json"`,
+    res.setHeader('content-disposition', `attachment; filename="rulebooks-${orgId}-${ymd()}.json"`);
+    res.end(
+      JSON.stringify(
+        { org_id: orgId, exported_at: new Date().toISOString(), rulebooks: rows },
+        null,
+        2,
+      ),
     );
-    res.end(JSON.stringify({ org_id: orgId, exported_at: new Date().toISOString(), rulebooks: rows }, null, 2));
   }
 
   @Get('audit-log')
-  @ApiOperation({ summary: 'Export the caller tenant\'s audit-log rows over N days (NDJSON, streamed)' })
-  async auditLog(@Req() req: Request, @Res() res: Response, @Query('days') daysRaw?: string): Promise<void> {
+  @ApiOperation({
+    summary: "Export the caller tenant's audit-log rows over N days (NDJSON, streamed)",
+  })
+  async auditLog(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('days') daysRaw?: string,
+  ): Promise<void> {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     const days = clampDays(daysRaw, DEFAULT_DAYS);
     const since = new Date(Date.now() - days * 86_400_000);
@@ -112,17 +121,18 @@ export class DataExportController {
   }
 
   @Get('era-835')
-  @ApiOperation({ summary: 'Export the caller tenant\'s denial event aggregates (CSV)' })
-  async era835(@Req() req: Request, @Res() res: Response, @Query('days') daysRaw?: string): Promise<void> {
+  @ApiOperation({ summary: "Export the caller tenant's denial event aggregates (CSV)" })
+  async era835(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('days') daysRaw?: string,
+  ): Promise<void> {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     const days = clampDays(daysRaw, DEFAULT_DAYS);
     const since = new Date(Date.now() - days * 86_400_000);
 
     res.setHeader('content-type', 'text/csv');
-    res.setHeader(
-      'content-disposition',
-      `attachment; filename="era-835-${orgId}-${ymd()}.csv"`,
-    );
+    res.setHeader('content-disposition', `attachment; filename="era-835-${orgId}-${ymd()}.csv"`);
     res.write(
       'claim_id,service_dos,billed_amount,paid_amount,adjustment_amount,carc_codes,rarc_codes,group_code\n',
     );

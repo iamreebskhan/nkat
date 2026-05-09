@@ -35,7 +35,20 @@ export interface NcciIssue {
   modifier_used?: string | undefined;
 }
 
-const NCCI_OVERRIDE_MODIFIERS = new Set(['59', 'XE', 'XP', 'XS', 'XU', '24', '25', '57', '58', '78', '79', '91']);
+const NCCI_OVERRIDE_MODIFIERS = new Set([
+  '59',
+  'XE',
+  'XP',
+  'XS',
+  'XU',
+  '24',
+  '25',
+  '57',
+  '58',
+  '78',
+  '79',
+  '91',
+]);
 
 export interface PtpEdit {
   column1_code: string;
@@ -146,12 +159,16 @@ export class NcciService {
     const [ptpEdits, mueEdits] = await Promise.all([
       this.db
         .selectFrom('ncci_ptp')
-        .select(['column1_code', 'column2_code', 'modifier_indicator', 'edit_type', 'source_release'])
+        .select([
+          'column1_code',
+          'column2_code',
+          'modifier_indicator',
+          'edit_type',
+          'source_release',
+        ])
         .where('edit_type', '=', ptpEditType)
         .where('effective_date', '<=', dos)
-        .where((eb) =>
-          eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]),
-        )
+        .where((eb) => eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]))
         .where((eb) => eb.or([eb('column1_code', 'in', codes), eb('column2_code', 'in', codes)]))
         .execute(),
       this.db
@@ -160,9 +177,7 @@ export class NcciService {
         .where('setting', '=', input.setting)
         .where('code', 'in', codes)
         .where('effective_date', '<=', dos)
-        .where((eb) =>
-          eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]),
-        )
+        .where((eb) => eb.or([eb('expiration_date', 'is', null), eb('expiration_date', '>', dos)]))
         .execute(),
     ]);
 

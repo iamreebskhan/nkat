@@ -33,8 +33,8 @@ export interface CheckPaInput {
   payer_id: string;
   fhir_base_url: string;
   bearer_token: string;
-  payer_member_id: string;            // de-identified upstream
-  service_codes: string[];            // CPT/HCPCS
+  payer_member_id: string; // de-identified upstream
+  service_codes: string[]; // CPT/HCPCS
   date_of_service: Date;
   request_correlation_id: string;
 }
@@ -44,7 +44,7 @@ export type PaDecision = 'approved' | 'denied' | 'pending' | 'unknown';
 export interface PaResult {
   pa_required: boolean | null;
   decision: PaDecision;
-  documentation_codes: string[];     // LOINC codes from the response
+  documentation_codes: string[]; // LOINC codes from the response
   raw_status: number;
   raw_body: Record<string, unknown>;
   cached_response_id: string;
@@ -53,7 +53,7 @@ export interface PaResult {
 interface FhirCoverageEligibilityResponse {
   resourceType?: string;
   status?: string;
-  outcome?: string;                   // 'complete' | 'queued' | 'error' | 'partial'
+  outcome?: string; // 'complete' | 'queued' | 'error' | 'partial'
   // FHIR R4 CoverageEligibilityResponse.insurance.item — slim shape:
   insurance?: Array<{
     item?: Array<{
@@ -66,10 +66,15 @@ interface FhirCoverageEligibilityResponse {
   }>;
 }
 
-const PA_DECISION_EXT_URL = 'http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-decision';
+const PA_DECISION_EXT_URL =
+  'http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-decision';
 
 export class Cms0057PaError extends Error {
-  constructor(message: string, readonly status: number, readonly body: string) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body: string,
+  ) {
     super(message);
     this.name = 'Cms0057PaError';
   }

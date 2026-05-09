@@ -29,7 +29,16 @@ END
 $$;
 
 -- Apply to every tenant-scoped table.
-SELECT app.apply_tenant_rls('org');
+-- Special case: `org` has no `org_id` column — its `id` IS the org —
+-- so the standard apply_tenant_rls helper (which references `org_id`)
+-- fails policy creation. Enable RLS and create the id-keyed policy
+-- directly here.
+ALTER TABLE org ENABLE ROW LEVEL SECURITY;
+ALTER TABLE org FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON org
+  USING (id = app.current_org_id())
+  WITH CHECK (id = app.current_org_id());
+
 SELECT app.apply_tenant_rls('org_member');
 SELECT app.apply_tenant_rls('client_company');
 SELECT app.apply_tenant_rls('client_rulebook');
@@ -40,13 +49,6 @@ SELECT app.apply_tenant_rls('alert');
 SELECT app.apply_tenant_rls('era_835_record');
 SELECT app.apply_tenant_rls('denial_event');
 SELECT app.apply_tenant_rls('abn_record');
-
--- Special case: org table doesn't have a separate org_id column — id IS the org.
--- Replace the policy created by apply_tenant_rls.
-DROP POLICY tenant_isolation ON org;
-CREATE POLICY tenant_isolation ON org
-  USING (id = app.current_org_id())
-  WITH CHECK (id = app.current_org_id());
 
 -- app_user is global by design (a user may belong to multiple orgs). No RLS.
 -- Membership lookup goes through org_member which IS tenant-scoped.

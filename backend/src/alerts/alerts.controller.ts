@@ -14,7 +14,16 @@
  * the UI's three-bucket model `critical|warning|info`.
  */
 import {
-  Body, Controller, Get, Inject, NotFoundException, Param, Patch, Query, Req, UseGuards,
+  Body,
+  Controller,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Patch,
+  Query,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { IsBooleanString, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
@@ -53,18 +62,25 @@ interface AlertView {
 }
 
 class ListAlertsQuery {
-  @IsOptional() @IsIn(['critical', 'warning', 'info'])
+  @IsOptional()
+  @IsIn(['critical', 'warning', 'info'])
   severity?: UiSeverity;
 
-  @IsOptional() @IsBooleanString()
+  @IsOptional()
+  @IsBooleanString()
   unread?: string;
 
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(500)
   limit?: number;
 }
 
 class AckBodyDto {
-  @IsOptional() @IsString()
+  @IsOptional()
+  @IsString()
   note?: string;
 }
 
@@ -164,13 +180,21 @@ function mapSeverity(s: AlertReadRow['severity']): UiSeverity {
 
 function defaultTitle(t: AlertReadRow['alert_type']): string {
   switch (t) {
-    case 'rule_change':         return 'A payer rule has changed';
-    case 'new_diff':            return 'New rule diff detected';
-    case 'source_expired':      return 'Authoritative source has expired';
-    case 'consent_required':    return 'Patient consent required (42 CFR Part 2)';
-    case 'attestation_expiring':return 'Analyst attestation expiring soon';
-    case 'extraction_drift':    return 'Extractor accuracy drift detected';
-    case 'source_unavailable':  return 'Authoritative source is unreachable';
-    default:                    return 'Alert';
+    case 'rule_change':
+      return 'A payer rule has changed';
+    case 'new_diff':
+      return 'New rule diff detected';
+    case 'source_expired':
+      return 'Authoritative source has expired';
+    case 'consent_required':
+      return 'Patient consent required (42 CFR Part 2)';
+    case 'attestation_expiring':
+      return 'Analyst attestation expiring soon';
+    case 'extraction_drift':
+      return 'Extractor accuracy drift detected';
+    case 'source_unavailable':
+      return 'Authoritative source is unreachable';
+    default:
+      return 'Alert';
   }
 }

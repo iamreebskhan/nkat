@@ -85,11 +85,7 @@ describe('parseOne (RESP-2)', () => {
 describe('RESP round-trip — typical EVAL response shape', () => {
   it('encodes EVAL request + parses 3-element integer array reply', () => {
     // Request side
-    const req = encodeArray([
-      'EVAL',
-      'return {1, 5, 0}',
-      '0',
-    ]).toString('utf8');
+    const req = encodeArray(['EVAL', 'return {1, 5, 0}', '0']).toString('utf8');
     expect(req).toContain('EVAL');
     // Server reply for `{1, 5, 0}` would be: *3\r\n:1\r\n:5\r\n:0\r\n
     const resp = parseOne(Buffer.from('*3\r\n:1\r\n:5\r\n:0\r\n', 'utf8'), 0);

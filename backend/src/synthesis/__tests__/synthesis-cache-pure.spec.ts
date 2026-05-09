@@ -9,8 +9,22 @@ const baseReq: SynthesisRequest = {
   date_of_service: '2026-04-15',
   audience: 'biller',
   findings: [
-    { severity: 'ok', carc_class: 'coverage_50', title: 't1', detail: 'd1', confidence: 1, citations: [] },
-    { severity: 'warning', carc_class: 'modifier_4', title: 't2', detail: 'd2', confidence: 0.9, citations: [] },
+    {
+      severity: 'ok',
+      carc_class: 'coverage_50',
+      title: 't1',
+      detail: 'd1',
+      confidence: 1,
+      citations: [],
+    },
+    {
+      severity: 'warning',
+      carc_class: 'modifier_4',
+      title: 't2',
+      detail: 'd2',
+      confidence: 0.9,
+      citations: [],
+    },
   ],
 };
 
@@ -38,7 +52,14 @@ describe('contentHashFor', () => {
       ...baseReq,
       findings: [
         ...baseReq.findings,
-        { severity: 'critical', carc_class: 'coverage_50', title: 't3', detail: 'd3', confidence: 1, citations: [] },
+        {
+          severity: 'critical',
+          carc_class: 'coverage_50',
+          title: 't3',
+          detail: 'd3',
+          confidence: 1,
+          citations: [],
+        },
       ],
     };
     expect(contentHashFor('bedrock', baseReq)).not.toBe(contentHashFor('bedrock', r2));

@@ -106,9 +106,7 @@ export function computeRaf(icd10: string[], mappings: HccMapping[]): RafResult {
   const breakdown = Array.from(groups.values()).sort((a, b) =>
     a.hcc_code < b.hcc_code ? -1 : a.hcc_code > b.hcc_code ? 1 : 0,
   );
-  const total = breakdown
-    .filter((b) => !b.trumped)
-    .reduce((sum, b) => sum + b.raf_weight, 0);
+  const total = breakdown.filter((b) => !b.trumped).reduce((sum, b) => sum + b.raf_weight, 0);
 
   return {
     total_raf: round4(total),
@@ -129,7 +127,10 @@ export class HccRiskAdjustmentService {
    * Look up V28 mappings for the supplied ICD-10s + effective year, then
    * compute a RAF score with breakdown.
    */
-  async scorePatient(icd10: string[], effectiveYear = new Date().getUTCFullYear()): Promise<RafResult> {
+  async scorePatient(
+    icd10: string[],
+    effectiveYear = new Date().getUTCFullYear(),
+  ): Promise<RafResult> {
     if (icd10.length === 0) {
       return { total_raf: 0, breakdown: [], unmapped_icd10s: [] };
     }
@@ -161,7 +162,15 @@ export class HccRiskAdjustmentService {
   }): Promise<HccMappingDetail[]> {
     const r = await this.db
       .selectFrom('hcc_mapping')
-      .select(['icd10', 'hcc_version', 'hcc_code', 'category', 'rxhcc_code', 'raf_weight', 'effective_year'])
+      .select([
+        'icd10',
+        'hcc_version',
+        'hcc_code',
+        'category',
+        'rxhcc_code',
+        'raf_weight',
+        'effective_year',
+      ])
       .where('icd10', '=', args.icd10)
       .where('hcc_version', '=', args.hcc_version ?? 'V28')
       .where('effective_year', '=', args.effective_year ?? new Date().getUTCFullYear())

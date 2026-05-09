@@ -40,11 +40,11 @@ describe('planTrialEndingEmails', () => {
   });
 
   it.each([
-    [1, 1],   // 1 day left → window 1
-    [2, 3],   // 2 days left → window 3
-    [3, 3],   // 3 days left → window 3
-    [4, 7],   // 4 days left → window 7
-    [7, 7],   // 7 days left → window 7
+    [1, 1], // 1 day left → window 1
+    [2, 3], // 2 days left → window 3
+    [3, 3], // 3 days left → window 3
+    [4, 7], // 4 days left → window 7
+    [7, 7], // 7 days left → window 7
   ])('days_left %d → window %d', (daysLeft, expectedWindow) => {
     const trial_end = new Date(NOW + daysLeft * 86_400_000);
     const r = planTrialEndingEmails([sub({ trial_end })], 'https://app', NOW);
@@ -104,7 +104,11 @@ describe('planDunningEmails', () => {
 
   it('skips when primary_contact_email is null', () => {
     expect(
-      planDunningEmails([sub({ status: 'past_due', primary_contact_email: null })], 'https://app', NOW),
+      planDunningEmails(
+        [sub({ status: 'past_due', primary_contact_email: null })],
+        'https://app',
+        NOW,
+      ),
     ).toEqual([]);
   });
 });

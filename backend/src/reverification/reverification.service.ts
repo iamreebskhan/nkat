@@ -26,7 +26,11 @@ function addDays(date: Date, n: number): Date {
 export class ReverificationService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async schedule(payerRuleId: string, daysOut: number = DEFAULT_REVERIFY_DAYS, now: Date = new Date()): Promise<string> {
+  async schedule(
+    payerRuleId: string,
+    daysOut: number = DEFAULT_REVERIFY_DAYS,
+    now: Date = new Date(),
+  ): Promise<string> {
     const due = addDays(now, daysOut);
     const inserted = await this.db
       .insertInto('attestation_reverification')
@@ -39,7 +43,10 @@ export class ReverificationService {
     return inserted.id;
   }
 
-  async listDue(asOf: Date = new Date(), limit = 100): Promise<{ id: string; payer_rule_id: string; reverify_by: Date; days_overdue: number }[]> {
+  async listDue(
+    asOf: Date = new Date(),
+    limit = 100,
+  ): Promise<{ id: string; payer_rule_id: string; reverify_by: Date; days_overdue: number }[]> {
     const rows = await this.db
       .selectFrom('attestation_reverification')
       .select(['id', 'payer_rule_id', 'reverify_by'])
@@ -52,7 +59,10 @@ export class ReverificationService {
       id: r.id,
       payer_rule_id: r.payer_rule_id,
       reverify_by: r.reverify_by,
-      days_overdue: Math.max(0, Math.floor((asOf.getTime() - r.reverify_by.getTime()) / 86_400_000)),
+      days_overdue: Math.max(
+        0,
+        Math.floor((asOf.getTime() - r.reverify_by.getTime()) / 86_400_000),
+      ),
     }));
   }
 
@@ -66,7 +76,11 @@ export class ReverificationService {
     return { marked: Number(result.numUpdatedRows ?? 0) };
   }
 
-  async markCompleted(reverificationId: string, completedBy: string, now: Date = new Date()): Promise<{ next_reverify_by: Date }> {
+  async markCompleted(
+    reverificationId: string,
+    completedBy: string,
+    now: Date = new Date(),
+  ): Promise<{ next_reverify_by: Date }> {
     return this.db.transaction().execute(async (tx) => {
       const row = await tx
         .selectFrom('attestation_reverification')

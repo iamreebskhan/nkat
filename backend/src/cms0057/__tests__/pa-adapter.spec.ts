@@ -14,7 +14,9 @@ describe('decodePaResponse', () => {
           {
             item: [
               {
-                productOrService: { coding: [{ system: 'http://www.ama-assn.org/go/cpt', code: '99497' }] },
+                productOrService: {
+                  coding: [{ system: 'http://www.ama-assn.org/go/cpt', code: '99497' }],
+                },
                 authorizationRequired: true,
               },
             ],
@@ -30,7 +32,13 @@ describe('decodePaResponse', () => {
     const out = decodePaResponse(
       {
         outcome: 'complete',
-        insurance: [{ item: [{ productOrService: { coding: [{ code: '99497' }] }, authorizationRequired: false }] }],
+        insurance: [
+          {
+            item: [
+              { productOrService: { coding: [{ code: '99497' }] }, authorizationRequired: false },
+            ],
+          },
+        ],
       },
       ['99497'],
     );
@@ -58,7 +66,13 @@ describe('decodePaResponse', () => {
   it('ignores items whose codes do not match any requested code', () => {
     const out = decodePaResponse(
       {
-        insurance: [{ item: [{ productOrService: { coding: [{ code: '99213' }] }, authorizationRequired: true }] }],
+        insurance: [
+          {
+            item: [
+              { productOrService: { coding: [{ code: '99213' }] }, authorizationRequired: true },
+            ],
+          },
+        ],
       },
       ['99497'],
     );

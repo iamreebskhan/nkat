@@ -33,7 +33,12 @@ import { URL } from 'node:url';
 import { sql } from 'kysely';
 import { DB_TOKEN } from '../database/database.module';
 import type { Db } from '../database/db';
-import { isAllowedCertUrl, isAllowedTopicArn, parseSesFeedbackPayload, type SnsEnvelope } from './sns-pure';
+import {
+  isAllowedCertUrl,
+  isAllowedTopicArn,
+  parseSesFeedbackPayload,
+  type SnsEnvelope,
+} from './sns-pure';
 import { SnsVerifier, SnsVerifyError } from './sns-verifier';
 
 export const SES_FEEDBACK_ALLOWED_ARNS_TOKEN = Symbol('SES_FEEDBACK_ALLOWED_ARNS');

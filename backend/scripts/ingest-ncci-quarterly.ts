@@ -58,8 +58,14 @@ async function ingestPtp(pool: Pool, rows: ParsedPtpRow[], dryRun: boolean): Pro
                      rationale          = EXCLUDED.rationale,
                      source_release     = EXCLUDED.source_release`,
       [
-        r.column1_code, r.column2_code, r.modifier_indicator, r.edit_type,
-        r.effective_date, r.expiration_date, r.rationale, r.source_release,
+        r.column1_code,
+        r.column2_code,
+        r.modifier_indicator,
+        r.edit_type,
+        r.effective_date,
+        r.expiration_date,
+        r.rationale,
+        r.source_release,
       ],
     );
     written += 1;
@@ -80,7 +86,15 @@ async function ingestMue(pool: Pool, rows: ParsedMueRow[], dryRun: boolean): Pro
                      rationale = EXCLUDED.rationale,
                      expiration_date = EXCLUDED.expiration_date,
                      source_release = EXCLUDED.source_release`,
-      [r.code, r.setting, r.units_max, r.rationale, r.effective_date, r.expiration_date, r.source_release],
+      [
+        r.code,
+        r.setting,
+        r.units_max,
+        r.rationale,
+        r.effective_date,
+        r.expiration_date,
+        r.source_release,
+      ],
     );
     written += 1;
   }
@@ -102,17 +116,20 @@ async function main() {
   pool.on('error', (e) => console.error('[pg.Pool]', e.message));
 
   if (a.kind === 'ptp') {
-    const editType = (a.setting === 'hospital_outpatient' ? 'hospital_outpatient' : 'practitioner') as
-      'hospital_outpatient' | 'practitioner';
+    const editType = (
+      a.setting === 'hospital_outpatient' ? 'hospital_outpatient' : 'practitioner'
+    ) as 'hospital_outpatient' | 'practitioner';
     const r = parseNcciPtp(csv, { editType, release: a.release });
     console.log(`PTP rows: ${r.rows.length} parsed; ${r.errors.length} error(s).`);
     for (const e of r.errors.slice(0, 10)) console.warn(`  err r${e.row}: ${e.reason}`);
     const n = await ingestPtp(pool, r.rows, a.dryRun);
     console.log(`PTP ${a.dryRun ? 'would-write' : 'written'}: ${n}`);
   } else {
-    const setting = (['practitioner', 'outpatient_hospital', 'dme'].includes(a.setting)
-      ? a.setting
-      : 'practitioner') as 'practitioner' | 'outpatient_hospital' | 'dme';
+    const setting = (
+      ['practitioner', 'outpatient_hospital', 'dme'].includes(a.setting)
+        ? a.setting
+        : 'practitioner'
+    ) as 'practitioner' | 'outpatient_hospital' | 'dme';
     const r = parseNcciMue(csv, { setting, release: a.release });
     console.log(`MUE rows: ${r.rows.length} parsed; ${r.errors.length} error(s).`);
     for (const e of r.errors.slice(0, 10)) console.warn(`  err r${e.row}: ${e.reason}`);

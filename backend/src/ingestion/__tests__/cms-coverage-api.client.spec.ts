@@ -1,4 +1,8 @@
-import { CmsCoverageApiClient, CmsCoverageApiError, type FetchLike } from '../cms-coverage-api.client';
+import {
+  CmsCoverageApiClient,
+  CmsCoverageApiError,
+  type FetchLike,
+} from '../cms-coverage-api.client';
 import type { Env } from '../../config/env';
 
 const baseEnv = (overrides: Partial<Env> = {}): Env => ({
@@ -37,7 +41,11 @@ describe('CmsCoverageApiClient', () => {
       if (String(url).endsWith('/v1/metadata/license-agreement')) {
         return jsonResponse(200, { token: 'TOK_ABC' });
       }
-      return jsonResponse(200, { items: [{ lcd_id: 'L33834', title: 'ACP', contractor: 'CGS', effective_date: '2024-01-01' }] });
+      return jsonResponse(200, {
+        items: [
+          { lcd_id: 'L33834', title: 'ACP', contractor: 'CGS', effective_date: '2024-01-01' },
+        ],
+      });
     };
     const c = new CmsCoverageApiClient(baseEnv(), fetchImpl);
 
@@ -66,8 +74,7 @@ describe('CmsCoverageApiClient', () => {
   });
 
   it('throws CmsCoverageApiError with status + body when CMS returns non-2xx', async () => {
-    const fetchImpl: FetchLike = async () =>
-      new Response('rate limited', { status: 429 });
+    const fetchImpl: FetchLike = async () => new Response('rate limited', { status: 429 });
     const c = new CmsCoverageApiClient(baseEnv({ CMS_COVERAGE_API_TOKEN: 'TOK' }), fetchImpl);
 
     await expect(c.listLcds()).rejects.toMatchObject({

@@ -11,11 +11,7 @@
  * Skipped automatically when `INTEGRATION!=1`.
  */
 import { sql } from 'kysely';
-import {
-  startIntegrationContext,
-  integrationDescribe,
-  type IntegrationContext,
-} from './harness';
+import { startIntegrationContext, integrationDescribe, type IntegrationContext } from './harness';
 
 const ORG_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ORG_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -27,21 +23,25 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
   beforeAll(async () => {
     ctx = await startIntegrationContext();
     // Seed two orgs + one user.
+    // All INSERTs idempotent — the same DB may have run prior tests.
     await ctx.pool.query(
       `INSERT INTO org (id, slug, name) VALUES
          ($1, 'org-a', 'Org A'),
-         ($2, 'org-b', 'Org B')`,
+         ($2, 'org-b', 'Org B')
+       ON CONFLICT (id) DO NOTHING`,
       [ORG_A, ORG_B],
     );
     await ctx.pool.query(
       `INSERT INTO app_user (id, email, full_name, status)
-         VALUES ($1, 'a@example.com', 'Alice', 'active')`,
+         VALUES ($1, 'a@example.com', 'Alice', 'active')
+       ON CONFLICT (id) DO NOTHING`,
       [USER_A],
     );
     await ctx.pool.query(
       `INSERT INTO org_member (org_id, user_id, role, status)
          VALUES ($1, $2, 'admin', 'active'),
-                ($3, $2, 'admin', 'active')`,
+                ($3, $2, 'admin', 'active')
+       ON CONFLICT (org_id, user_id) DO NOTHING`,
       [ORG_A, USER_A, ORG_B],
     );
   }, 90_000);
@@ -82,7 +82,7 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
       ).rejects.toThrow(/duplicate|unique/i);
     });
 
-    it('Org B cannot read Org A\'s deletion request (RLS)', async () => {
+    it("Org B cannot read Org A's deletion request (RLS)", async () => {
       const r = await ctx.appDb.transaction().execute(async (tx) => {
         await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_B)}`.execute(tx);
         return tx.selectFrom('tenant_deletion_request').selectAll().execute();
@@ -98,10 +98,13 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
         await tx
           .insertInto('rate_limit_override')
           .values({
-            org_id: ORG_A, scope: 'lookup',
-            limit: 500, refill_per_sec: '10',
+            org_id: ORG_A,
+            scope: 'lookup',
+            limit: 500,
+            refill_per_sec: '10',
             set_by_user_id: USER_A,
-            expires_at: null, reason: 'enterprise',
+            expires_at: null,
+            reason: 'enterprise',
           })
           .execute();
       });
@@ -110,11 +113,14 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
         await tx
           .insertInto('rate_limit_override')
           .values({
-            org_id: ORG_B, scope: 'lookup',
-            limit: 50, refill_per_sec: '1',
+            org_id: ORG_B,
+            scope: 'lookup',
+            limit: 50,
+            refill_per_sec: '1',
             set_by_user_id: USER_A,
             // Expired — should NOT show in cross-tenant function.
-            expires_at: new Date(Date.now() - 60_000), reason: 'lapsed',
+            expires_at: new Date(Date.now() - 60_000),
+            reason: 'lapsed',
           })
           .execute();
       });
@@ -129,7 +135,7 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
       expect(orgIds).not.toContain(ORG_B);
     });
 
-    it('RLS hides Org A\'s overrides from Org B', async () => {
+    it("RLS hides Org A's overrides from Org B", async () => {
       const seen = await ctx.appDb.transaction().execute(async (tx) => {
         await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_B)}`.execute(tx);
         return tx.selectFrom('rate_limit_override').selectAll().execute();
@@ -166,7 +172,7 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
       expect(r.rows[0]?.org_id).toBe(ORG_A);
     });
 
-    it('Org B cannot read Org A\'s SCIM token via RLS', async () => {
+    it("Org B cannot read Org A's SCIM token via RLS", async () => {
       const seen = await ctx.appDb.transaction().execute(async (tx) => {
         await sql`SET LOCAL app.current_org_id = ${sql.lit(ORG_B)}`.execute(tx);
         return tx.selectFrom('scim_token').selectAll().execute();
@@ -209,7 +215,9 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
             user_id: USER_A,
             action: 'test',
             target_type: 'noop',
-            target_id: 'noop',
+            // target_id is UUID-typed in the schema; nullable. Passing
+            // a literal 'noop' string would break the type.
+            target_id: null,
             payload: { x: 1 },
             ip_address: null,
             user_agent: null,

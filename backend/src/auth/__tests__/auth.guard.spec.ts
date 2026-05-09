@@ -7,7 +7,11 @@ function makeCtx(headers: Record<string, string>): ExecutionContext {
     header: (key: string) => headers[key.toLowerCase()],
   };
   return {
-    switchToHttp: () => ({ getRequest: () => req, getResponse: () => ({}), getNext: () => undefined }),
+    switchToHttp: () => ({
+      getRequest: () => req,
+      getResponse: () => ({}),
+      getNext: () => undefined,
+    }),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
 }
@@ -71,7 +75,9 @@ describe('AuthGuard (dev_header mode)', () => {
   it('jwt mode rejects when neither JWKS nor PEM configured', async () => {
     const guard = new AuthGuard(baseEnv({ AUTH_MODE: 'jwt' }));
     const ctx = makeCtx({ authorization: 'Bearer xyz.zyx.foo' });
-    await expect(guard.canActivate(ctx)).rejects.toThrow(/Neither JWT_JWKS_URL nor JWT_PUBLIC_KEY configured/);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(
+      /Neither JWT_JWKS_URL nor JWT_PUBLIC_KEY configured/,
+    );
   });
 
   it('jwt mode rejects when no Bearer header is present', async () => {

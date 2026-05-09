@@ -50,7 +50,7 @@ export class DatadogErrorReporter implements IErrorReporter {
       severity: event.severity ?? 'error',
       'error.kind': isErr ? err.constructor.name : typeof err,
       'error.message': isErr ? err.message : String(err),
-      'error.stack': isErr ? err.stack ?? '' : '',
+      'error.stack': isErr ? (err.stack ?? '') : '',
       'dd.fingerprint': event.fingerprint?.join('|'),
       context: event.context,
     };

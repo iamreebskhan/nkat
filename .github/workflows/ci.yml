@@ -241,9 +241,12 @@ jobs:
       - name: Re-export OpenAPI
         run: npm run openapi:export
       - name: Fail on uncommitted drift
+        # The export script writes to <repo>/docs/openapi.json (top-level),
+        # but this job runs in the backend/ working directory — so we point
+        # at ../docs/openapi.json explicitly.
         run: |
-          if ! git diff --quiet docs/openapi.json; then
+          if ! git diff --quiet ../docs/openapi.json; then
             echo "::error::docs/openapi.json is out of date — run 'npm run openapi:export' and commit"
-            git diff docs/openapi.json
+            git diff ../docs/openapi.json
             exit 1
           fi

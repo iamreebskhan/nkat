@@ -5,11 +5,7 @@
  * as the 835 parser). PHI-aware: only stores subscriber_id, never the
  * person's name from NM1 segments.
  */
-import type {
-  Edi271BenefitLine,
-  Edi271File,
-  Edi271SubscriberCoverage,
-} from './types';
+import type { Edi271BenefitLine, Edi271File, Edi271SubscriberCoverage } from './types';
 
 interface Delimiters {
   element: string;

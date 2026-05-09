@@ -90,7 +90,9 @@ integrationDescribe('Cache invalidation triggers (integration)', () => {
         NULL,
         '{}'::jsonb
       )
-    `.execute(ctx.db).catch(() => null);
+    `
+      .execute(ctx.db)
+      .catch(() => null);
     const after = await readVersion();
     expect(after).toBe(before);
   });

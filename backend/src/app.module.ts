@@ -94,7 +94,9 @@ import { WebhookModule } from './webhooks/webhook.module';
       configurationSet: process.env.SES_CONFIGURATION_SET,
       ...(process.env.SES_REGION ? { ses: { region: process.env.SES_REGION } } : {}),
       feedbackAllowedTopicArns: (process.env.SES_FEEDBACK_TOPIC_ARNS ?? '')
-        .split(',').map((s) => s.trim()).filter(Boolean),
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
       unsubscribeSecret: process.env.EMAIL_UNSUBSCRIBE_SECRET,
       unsubscribeBaseUrl: process.env.APP_BASE_URL,
     }),

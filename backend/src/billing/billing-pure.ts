@@ -5,11 +5,7 @@
  * The service uses these; integration tests exercise the DB orchestration
  * separately. This split keeps the unit-test surface deterministic.
  */
-import type {
-  StripeEventLike,
-  StripeSubscriptionLike,
-  SubscriptionTier,
-} from './billing-types';
+import type { StripeEventLike, StripeSubscriptionLike, SubscriptionTier } from './billing-types';
 
 export function parseTier(s: string | undefined | null): SubscriptionTier {
   switch ((s ?? '').toLowerCase()) {

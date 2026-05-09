@@ -56,7 +56,10 @@ export class UnsubscribeController {
 
   @Post(':token')
   @ApiOperation({ summary: 'Redeem an unsubscribe token (RFC 8058 List-Unsubscribe POST)' })
-  async postRedeem(@Param('token') token: string, @Body() _body?: unknown): Promise<{ ok: true; email: string }> {
+  async postRedeem(
+    @Param('token') token: string,
+    @Body() _body?: unknown,
+  ): Promise<{ ok: true; email: string }> {
     const email = await this.consume(token);
     return { ok: true, email };
   }

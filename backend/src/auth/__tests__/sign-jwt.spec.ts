@@ -18,7 +18,11 @@ describe('parsePrivateKey', () => {
 
   it('throws JwtSigningError with code NO_PRIVATE_KEY on non-PEM input', () => {
     let caught: JwtSigningError | null = null;
-    try { parsePrivateKey('not a pem'); } catch (e) { caught = e as JwtSigningError; }
+    try {
+      parsePrivateKey('not a pem');
+    } catch (e) {
+      caught = e as JwtSigningError;
+    }
     expect(caught).toBeInstanceOf(JwtSigningError);
     expect(caught?.code).toBe('NO_PRIVATE_KEY');
   });
@@ -68,7 +72,9 @@ describe('signJwt', () => {
     const now = 1_700_000_000;
     const token = signJwt({ claims, privateKey: key, nowSec: now });
     const payload = JSON.parse(
-      Buffer.from(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'),
+      Buffer.from(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString(
+        'utf8',
+      ),
     );
     expect(payload.iat).toBe(now);
     expect(payload.exp).toBe(now + claims.ttlSec);

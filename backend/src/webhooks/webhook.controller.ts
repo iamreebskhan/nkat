@@ -9,10 +9,28 @@
  *   DELETE /v1/admin/webhook-subscriptions/:id  — disable
  */
 import {
-  Body, Controller, Delete, Get, Inject, NotFoundException, Param, Post, Req, UseGuards,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Post,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { ArrayMinSize, ArrayUnique, IsArray, IsIn, IsString, IsUrl, MaxLength, MinLength } from 'class-validator';
+import {
+  ArrayMinSize,
+  ArrayUnique,
+  IsArray,
+  IsIn,
+  IsString,
+  IsUrl,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { randomBytes } from 'node:crypto';
 import type { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
@@ -86,8 +104,14 @@ export class WebhookSubscriptionController {
       tx
         .selectFrom('webhook_subscription')
         .select([
-          'id', 'url', 'event_types', 'status',
-          'last_success_at', 'last_failure_at', 'consecutive_failures', 'created_at',
+          'id',
+          'url',
+          'event_types',
+          'status',
+          'last_success_at',
+          'last_failure_at',
+          'consecutive_failures',
+          'created_at',
         ])
         .orderBy('created_at', 'desc')
         .execute(),
@@ -111,7 +135,10 @@ export class WebhookSubscriptionController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Disable a subscription (soft delete; deliveries already in flight finish or dead-letter)' })
+  @ApiOperation({
+    summary:
+      'Disable a subscription (soft delete; deliveries already in flight finish or dead-letter)',
+  })
   async remove(@Req() req: Request, @Param('id') id: string) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     if (!isUuid(id)) throw new NotFoundException();
@@ -134,4 +161,3 @@ export class WebhookSubscriptionController {
     });
   }
 }
-

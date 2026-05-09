@@ -10,15 +10,21 @@
 -- experiment cohorts. Tenant-scoped row overrides global default.
 -- ---------------------------------------------------------------------------
 CREATE TABLE feature_flag (
+  id                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   flag_key              TEXT        NOT NULL,
   org_id                UUID        REFERENCES org(id) ON DELETE CASCADE,
   -- NULL org_id = global default
   enabled               BOOLEAN     NOT NULL,
   config                JSONB       NOT NULL DEFAULT '{}'::jsonb,
   rationale             TEXT,
-  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (flag_key, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid))
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Postgres rejects expressions in PRIMARY KEY (only column names allowed).
+-- Use a UNIQUE INDEX with the COALESCE so NULL org_id (the global default
+-- row) collides with itself for any given flag_key.
+CREATE UNIQUE INDEX feature_flag_key_org_idx
+  ON feature_flag (flag_key, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid));
 
 CREATE INDEX feature_flag_lookup_idx ON feature_flag (flag_key, org_id);
 

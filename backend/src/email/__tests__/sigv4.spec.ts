@@ -14,7 +14,7 @@ describe('canonicalUri', () => {
     expect(canonicalUri('/v2/email/outbound emails')).toBe('/v2/email/outbound%20emails');
   });
   it('encodes RFC-3986 reserved chars', () => {
-    expect(canonicalUri("/x/y(z)")).toBe('/x/y%28z%29');
+    expect(canonicalUri('/x/y(z)')).toBe('/x/y%28z%29');
   });
 });
 

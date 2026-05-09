@@ -56,7 +56,12 @@ describe('fromScimCreate', () => {
       roles: [{ value: 'reviewer' }],
       active: true,
     });
-    expect(r).toEqual({ email: 'bob@example.com', full_name: 'Bob Jones', active: true, role: 'reviewer' });
+    expect(r).toEqual({
+      email: 'bob@example.com',
+      full_name: 'Bob Jones',
+      active: true,
+      role: 'reviewer',
+    });
   });
 
   it('falls back to first email when userName missing', () => {
@@ -72,8 +77,9 @@ describe('fromScimCreate', () => {
   });
 
   it('coerces unknown roles to employee', () => {
-    expect(fromScimCreate({ userName: 'x@y.com', roles: [{ value: 'hacker' }] })?.role)
-      .toBe('employee');
+    expect(fromScimCreate({ userName: 'x@y.com', roles: [{ value: 'hacker' }] })?.role).toBe(
+      'employee',
+    );
   });
 
   it('treats active=false', () => {
@@ -83,7 +89,9 @@ describe('fromScimCreate', () => {
 
 describe('applyPatchOps', () => {
   it('toggles active via path=active', () => {
-    expect(applyPatchOps([{ op: 'replace', path: 'active', value: false }])).toEqual({ active: false });
+    expect(applyPatchOps([{ op: 'replace', path: 'active', value: false }])).toEqual({
+      active: false,
+    });
   });
 
   it('replaces userName + displayName', () => {
@@ -95,9 +103,7 @@ describe('applyPatchOps', () => {
   });
 
   it('handles bulk-replace value object (Okta style)', () => {
-    const u = applyPatchOps([
-      { op: 'replace', value: { active: false, userName: 'q@x.com' } },
-    ]);
+    const u = applyPatchOps([{ op: 'replace', value: { active: false, userName: 'q@x.com' } }]);
     expect(u).toEqual({ active: false, email: 'q@x.com' });
   });
 
@@ -119,8 +125,11 @@ describe('applyPatchOps', () => {
 
 describe('parseScimFilter', () => {
   it('parses userName eq "x"', () => {
-    expect(parseScimFilter('userName eq "alice@example.com"'))
-      .toEqual({ field: 'userName', op: 'eq', value: 'alice@example.com' });
+    expect(parseScimFilter('userName eq "alice@example.com"')).toEqual({
+      field: 'userName',
+      op: 'eq',
+      value: 'alice@example.com',
+    });
   });
 
   it('parses active eq true', () => {

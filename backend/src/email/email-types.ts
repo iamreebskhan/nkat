@@ -4,11 +4,7 @@
  * any HTTPS-able provider tomorrow).
  */
 
-export type EmailTemplate =
-  | 'invite'
-  | 'welcome'
-  | 'trial_ending'
-  | 'dunning_past_due';
+export type EmailTemplate = 'invite' | 'welcome' | 'trial_ending' | 'dunning_past_due';
 
 export interface EmailHeader {
   /** RFC 5322 header field name (e.g. `List-Unsubscribe`). */
@@ -18,11 +14,11 @@ export interface EmailHeader {
 }
 
 export interface EmailMessage {
-  to: string;                 // single recipient (we never batch-fan-out PHI)
+  to: string; // single recipient (we never batch-fan-out PHI)
   from: string;
   subject: string;
   html: string;
-  text: string;               // plain-text fallback always supplied
+  text: string; // plain-text fallback always supplied
   configurationSetName?: string;
   /**
    * Custom headers — most useful for RFC 8058 one-click unsubscribe

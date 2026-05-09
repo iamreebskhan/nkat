@@ -55,7 +55,10 @@ export class LookupResponseDto {
   @ApiProperty() request_id!: string;
   @ApiProperty() date_of_service!: string;
   @ApiProperty({ type: [LineFindingsDto] }) lines!: LineFindingsDto[];
-  @ApiProperty({ type: [FindingDto], description: 'Findings that span multiple lines (bundling, COB, timely filing)' })
+  @ApiProperty({
+    type: [FindingDto],
+    description: 'Findings that span multiple lines (bundling, COB, timely filing)',
+  })
   cross_line_findings!: FindingDto[];
   @ApiProperty() overall_severity!: Severity;
   @ApiProperty() summary!: string;

@@ -35,9 +35,12 @@ export class SynthesisService {
   private readonly log = new Logger(SynthesisService.name);
   constructor(
     @Inject(FeatureFlagService) private readonly flags: FeatureFlagService,
-    @Inject(DeterministicSynthesisProvider) private readonly deterministic: DeterministicSynthesisProvider,
+    @Inject(DeterministicSynthesisProvider)
+    private readonly deterministic: DeterministicSynthesisProvider,
     /** Optional — only present when AWS Bedrock is wired in production. */
-    @Optional() @Inject(BedrockSynthesisProvider) private readonly bedrock?: BedrockSynthesisProvider,
+    @Optional()
+    @Inject(BedrockSynthesisProvider)
+    private readonly bedrock?: BedrockSynthesisProvider,
     /**
      * Optional — when wired, identical re-renders return cached results
      * within the 7-day TTL. When unset, every call hits the provider.

@@ -21,8 +21,8 @@
  */
 
 export interface CodeMention {
-  code: string;          // CPT/HCPCS code
-  context: string;       // ~200-char sentence containing the code
+  code: string; // CPT/HCPCS code
+  context: string; // ~200-char sentence containing the code
   /** Approximate page (lines per page = 50, conservative). */
   page: number;
   /** Character offset in the document. */
@@ -129,11 +129,11 @@ export function scoreCoverageStance(context: string): {
   if (positive.length > 0 && negative.length > 0) {
     return {
       status: 'varies',
-      confidence: 0.20,
+      confidence: 0.2,
       matched_cues: [...positive.map((r) => r.source), ...negative.map((r) => r.source)],
     };
   }
-  return { status: 'unknown', confidence: 0.10, matched_cues: [] };
+  return { status: 'unknown', confidence: 0.1, matched_cues: [] };
 }
 
 /**

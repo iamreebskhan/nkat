@@ -140,9 +140,7 @@ export class OverrideResolver {
       scope: r.scope,
       limit: r.limit,
       refill_per_sec:
-        typeof r.refill_per_sec === 'string'
-          ? Number(r.refill_per_sec)
-          : r.refill_per_sec,
+        typeof r.refill_per_sec === 'string' ? Number(r.refill_per_sec) : r.refill_per_sec,
       expires_at: r.expires_at,
     }));
     const next = buildOverrideMap(coerced, this.nowFn());

@@ -98,15 +98,25 @@ function toBody(payload: unknown, status: number): Record<string, unknown> {
 
 function defaultCodeForStatus(status: number): string {
   switch (status) {
-    case 400: return 'BAD_REQUEST';
-    case 401: return 'UNAUTHORIZED';
-    case 403: return 'FORBIDDEN';
-    case 404: return 'NOT_FOUND';
-    case 409: return 'CONFLICT';
-    case 422: return 'UNPROCESSABLE';
-    case 429: return 'RATE_LIMITED';
-    case 500: return 'INTERNAL_ERROR';
-    case 503: return 'SERVICE_UNAVAILABLE';
-    default:  return `HTTP_${status}`;
+    case 400:
+      return 'BAD_REQUEST';
+    case 401:
+      return 'UNAUTHORIZED';
+    case 403:
+      return 'FORBIDDEN';
+    case 404:
+      return 'NOT_FOUND';
+    case 409:
+      return 'CONFLICT';
+    case 422:
+      return 'UNPROCESSABLE';
+    case 429:
+      return 'RATE_LIMITED';
+    case 500:
+      return 'INTERNAL_ERROR';
+    case 503:
+      return 'SERVICE_UNAVAILABLE';
+    default:
+      return `HTTP_${status}`;
   }
 }

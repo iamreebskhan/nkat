@@ -17,12 +17,14 @@ const makeFinding = (over: Partial<FindingDto> = {}): FindingDto => ({
   citations: [
     {
       source_doc_id: '11111111-1111-4111-8111-111111111111',
-      source_url: 'https://www.cms.gov/medicare/coding-billing/national-correct-coding-initiative-ncci-edits',
+      source_url:
+        'https://www.cms.gov/medicare/coding-billing/national-correct-coding-initiative-ncci-edits',
       retrieved_at: '2026-04-15T00:00:00Z',
       verbatim_quote: 'Column 1 99213, Column 2 36415',
     },
   ],
-  recommendation: 'Drop 36415 or add an X-modifier (XU/XE) when documentation supports a distinct service.',
+  recommendation:
+    'Drop 36415 or add an X-modifier (XU/XE) when documentation supports a distinct service.',
   ...over,
 });
 
@@ -47,7 +49,9 @@ const okClient = (text: string): BedrockClient => ({
 describe('BedrockSynthesisProvider', () => {
   it('refuses on empty findings', async () => {
     const p = new BedrockSynthesisProvider(okClient('ignored'));
-    await expect(p.synthesize(baseReq({ findings: [] }))).rejects.toBeInstanceOf(SynthesisRefusedError);
+    await expect(p.synthesize(baseReq({ findings: [] }))).rejects.toBeInstanceOf(
+      SynthesisRefusedError,
+    );
   });
 
   it('refuses when min confidence < 0.5', async () => {
@@ -128,7 +132,11 @@ describe('collectAllowedTokens', () => {
     const t = collectAllowedTokens([makeFinding()]);
     expect(t.codes.has('99213')).toBe(true);
     expect(t.codes.has('36415')).toBe(true);
-    expect(t.urls.has('https://www.cms.gov/medicare/coding-billing/national-correct-coding-initiative-ncci-edits')).toBe(true);
+    expect(
+      t.urls.has(
+        'https://www.cms.gov/medicare/coding-billing/national-correct-coding-initiative-ncci-edits',
+      ),
+    ).toBe(true);
     expect(t.source_doc_ids.has('11111111-1111-4111-8111-111111111111')).toBe(true);
   });
 });
@@ -141,7 +149,9 @@ describe('detectHallucinations', () => {
   };
 
   it('returns false when narrative only mentions allowed tokens', () => {
-    expect(detectHallucinations('99213 with 36415 — see https://example/legit.', allowed)).toBe(false);
+    expect(detectHallucinations('99213 with 36415 — see https://example/legit.', allowed)).toBe(
+      false,
+    );
   });
 
   it('returns true on unseen code', () => {

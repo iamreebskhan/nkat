@@ -11,11 +11,18 @@ function b64url(s: string | Buffer): string {
   return Buffer.from(s).toString('base64url');
 }
 
-function signRs256(claims: Record<string, unknown>, privateKeyPem: string, headerOverride: Record<string, unknown> = {}): string {
+function signRs256(
+  claims: Record<string, unknown>,
+  privateKeyPem: string,
+  headerOverride: Record<string, unknown> = {},
+): string {
   const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT', ...headerOverride }));
   const payload = b64url(JSON.stringify(claims));
   const signed = `${header}.${payload}`;
-  const sig = createSign('RSA-SHA256').update(signed, 'utf8').sign(privateKeyPem).toString('base64url');
+  const sig = createSign('RSA-SHA256')
+    .update(signed, 'utf8')
+    .sign(privateKeyPem)
+    .toString('base64url');
   return `${signed}.${sig}`;
 }
 
@@ -87,10 +94,7 @@ describe('verifyJwt — RS256 round-trip', () => {
 
   it('rejects expired token', async () => {
     const token = signRs256({ exp: NOW_S - 3600 }, privateKey);
-    await expectCode(
-      () => verifyJwt({ token, publicKeyPem: publicKey, nowMs: NOW_MS }),
-      'EXPIRED',
-    );
+    await expectCode(() => verifyJwt({ token, publicKeyPem: publicKey, nowMs: NOW_MS }), 'EXPIRED');
   });
 
   it('accepts token expired within clockSkewSec window', async () => {
@@ -128,7 +132,13 @@ describe('verifyJwt — RS256 round-trip', () => {
   it('rejects when issuer does not match', async () => {
     const token = signRs256({ iss: 'attacker.com', exp: NOW_S + 3600 }, privateKey);
     await expectCode(
-      () => verifyJwt({ token, publicKeyPem: publicKey, expectedIssuer: 'idp.example.com', nowMs: NOW_MS }),
+      () =>
+        verifyJwt({
+          token,
+          publicKeyPem: publicKey,
+          expectedIssuer: 'idp.example.com',
+          nowMs: NOW_MS,
+        }),
       'ISSUER_MISMATCH',
     );
   });
@@ -136,21 +146,37 @@ describe('verifyJwt — RS256 round-trip', () => {
   it('audience: exact match passes', async () => {
     const token = signRs256({ aud: 'api.example.com', exp: NOW_S + 3600 }, privateKey);
     await expect(
-      verifyJwt({ token, publicKeyPem: publicKey, expectedAudience: 'api.example.com', nowMs: NOW_MS }),
+      verifyJwt({
+        token,
+        publicKeyPem: publicKey,
+        expectedAudience: 'api.example.com',
+        nowMs: NOW_MS,
+      }),
     ).resolves.toBeDefined();
   });
 
   it('audience: array includes match passes', async () => {
     const token = signRs256({ aud: ['x', 'api.example.com', 'y'], exp: NOW_S + 3600 }, privateKey);
     await expect(
-      verifyJwt({ token, publicKeyPem: publicKey, expectedAudience: 'api.example.com', nowMs: NOW_MS }),
+      verifyJwt({
+        token,
+        publicKeyPem: publicKey,
+        expectedAudience: 'api.example.com',
+        nowMs: NOW_MS,
+      }),
     ).resolves.toBeDefined();
   });
 
   it('audience: mismatch rejected', async () => {
     const token = signRs256({ aud: 'other', exp: NOW_S + 3600 }, privateKey);
     await expectCode(
-      () => verifyJwt({ token, publicKeyPem: publicKey, expectedAudience: 'api.example.com', nowMs: NOW_MS }),
+      () =>
+        verifyJwt({
+          token,
+          publicKeyPem: publicKey,
+          expectedAudience: 'api.example.com',
+          nowMs: NOW_MS,
+        }),
       'AUDIENCE_MISMATCH',
     );
   });

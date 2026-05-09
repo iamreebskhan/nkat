@@ -26,7 +26,7 @@ export interface BedrockClient {
   invokeModel(args: {
     modelId: string;
     contentType: 'application/json';
-    body: string;          // serialized JSON request body for the chosen model
+    body: string; // serialized JSON request body for the chosen model
   }): Promise<{ body: Uint8Array; status: number }>;
 }
 
@@ -107,7 +107,8 @@ export class BedrockSynthesisProvider implements SynthesisProvider {
     const citations = dedupeCitations(req.findings.flatMap((f) => f.citations ?? []));
     const counts = { critical: 0, warning: 0, info: 0, ok: 0 } as const;
     const severitySummary = { ...counts } as Record<keyof typeof counts, number>;
-    for (const f of req.findings) severitySummary[f.severity] = (severitySummary[f.severity] ?? 0) + 1;
+    for (const f of req.findings)
+      severitySummary[f.severity] = (severitySummary[f.severity] ?? 0) + 1;
 
     return {
       narrative,
@@ -146,7 +147,7 @@ export interface AllowedTokens {
   source_doc_ids: Set<string>;
 }
 
-const CODE_RE = /\b(?:[A-Z]\d{4}|[1-9]\d{4})\b/g;       // J9035, 99497, etc.
+const CODE_RE = /\b(?:[A-Z]\d{4}|[1-9]\d{4})\b/g; // J9035, 99497, etc.
 const URL_RE = /https?:\/\/[^\s)\]]+/g;
 const DOC_ID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 

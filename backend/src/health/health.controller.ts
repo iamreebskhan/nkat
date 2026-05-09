@@ -1,17 +1,8 @@
-import {
-  Controller,
-  Get,
-  Inject,
-  Optional,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Controller, Get, Inject, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { sql } from 'kysely';
 import { RATE_LIMIT_STORE_TOKEN } from '../common/rate-limit/rate-limit.interceptor';
-import {
-  RedisRateLimitStore,
-  type RateLimitStore,
-} from '../common/rate-limit/rate-limit-store';
+import { RedisRateLimitStore, type RateLimitStore } from '../common/rate-limit/rate-limit-store';
 import { DB_TOKEN } from '../database/database.module';
 import type { Db } from '../database/db';
 
@@ -119,7 +110,11 @@ export class HealthController {
     const dbStart = Date.now();
     try {
       await this.dbPing(this.db);
-      components.push({ name: 'database', status: 'operational', latency_ms: Date.now() - dbStart });
+      components.push({
+        name: 'database',
+        status: 'operational',
+        latency_ms: Date.now() - dbStart,
+      });
     } catch (e) {
       dbOk = false;
       components.push({
@@ -151,8 +146,8 @@ export class HealthController {
       ? components.some((c) => c.status === 'major_outage')
         ? 'major_outage'
         : components.some((c) => c.status === 'partial_outage')
-        ? 'partial_outage'
-        : 'operational'
+          ? 'partial_outage'
+          : 'operational'
       : 'major_outage';
 
     return {

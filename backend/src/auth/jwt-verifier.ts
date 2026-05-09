@@ -65,7 +65,10 @@ export interface JwtVerifyArgs {
 const ALLOWED_ALGS = new Set(['RS256', 'ES256']);
 
 export class JwtVerifyError extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
     super(message);
     this.name = 'JwtVerifyError';
   }
@@ -97,7 +100,10 @@ export async function verifyJwt(args: JwtVerifyArgs): Promise<JwtClaims> {
     try {
       resolved = await args.keyResolver(kid);
     } catch (e) {
-      throw new JwtVerifyError('KEY_INVALID', `kid ${kid} not resolvable: ${e instanceof Error ? e.message : String(e)}`);
+      throw new JwtVerifyError(
+        'KEY_INVALID',
+        `kid ${kid} not resolvable: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
     // Cross-check declared alg on the JWK against header.alg. If the
     // JWK declares one, it MUST match. Defends against an attacker
@@ -115,7 +121,10 @@ export async function verifyJwt(args: JwtVerifyArgs): Promise<JwtClaims> {
     try {
       pub = createPublicKey(args.publicKeyPem);
     } catch (e) {
-      throw new JwtVerifyError('KEY_INVALID', `public key not parseable: ${e instanceof Error ? e.message : String(e)}`);
+      throw new JwtVerifyError(
+        'KEY_INVALID',
+        `public key not parseable: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   } else {
     throw new JwtVerifyError('KEY_INVALID', 'no key source supplied');
@@ -152,15 +161,20 @@ export async function verifyJwt(args: JwtVerifyArgs): Promise<JwtClaims> {
   }
 
   if (args.expectedIssuer && payload.iss !== args.expectedIssuer) {
-    throw new JwtVerifyError('ISSUER_MISMATCH', `iss=${payload.iss}, expected ${args.expectedIssuer}`);
+    throw new JwtVerifyError(
+      'ISSUER_MISMATCH',
+      `iss=${payload.iss}, expected ${args.expectedIssuer}`,
+    );
   }
   if (args.expectedAudience) {
     const aud = payload.aud;
     const matches =
-      aud === args.expectedAudience ||
-      (Array.isArray(aud) && aud.includes(args.expectedAudience));
+      aud === args.expectedAudience || (Array.isArray(aud) && aud.includes(args.expectedAudience));
     if (!matches) {
-      throw new JwtVerifyError('AUDIENCE_MISMATCH', `aud=${JSON.stringify(aud)}, expected ${args.expectedAudience}`);
+      throw new JwtVerifyError(
+        'AUDIENCE_MISMATCH',
+        `aud=${JSON.stringify(aud)}, expected ${args.expectedAudience}`,
+      );
     }
   }
 
@@ -191,7 +205,10 @@ function parseB64Json(b64url: string, scope: string): unknown {
  */
 function es256RawToDer(raw: Buffer): Buffer {
   if (raw.length !== 64) {
-    throw new JwtVerifyError('BAD_SIGNATURE', `ES256 signature must be 64 bytes; got ${raw.length}`);
+    throw new JwtVerifyError(
+      'BAD_SIGNATURE',
+      `ES256 signature must be 64 bytes; got ${raw.length}`,
+    );
   }
   const r = raw.subarray(0, 32);
   const s = raw.subarray(32);

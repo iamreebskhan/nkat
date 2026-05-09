@@ -31,11 +31,11 @@ export class BillingModule {
     const stripeProvider = opts.stripeClient
       ? { provide: STRIPE_CLIENT_TOKEN, useValue: opts.stripeClient }
       : opts.stripeApiKey
-      ? {
-          provide: STRIPE_CLIENT_TOKEN,
-          useFactory: () => new StripeApiClient({ apiKey: opts.stripeApiKey! }),
-        }
-      : { provide: STRIPE_CLIENT_TOKEN, useValue: undefined };
+        ? {
+            provide: STRIPE_CLIENT_TOKEN,
+            useFactory: () => new StripeApiClient({ apiKey: opts.stripeApiKey! }),
+          }
+        : { provide: STRIPE_CLIENT_TOKEN, useValue: undefined };
 
     return {
       module: BillingModule,

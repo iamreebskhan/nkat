@@ -105,7 +105,10 @@ export interface ParsedSesFeedback {
   expiresAt: Date | null;
 }
 
-export function parseSesFeedbackPayload(rawMessage: string, nowMs: number = Date.now()): ParsedSesFeedback | null {
+export function parseSesFeedbackPayload(
+  rawMessage: string,
+  nowMs: number = Date.now(),
+): ParsedSesFeedback | null {
   let p: Record<string, unknown>;
   try {
     p = JSON.parse(rawMessage) as Record<string, unknown>;
@@ -120,7 +123,9 @@ export function parseSesFeedbackPayload(rawMessage: string, nowMs: number = Date
       const b = (p.bounce ?? {}) as Record<string, unknown>;
       const subType = String(b.bounceType ?? '');
       const recipients = (b.bouncedRecipients ?? []) as Array<{ emailAddress?: string }>;
-      const emails = recipients.map((r) => String(r.emailAddress ?? '').toLowerCase()).filter(Boolean);
+      const emails = recipients
+        .map((r) => String(r.emailAddress ?? '').toLowerCase())
+        .filter(Boolean);
       if (emails.length === 0) return null;
       const isTransient = subType === 'Transient';
       return {
@@ -134,7 +139,9 @@ export function parseSesFeedbackPayload(rawMessage: string, nowMs: number = Date
     case 'Complaint': {
       const c = (p.complaint ?? {}) as Record<string, unknown>;
       const recipients = (c.complainedRecipients ?? []) as Array<{ emailAddress?: string }>;
-      const emails = recipients.map((r) => String(r.emailAddress ?? '').toLowerCase()).filter(Boolean);
+      const emails = recipients
+        .map((r) => String(r.emailAddress ?? '').toLowerCase())
+        .filter(Boolean);
       if (emails.length === 0) return null;
       return {
         emails,

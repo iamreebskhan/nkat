@@ -18,10 +18,16 @@ function fetchSequence(responses: { status: number; body: unknown }[]) {
 const CREDS = { clientId: 'c-id', clientSecret: 'c-sec' };
 
 describe.each([
-  ['ChangeHealthcareClient', (creds: typeof CREDS, fi: typeof globalThis.fetch, now: () => number) =>
-    new ChangeHealthcareClient(creds, { fetchImpl: fi, nowMs: now })],
-  ['WaystarClient', (creds: typeof CREDS, fi: typeof globalThis.fetch, now: () => number) =>
-    new WaystarClient(creds, { fetchImpl: fi, nowMs: now })],
+  [
+    'ChangeHealthcareClient',
+    (creds: typeof CREDS, fi: typeof globalThis.fetch, now: () => number) =>
+      new ChangeHealthcareClient(creds, { fetchImpl: fi, nowMs: now }),
+  ],
+  [
+    'WaystarClient',
+    (creds: typeof CREDS, fi: typeof globalThis.fetch, now: () => number) =>
+      new WaystarClient(creds, { fetchImpl: fi, nowMs: now }),
+  ],
 ])('%s OAuth2 token flow', (_name, mk) => {
   it('mints + caches a token', async () => {
     const fi = fetchSequence([{ status: 200, body: { access_token: 'tok-1', expires_in: 3600 } }]);

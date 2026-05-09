@@ -22,7 +22,7 @@ export interface CmsLcdSummary {
   lcd_id: string;
   title: string;
   contractor: string;
-  effective_date: string;       // ISO date
+  effective_date: string; // ISO date
   retirement_date?: string;
 }
 
@@ -31,7 +31,7 @@ export interface CmsLcdDetail extends CmsLcdSummary {
   body_html: string;
   cpt_codes: string[];
   hcpcs_codes: string[];
-  icd10_covered: string[];      // ICD-10s on the medical-necessity list
+  icd10_covered: string[]; // ICD-10s on the medical-necessity list
   icd10_noncovered?: string[];
   documentation_requirements?: string[];
   utilization_guidelines?: string[];
@@ -102,7 +102,9 @@ export class CmsCoverageApiClient {
     return json.token;
   }
 
-  async listLcds(params: { state?: string; cpt?: string; effectiveOn?: string } = {}): Promise<CmsLcdSummary[]> {
+  async listLcds(
+    params: { state?: string; cpt?: string; effectiveOn?: string } = {},
+  ): Promise<CmsLcdSummary[]> {
     const url = new URL(`${this.baseUrl}/v1/data/lcd`);
     if (params.state) url.searchParams.set('state', params.state);
     if (params.cpt) url.searchParams.set('cpt', params.cpt);
@@ -124,7 +126,9 @@ export class CmsCoverageApiClient {
   }
 
   async getArticle(articleId: string): Promise<CmsArticleDetail> {
-    return this.fetchJson<CmsArticleDetail>(`${this.baseUrl}/v1/data/article/${encodeURIComponent(articleId)}`);
+    return this.fetchJson<CmsArticleDetail>(
+      `${this.baseUrl}/v1/data/article/${encodeURIComponent(articleId)}`,
+    );
   }
 
   async listNcds(): Promise<CmsNcdSummary[]> {

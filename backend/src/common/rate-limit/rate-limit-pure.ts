@@ -68,7 +68,11 @@ export function tryConsume(
  * been idle for `maxIdleMs`. Bounded memory growth in long-running
  * processes.
  */
-export function evictIdle(state: Map<string, BucketState>, nowMs: number, maxIdleMs: number): number {
+export function evictIdle(
+  state: Map<string, BucketState>,
+  nowMs: number,
+  maxIdleMs: number,
+): number {
   let evicted = 0;
   for (const [k, v] of state) {
     if (nowMs - v.lastRefillMs > maxIdleMs) {

@@ -15,7 +15,9 @@
 import { argv, env, exit } from 'node:process';
 import { Pool } from 'pg';
 
-interface Args { dryRun: boolean }
+interface Args {
+  dryRun: boolean;
+}
 
 function parseArgs(): Args {
   const a: Args = { dryRun: false };
@@ -90,12 +92,16 @@ async function main() {
           `INSERT INTO audit_log
             (org_id, user_id, action, target_type, target_id, payload, ip_address, user_agent)
            VALUES ($1, NULL, 'privacy.dsar_auto_expired', 'dsar_request', $2, $3, NULL, 'cron:expire-dsar')`,
-          [r.org_id, r.id, JSON.stringify({
-            regime: r.regime,
-            request_type: r.request_type,
-            due_at: r.due_at.toISOString(),
-            overdue_days: Math.floor((Date.now() - r.due_at.getTime()) / 86_400_000),
-          })],
+          [
+            r.org_id,
+            r.id,
+            JSON.stringify({
+              regime: r.regime,
+              request_type: r.request_type,
+              due_at: r.due_at.toISOString(),
+              overdue_days: Math.floor((Date.now() - r.due_at.getTime()) / 86_400_000),
+            }),
+          ],
         );
         count += 1;
       }

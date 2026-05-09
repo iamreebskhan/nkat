@@ -122,7 +122,7 @@ export class DisputeService {
           source_page: null,
           extractor_name: 'dispute_resolution',
           extractor_run_id: input.dispute_id,
-          priority: 95,                                  // customer-disputed = top priority
+          priority: 95, // customer-disputed = top priority
         })
         .returning(['id'])
         .executeTakeFirstOrThrow();

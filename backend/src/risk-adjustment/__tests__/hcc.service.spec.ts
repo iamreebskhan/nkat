@@ -2,17 +2,27 @@ import { computeRaf, type HccMapping } from '../hcc.service';
 
 const MAPPINGS: HccMapping[] = [
   // Diabetes family
-  { icd10: 'E11.21', hcc_code: 'HCC037', category: 'Diabetes w/ chronic complications', raf_weight: 0.302 },
-  { icd10: 'E11.22', hcc_code: 'HCC037', category: 'Diabetes w/ chronic complications', raf_weight: 0.302 },
-  { icd10: 'E11.65', hcc_code: 'HCC036', category: 'Diabetes w/ acute',                  raf_weight: 0.302 },
-  { icd10: 'E11.9',  hcc_code: 'HCC038', category: 'Diabetes w/o complication',          raf_weight: 0.105 },
+  {
+    icd10: 'E11.21',
+    hcc_code: 'HCC037',
+    category: 'Diabetes w/ chronic complications',
+    raf_weight: 0.302,
+  },
+  {
+    icd10: 'E11.22',
+    hcc_code: 'HCC037',
+    category: 'Diabetes w/ chronic complications',
+    raf_weight: 0.302,
+  },
+  { icd10: 'E11.65', hcc_code: 'HCC036', category: 'Diabetes w/ acute', raf_weight: 0.302 },
+  { icd10: 'E11.9', hcc_code: 'HCC038', category: 'Diabetes w/o complication', raf_weight: 0.105 },
   // CHF family
-  { icd10: 'I50.84', hcc_code: 'HCC222', category: 'End-stage HF',                       raf_weight: 0.737 },
-  { icd10: 'I50.22', hcc_code: 'HCC224', category: 'HF except end-stage',                raf_weight: 0.337 },
-  { icd10: 'I50.9',  hcc_code: 'HCC226', category: 'HF unspecified',                     raf_weight: 0.275 },
+  { icd10: 'I50.84', hcc_code: 'HCC222', category: 'End-stage HF', raf_weight: 0.737 },
+  { icd10: 'I50.22', hcc_code: 'HCC224', category: 'HF except end-stage', raf_weight: 0.337 },
+  { icd10: 'I50.9', hcc_code: 'HCC226', category: 'HF unspecified', raf_weight: 0.275 },
   // Cancers
-  { icd10: 'C18.0',  hcc_code: 'HCC020', category: 'Colorectal cancer',                  raf_weight: 0.281 },
-  { icd10: 'C34.10', hcc_code: 'HCC017', category: 'Lung cancer',                        raf_weight: 0.928 },
+  { icd10: 'C18.0', hcc_code: 'HCC020', category: 'Colorectal cancer', raf_weight: 0.281 },
+  { icd10: 'C34.10', hcc_code: 'HCC017', category: 'Lung cancer', raf_weight: 0.928 },
 ];
 
 describe('computeRaf', () => {
@@ -85,7 +95,7 @@ describe('computeRaf', () => {
 
   it('handles ICD-10 with multiple mappings by picking the highest-weighted HCC', () => {
     const m: HccMapping[] = [
-      { icd10: 'E11.21', hcc_code: 'HCC036', category: null, raf_weight: 0.200 },
+      { icd10: 'E11.21', hcc_code: 'HCC036', category: null, raf_weight: 0.2 },
       { icd10: 'E11.21', hcc_code: 'HCC037', category: null, raf_weight: 0.302 },
     ];
     const r = computeRaf(['E11.21'], m);

@@ -99,7 +99,9 @@ export class ChangeHealthcareClient {
     };
   }
 
-  _resetTokenCache(): void { this.cached = null; }
+  _resetTokenCache(): void {
+    this.cached = null;
+  }
 }
 
 export class ClearinghouseError extends Error {

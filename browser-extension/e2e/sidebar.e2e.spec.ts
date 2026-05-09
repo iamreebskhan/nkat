@@ -12,12 +12,14 @@
  */
 import { test, expect, chromium, type BrowserContext } from '@playwright/test';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import fs from 'node:fs';
 import { startStub, type StubServerHandle } from './stub-backend';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
+// `__dirname` keeps this file CJS-compatible (the package has no
+// "type": "module"). Avoids the ESM-only `import.meta.url`.
+const HERE = __dirname;
 const EXT_DIR = path.resolve(HERE, '..', 'dist');
 const FIXTURE = pathToFileURL(path.join(HERE, 'fixtures', 'ehr-encounter.html')).toString();
 

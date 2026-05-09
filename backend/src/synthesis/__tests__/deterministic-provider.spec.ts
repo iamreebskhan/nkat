@@ -9,7 +9,11 @@ const finding = (over: Partial<FindingDto> = {}): FindingDto => ({
   detail: '',
   confidence: 1,
   citations: [
-    { source_doc_id: 'doc-1', source_url: 'https://example/lcd', retrieved_at: '2026-04-15T00:00:00Z' },
+    {
+      source_doc_id: 'doc-1',
+      source_url: 'https://example/lcd',
+      retrieved_at: '2026-04-15T00:00:00Z',
+    },
   ],
   ...over,
 });
@@ -29,7 +33,9 @@ describe('DeterministicSynthesisProvider', () => {
   const provider = new DeterministicSynthesisProvider();
 
   it('refuses when there are no findings', async () => {
-    await expect(provider.synthesize(baseReq({ findings: [] }))).rejects.toThrow(SynthesisRefusedError);
+    await expect(provider.synthesize(baseReq({ findings: [] }))).rejects.toThrow(
+      SynthesisRefusedError,
+    );
   });
 
   it('refuses when any finding is below the 0.5 confidence threshold', async () => {
@@ -41,7 +47,12 @@ describe('DeterministicSynthesisProvider', () => {
 
   it('produces narrative with critical lead when any finding is critical', async () => {
     const r = await provider.synthesize(
-      baseReq({ findings: [finding({ severity: 'ok' }), finding({ severity: 'critical', title: 'CARC 97' })] }),
+      baseReq({
+        findings: [
+          finding({ severity: 'ok' }),
+          finding({ severity: 'critical', title: 'CARC 97' }),
+        ],
+      }),
     );
     expect(r.narrative).toMatch(/Block before submission/);
     expect(r.severity_summary).toEqual({ critical: 1, warning: 0, info: 0, ok: 1 });
@@ -53,9 +64,15 @@ describe('DeterministicSynthesisProvider', () => {
     const r = await provider.synthesize(
       baseReq({
         findings: [
-          finding({ citations: [{ source_doc_id: 'd1', source_url: 'https://a', retrieved_at: 'x' }] }),
-          finding({ citations: [{ source_doc_id: 'd1', source_url: 'https://a', retrieved_at: 'x' }] }), // duplicate
-          finding({ citations: [{ source_doc_id: 'd2', source_url: 'https://b', retrieved_at: 'y' }] }),
+          finding({
+            citations: [{ source_doc_id: 'd1', source_url: 'https://a', retrieved_at: 'x' }],
+          }),
+          finding({
+            citations: [{ source_doc_id: 'd1', source_url: 'https://a', retrieved_at: 'x' }],
+          }), // duplicate
+          finding({
+            citations: [{ source_doc_id: 'd2', source_url: 'https://b', retrieved_at: 'y' }],
+          }),
         ],
       }),
     );
@@ -66,10 +83,10 @@ describe('DeterministicSynthesisProvider', () => {
     const r = await provider.synthesize(
       baseReq({
         findings: [
-          finding({ severity: 'info',     title: 'A' }),
+          finding({ severity: 'info', title: 'A' }),
           finding({ severity: 'critical', title: 'B' }),
-          finding({ severity: 'ok',       title: 'C' }),
-          finding({ severity: 'warning',  title: 'D' }),
+          finding({ severity: 'ok', title: 'C' }),
+          finding({ severity: 'warning', title: 'D' }),
         ],
       }),
     );

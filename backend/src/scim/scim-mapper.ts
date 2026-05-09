@@ -151,8 +151,7 @@ export function applyPatchOps(ops: PatchOp[]): UserUpdates {
       if (typeof v.userName === 'string') u.email = v.userName.trim();
       if (typeof v.displayName === 'string') u.full_name = v.displayName;
     } else if (op.path?.startsWith('roles')) {
-      const v = (op.value as Array<{ value?: string }> | { value?: string } | string)
-        ?? null;
+      const v = (op.value as Array<{ value?: string }> | { value?: string } | string) ?? null;
       let role: string | undefined;
       if (typeof v === 'string') role = v;
       else if (Array.isArray(v)) role = v[0]?.value;
@@ -180,7 +179,9 @@ export interface ParsedFilter {
 
 export function parseScimFilter(filter: string | undefined): ParsedFilter | null {
   if (!filter) return null;
-  const m = filter.trim().match(/^(userName|active|externalId)\s+eq\s+(?:"([^"]*)"|(true|false))$/i);
+  const m = filter
+    .trim()
+    .match(/^(userName|active|externalId)\s+eq\s+(?:"([^"]*)"|(true|false))$/i);
   if (!m) return null;
   const field = m[1] as ParsedFilter['field'];
   const value = m[2] !== undefined ? m[2] : m[3] === 'true';

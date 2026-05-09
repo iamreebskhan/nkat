@@ -5,9 +5,9 @@ describe('tryConsume — token bucket', () => {
     const state = new Map<string, BucketState>();
     const cfg = { limit: 3, refillPerSec: 1 };
     const t = 1_000_000;
-    expect(tryConsume(state, t, 'k', cfg).allowed).toBe(true);     // 2 left
-    expect(tryConsume(state, t, 'k', cfg).allowed).toBe(true);     // 1 left
-    expect(tryConsume(state, t, 'k', cfg).allowed).toBe(true);     // 0 left
+    expect(tryConsume(state, t, 'k', cfg).allowed).toBe(true); // 2 left
+    expect(tryConsume(state, t, 'k', cfg).allowed).toBe(true); // 1 left
+    expect(tryConsume(state, t, 'k', cfg).allowed).toBe(true); // 0 left
     const fourth = tryConsume(state, t, 'k', cfg);
     expect(fourth.allowed).toBe(false);
     if (!fourth.allowed) {

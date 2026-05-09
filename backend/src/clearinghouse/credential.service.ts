@@ -73,13 +73,13 @@ export class ClearinghouseCredentialService implements OnModuleInit {
         // Don't crash the app — surface the error at first use instead.
         this.log.warn(
           `CREDENTIAL_ENCRYPTION_KEY invalid (${(e as Error).message}); ` +
-          `clearinghouse credentials are unavailable until fixed.`,
+            `clearinghouse credentials are unavailable until fixed.`,
         );
       }
     } else {
       this.log.warn(
         'CREDENTIAL_ENCRYPTION_KEY not set; clearinghouse credentials are disabled. ' +
-        'Generate a key with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
+          "Generate a key with: node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
       );
     }
   }
@@ -167,7 +167,9 @@ export class ClearinghouseCredentialService implements OnModuleInit {
         .executeTakeFirst();
       if (!row) return null;
       const payload: EncryptedPayload = {
-        ciphertext: row.ciphertext, iv: row.iv, auth_tag: row.auth_tag,
+        ciphertext: row.ciphertext,
+        iv: row.iv,
+        auth_tag: row.auth_tag,
       };
       const plain = decrypt({ master, payload });
       try {
@@ -185,9 +187,15 @@ export class ClearinghouseCredentialService implements OnModuleInit {
       const rows = await tx
         .selectFrom('tenant_clearinghouse_credential')
         .select([
-          'id', 'clearinghouse', 'display_suffix', 'label',
-          'last_verified_at', 'last_verification_status', 'last_verification_error',
-          'created_at', 'updated_at',
+          'id',
+          'clearinghouse',
+          'display_suffix',
+          'label',
+          'last_verified_at',
+          'last_verification_status',
+          'last_verification_error',
+          'created_at',
+          'updated_at',
         ])
         .where('org_id', '=', orgId)
         .orderBy('clearinghouse', 'asc')

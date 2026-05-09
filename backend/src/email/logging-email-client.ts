@@ -14,9 +14,7 @@ export class LoggingEmailClient implements EmailClient {
   private readonly log = new Logger('LoggingEmailClient');
   async send(msg: EmailMessage): Promise<EmailSendResult> {
     const id = `log-${randomBytes(8).toString('hex')}`;
-    this.log.log(
-      `[no-send] to=${msg.to} from=${msg.from} subject="${msg.subject}" id=${id}`,
-    );
+    this.log.log(`[no-send] to=${msg.to} from=${msg.from} subject="${msg.subject}" id=${id}`);
     return { messageId: id };
   }
 }

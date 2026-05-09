@@ -65,9 +65,7 @@ async function loadMigrations(dir: string): Promise<MigrationFile[]> {
   for (const filename of entries) {
     const m = filename.match(/^(\d{4})_/);
     if (!m) {
-      throw new Error(
-        `migration filename ${filename} doesn't match NNNN_* convention`,
-      );
+      throw new Error(`migration filename ${filename} doesn't match NNNN_* convention`);
     }
     const body = await readFile(join(dir, filename), 'utf8');
     const hash = createHash('sha256').update(body).digest('hex');
@@ -94,9 +92,7 @@ async function ensureMigrationTable(pool: Pool): Promise<void> {
   `);
 }
 
-async function readApplied(
-  pool: Pool,
-): Promise<Map<string, { sha256: string }>> {
+async function readApplied(pool: Pool): Promise<Map<string, { sha256: string }>> {
   const r = await pool.query<{ filename: string; sha256: string }>(
     'SELECT filename, sha256 FROM app.schema_migration',
   );
@@ -105,16 +101,12 @@ async function readApplied(
   return m;
 }
 
-async function withAdvisoryLock<T>(
-  pool: Pool,
-  fn: () => Promise<T>,
-): Promise<T> {
+async function withAdvisoryLock<T>(pool: Pool, fn: () => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
-    const got = await client.query<{ ok: boolean }>(
-      'SELECT pg_try_advisory_lock($1) AS ok',
-      [ADVISORY_LOCK_KEY],
-    );
+    const got = await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [
+      ADVISORY_LOCK_KEY,
+    ]);
     if (!got.rows[0]?.ok) {
       throw new Error(
         'another migration runner appears to be holding the advisory lock; aborting.',
@@ -123,9 +115,7 @@ async function withAdvisoryLock<T>(
     try {
       return await fn();
     } finally {
-      await client
-        .query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY])
-        .catch(() => {});
+      await client.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY]).catch(() => {});
     }
   } finally {
     client.release();
@@ -195,9 +185,7 @@ async function main() {
 
     // Plan
     const pending = onDisk.filter((m) => !applied.has(m.filename));
-    const plan = args.target
-      ? pending.filter((m) => m.number <= args.target!)
-      : pending;
+    const plan = args.target ? pending.filter((m) => m.number <= args.target!) : pending;
     if (plan.length === 0) {
       console.log('Nothing to apply.');
       return;

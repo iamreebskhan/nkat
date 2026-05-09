@@ -610,7 +610,9 @@ export interface RuleDisputeRow {
   customer_assertion: Record<string, unknown>;
   evidence_url: string | null;
   customer_notes: string | null;
-  status: Generated<'open' | 'investigating' | 'resolved_we_were_right' | 'resolved_we_were_wrong' | 'withdrawn'>;
+  status: Generated<
+    'open' | 'investigating' | 'resolved_we_were_right' | 'resolved_we_were_wrong' | 'withdrawn'
+  >;
   resulting_candidate_id: string | null;
   resolution_notes: string | null;
   created_at: Generated<Date>;
@@ -635,7 +637,7 @@ export interface ClientDocUploadRow {
   uploaded_by: string | null;
   original_filename: string;
   content_type: string | null;
-  byte_size: string;                    // BIGINT serialized as string by pg
+  byte_size: string; // BIGINT serialized as string by pg
   raw_storage_uri: string | null;
   redacted_text: string | null;
   redacted_storage_uri: string | null;
@@ -680,12 +682,7 @@ export interface WebhookSubscriptionRow {
   created_at: Generated<Date>;
 }
 
-export type WebhookDeliveryStatus =
-  | 'queued'
-  | 'in_flight'
-  | 'succeeded'
-  | 'failed'
-  | 'dead_letter';
+export type WebhookDeliveryStatus = 'queued' | 'in_flight' | 'succeeded' | 'failed' | 'dead_letter';
 
 export interface WebhookDeliveryRow {
   id: Generated<string>;
@@ -826,8 +823,14 @@ export interface TenantClearinghouseCredentialRow {
 }
 
 export type PrivacyRegime =
-  | 'wmhmda' | 'ccpa' | 'cpa_co' | 'tdpsa_tx' | 'vcdpa_va'
-  | 'ab3030_ai' | 'sb24_205_ai_co' | 'general';
+  | 'wmhmda'
+  | 'ccpa'
+  | 'cpa_co'
+  | 'tdpsa_tx'
+  | 'vcdpa_va'
+  | 'ab3030_ai'
+  | 'sb24_205_ai_co'
+  | 'general';
 
 export interface PrivacyConsentRow {
   id: Generated<string>;
@@ -844,12 +847,23 @@ export interface PrivacyConsentRow {
 }
 
 export type DsarRegime =
-  | 'wmhmda' | 'ccpa' | 'cpa_co' | 'tdpsa_tx' | 'vcdpa_va' | 'ctdpa_ct'
-  | 'utah_ucpa' | 'general';
+  | 'wmhmda'
+  | 'ccpa'
+  | 'cpa_co'
+  | 'tdpsa_tx'
+  | 'vcdpa_va'
+  | 'ctdpa_ct'
+  | 'utah_ucpa'
+  | 'general';
 
 export type DsarRequestType =
-  | 'access' | 'deletion' | 'portability' | 'correction' | 'opt_out_sale'
-  | 'opt_out_targeted_advertising' | 'limit_sensitive_use';
+  | 'access'
+  | 'deletion'
+  | 'portability'
+  | 'correction'
+  | 'opt_out_sale'
+  | 'opt_out_targeted_advertising'
+  | 'limit_sensitive_use';
 
 export type DsarStatus = 'received' | 'verified' | 'fulfilled' | 'rejected' | 'expired';
 
@@ -896,12 +910,7 @@ export interface RateLimitOverrideRow {
   updated_at: Generated<Date>;
 }
 
-export type TenantDeletionStatus =
-  | 'requested'
-  | 'scheduled'
-  | 'executed'
-  | 'canceled'
-  | 'failed';
+export type TenantDeletionStatus = 'requested' | 'scheduled' | 'executed' | 'canceled' | 'failed';
 
 export interface TenantDeletionRequestRow {
   id: Generated<string>;

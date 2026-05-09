@@ -74,19 +74,27 @@ function pruneHistory(h: HistorySnapshot[], days: number): HistorySnapshot[] {
 
 function statusClass(s: string): string {
   switch (s) {
-    case 'operational': return 'ok';
-    case 'partial_outage': return 'warn';
-    case 'major_outage': return 'down';
-    default: return 'na';
+    case 'operational':
+      return 'ok';
+    case 'partial_outage':
+      return 'warn';
+    case 'major_outage':
+      return 'down';
+    default:
+      return 'na';
   }
 }
 
 function statusLabel(s: string): string {
   switch (s) {
-    case 'operational': return 'All systems operational';
-    case 'partial_outage': return 'Partial outage';
-    case 'major_outage': return 'Major outage';
-    default: return 'Status unknown';
+    case 'operational':
+      return 'All systems operational';
+    case 'partial_outage':
+      return 'Partial outage';
+    case 'major_outage':
+      return 'Major outage';
+    default:
+      return 'Status unknown';
   }
 }
 
@@ -110,12 +118,14 @@ function renderHtml(snap: StatusResponse, history: HistorySnapshot[]): string {
   }
 
   const compRows = snap.components
-    .map((c) => `
+    .map(
+      (c) => `
       <tr>
         <td>${escapeHtml(c.name)}</td>
         <td><span class="dot ${statusClass(c.status)}"></span> ${statusLabel(c.status)}</td>
         <td>${c.latency_ms ?? '-'} ms</td>
-      </tr>`)
+      </tr>`,
+    )
     .join('');
 
   const stripeHtml = stripeBuckets
@@ -161,10 +171,14 @@ function renderHtml(snap: StatusResponse, history: HistorySnapshot[]): string {
   <tbody>${compRows}</tbody>
 </table>
 
-${stripeBuckets.length > 0 ? `
+${
+  stripeBuckets.length > 0
+    ? `
 <h2>Last ${stripeBuckets.length} day(s)</h2>
 <div>${stripeHtml}</div>
-` : ''}
+`
+    : ''
+}
 
 <p class="meta">
   Build ${escapeHtml(snap.version)} · uptime ${formatUptime(snap.uptime_sec)} ·

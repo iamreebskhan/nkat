@@ -73,7 +73,7 @@ export class ClearinghouseCredentialController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'List the calling tenant\'s clearinghouse credentials (no plaintext)' })
+  @ApiOperation({ summary: "List the calling tenant's clearinghouse credentials (no plaintext)" })
   async list(@Req() req: Request) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     if (!this.svc.isReady()) {
@@ -84,13 +84,10 @@ export class ClearinghouseCredentialController {
 
   @Put(':clearinghouse')
   @ApiOperation({
-    summary: 'Upsert credentials for one clearinghouse. Plaintext is encrypted at rest with AES-256-GCM.',
+    summary:
+      'Upsert credentials for one clearinghouse. Plaintext is encrypted at rest with AES-256-GCM.',
   })
-  async upsert(
-    @Req() req: Request,
-    @Param() params: ClearinghouseParam,
-    @Body() body: UpsertDto,
-  ) {
+  async upsert(@Req() req: Request, @Param() params: ClearinghouseParam, @Body() body: UpsertDto) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     const userId = req.auth?.userId ?? null;
     if (!this.svc.isReady()) {
@@ -123,7 +120,8 @@ export class ClearinghouseCredentialController {
   @Post(':id/test')
   @HttpCode(200)
   @ApiOperation({
-    summary: 'Test credentials by minting an access token. Updates last_verified_at on success/failure.',
+    summary:
+      'Test credentials by minting an access token. Updates last_verified_at on success/failure.',
   })
   async test(@Req() req: Request, @Param('id') id: string) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
@@ -185,10 +183,13 @@ export class ClearinghouseCredentialController {
           : e instanceof ClearinghouseError
             ? `${e.code}/${e.status}: ${e.detail}`
             : e instanceof Error
-            ? e.message
-            : String(e);
+              ? e.message
+              : String(e);
       await this.svc.recordVerification({
-        orgId, id, status: 'failed', error: msg.slice(0, 500),
+        orgId,
+        id,
+        status: 'failed',
+        error: msg.slice(0, 500),
       });
       // Re-throw as 400 — the credentials don't work, that's a client problem.
       throw new BadRequestException({ code: 'CREDENTIAL_VERIFICATION_FAILED', detail: msg });

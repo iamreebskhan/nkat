@@ -2,11 +2,7 @@
  * Unit tests for the pure helpers in `audit-log-redaction.service`.
  * The DB-touching service is integration-tested separately.
  */
-import {
-  canonicalize,
-  computeRedactedPayload,
-  hashPayload,
-} from '../audit-log-redaction.service';
+import { canonicalize, computeRedactedPayload, hashPayload } from '../audit-log-redaction.service';
 
 describe('canonicalize', () => {
   it('serializes primitives unchanged', () => {
@@ -44,8 +40,9 @@ describe('hashPayload', () => {
 
 describe('computeRedactedPayload', () => {
   it('payload_remove returns minimal marker', () => {
-    expect(computeRedactedPayload({ patient: 'X', dob: '1990-01-01' }, 'payload_remove'))
-      .toEqual({ redacted: true });
+    expect(computeRedactedPayload({ patient: 'X', dob: '1990-01-01' }, 'payload_remove')).toEqual({
+      redacted: true,
+    });
   });
 
   it('payload_scrub keeps shape, replaces strings with [REDACTED]', () => {

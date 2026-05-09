@@ -96,7 +96,9 @@ export class SesV2EmailClient implements EmailClient {
       try {
         const parsed = JSON.parse(errBody) as { __type?: string; message?: string };
         code = parsed.__type ?? 'unknown';
-      } catch { /* */ }
+      } catch {
+        /* */
+      }
       this.log.warn(`SES send to=${msg.to} status=${r.status} code=${code}`);
       throw new EmailSendError(code, r.status, `SES ${r.status} ${code}: ${errBody.slice(0, 200)}`);
     }

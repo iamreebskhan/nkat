@@ -92,9 +92,7 @@ export function parseCsvRow(line: string): string[] {
 
 export function parseCsvText(csv: string): string[][] {
   const lines = csv.replace(/\r\n/g, '\n').split('\n');
-  return lines
-    .filter((l, i, arr) => l.trim().length > 0 || i < arr.length - 1)
-    .map(parseCsvRow);
+  return lines.filter((l, i, arr) => l.trim().length > 0 || i < arr.length - 1).map(parseCsvRow);
 }
 
 function findHeader(headers: string[], ...candidates: string[]): number {

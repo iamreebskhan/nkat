@@ -23,7 +23,7 @@ export interface Notice {
 
 export interface NoticeAction {
   label: string;
-  href?: string;          // an internal route, e.g. '/v1/privacy/dsar'
+  href?: string; // an internal route, e.g. '/v1/privacy/dsar'
   kind: 'link' | 'consent' | 'opt_out';
 }
 
@@ -85,7 +85,11 @@ export const NOTICES: Notice[] = [
     title: 'Washington Consumer Health Data Notice (MHMDA)',
     body: WMHMDA_BODY,
     actions: [
-      { label: 'View full Consumer Health Data Privacy Policy', href: '/legal/wmhmda', kind: 'link' },
+      {
+        label: 'View full Consumer Health Data Privacy Policy',
+        href: '/legal/wmhmda',
+        kind: 'link',
+      },
       { label: 'Submit a request to exercise your rights', href: '/v1/privacy/dsar', kind: 'link' },
     ],
   },
@@ -96,7 +100,11 @@ export const NOTICES: Notice[] = [
     title: 'California Privacy Notice (CCPA / CPRA)',
     body: CCPA_BODY,
     actions: [
-      { label: 'Do Not Sell or Share My Personal Information', href: '/v1/privacy/dsar?type=opt_out_sale', kind: 'opt_out' },
+      {
+        label: 'Do Not Sell or Share My Personal Information',
+        href: '/v1/privacy/dsar?type=opt_out_sale',
+        kind: 'opt_out',
+      },
       { label: 'Submit an access or deletion request', href: '/v1/privacy/dsar', kind: 'link' },
     ],
   },

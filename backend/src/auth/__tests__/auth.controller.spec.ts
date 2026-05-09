@@ -41,19 +41,23 @@ describe('AuthController.mode', () => {
   });
 
   it('reports sso_configured=true when both URL + client id are set', () => {
-    const c = new AuthController(envOf({
-      AUTH_MODE: 'jwt',
-      OIDC_AUTHORIZATION_URL: 'https://idp.example.com/oauth2/authorize',
-      OIDC_CLIENT_ID: 'abc-client',
-    }));
+    const c = new AuthController(
+      envOf({
+        AUTH_MODE: 'jwt',
+        OIDC_AUTHORIZATION_URL: 'https://idp.example.com/oauth2/authorize',
+        OIDC_CLIENT_ID: 'abc-client',
+      }),
+    );
     expect(c.mode()).toEqual({ mode: 'jwt', sso_configured: true });
   });
 
   it('still false when only one of URL or client id is set', () => {
-    const c = new AuthController(envOf({
-      OIDC_AUTHORIZATION_URL: 'https://idp.example.com',
-      // OIDC_CLIENT_ID intentionally missing
-    }));
+    const c = new AuthController(
+      envOf({
+        OIDC_AUTHORIZATION_URL: 'https://idp.example.com',
+        // OIDC_CLIENT_ID intentionally missing
+      }),
+    );
     expect(c.mode().sso_configured).toBe(false);
   });
 });
@@ -61,38 +65,50 @@ describe('AuthController.mode', () => {
 describe('AuthController.ssoStart', () => {
   it('throws 503 when SSO is not configured', () => {
     const c = new AuthController(envOf());
-    expect(() => c.ssoStart('/dest', { redirect: () => {} } as never))
-      .toThrow(ServiceUnavailableException);
+    expect(() => c.ssoStart('/dest', { redirect: () => {} } as never)).toThrow(
+      ServiceUnavailableException,
+    );
   });
 
   it('redirects with the canonical OIDC code-flow params', () => {
-    const c = new AuthController(envOf({
-      OIDC_AUTHORIZATION_URL: 'https://idp.example.com/oauth2/authorize',
-      OIDC_CLIENT_ID: 'abc-client',
-      OIDC_REDIRECT_URI: 'https://api.example.com/v1/auth/sso/callback',
-      OIDC_SCOPE: 'openid profile email',
-    }));
+    const c = new AuthController(
+      envOf({
+        OIDC_AUTHORIZATION_URL: 'https://idp.example.com/oauth2/authorize',
+        OIDC_CLIENT_ID: 'abc-client',
+        OIDC_REDIRECT_URI: 'https://api.example.com/v1/auth/sso/callback',
+        OIDC_SCOPE: 'openid profile email',
+      }),
+    );
     let target = '';
     let status = 0;
     c.ssoStart('/lookup', {
-      redirect: (s: number, url: string) => { status = s; target = url; },
+      redirect: (s: number, url: string) => {
+        status = s;
+        target = url;
+      },
     } as never);
     expect(status).toBe(302);
     expect(target).toContain('https://idp.example.com/oauth2/authorize?');
     expect(target).toContain('response_type=code');
     expect(target).toContain('client_id=abc-client');
     expect(target).toContain('scope=openid+profile+email');
-    expect(target).toContain('state=%2Flookup');  // URL-encoded
+    expect(target).toContain('state=%2Flookup'); // URL-encoded
   });
 
   it('uses default scope when env scope unset', () => {
-    const c = new AuthController(envOf({
-      OIDC_AUTHORIZATION_URL: 'https://idp.example.com',
-      OIDC_CLIENT_ID: 'x',
-      OIDC_REDIRECT_URI: 'https://api.example.com/cb',
-    }));
+    const c = new AuthController(
+      envOf({
+        OIDC_AUTHORIZATION_URL: 'https://idp.example.com',
+        OIDC_CLIENT_ID: 'x',
+        OIDC_REDIRECT_URI: 'https://api.example.com/cb',
+      }),
+    );
     let target = '';
-    c.ssoStart(undefined, { redirect: (_: number, url: string) => { target = url; } } as never);
+    c.ssoStart(undefined, {
+      redirect: (_: number, url: string) => {
+        target = url;
+      },
+    } as never);
     expect(target).toContain('scope=openid+profile+email');
   });
 });

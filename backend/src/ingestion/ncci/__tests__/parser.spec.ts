@@ -42,8 +42,7 @@ describe('parseNcciPtp', () => {
 
   it('records bad rows in errors[]', () => {
     const bad =
-      'Column_1,Column_2,Modifier_Indicator,Effective_Date\n' +
-      '99213,99214,bogus,2026-01-01\n';
+      'Column_1,Column_2,Modifier_Indicator,Effective_Date\n' + '99213,99214,bogus,2026-01-01\n';
     const r = parseNcciPtp(bad, { editType: 'practitioner', release: '2026Q2' });
     expect(r.rows).toHaveLength(0);
     expect(r.errors).toHaveLength(1);
@@ -57,8 +56,7 @@ describe('parseNcciPtp', () => {
 
   it('handles MM/DD/YYYY dates', () => {
     const csv =
-      'Column_1,Column_2,Modifier_Indicator,Effective_Date\n' +
-      '99213,99214,1,01/15/2026\n';
+      'Column_1,Column_2,Modifier_Indicator,Effective_Date\n' + '99213,99214,1,01/15/2026\n';
     const r = parseNcciPtp(csv, { editType: 'practitioner', release: '2026Q2' });
     expect(r.rows[0].effective_date.toISOString()).toBe('2026-01-15T00:00:00.000Z');
   });
@@ -82,9 +80,7 @@ describe('parseNcciMue', () => {
   });
 
   it('errors on negative or non-numeric units', () => {
-    const csv =
-      'HCPCS_CPT_Code,MUE_Value,Effective_Date\n' +
-      '99213,abc,2026-01-01\n';
+    const csv = 'HCPCS_CPT_Code,MUE_Value,Effective_Date\n' + '99213,abc,2026-01-01\n';
     const r = parseNcciMue(csv, { setting: 'practitioner', release: '2026Q2' });
     expect(r.errors).toHaveLength(1);
   });

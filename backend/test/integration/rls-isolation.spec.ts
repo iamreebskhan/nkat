@@ -17,13 +17,24 @@ integrationDescribe('RLS isolation (integration)', () => {
   beforeAll(async () => {
     ctx = await startIntegrationContext();
     // Seed two orgs + one client_company per org (admin role bypasses RLS).
+    // ORG_A and ORG_B may already exist from db/seed/* (Design Partner Co
+    // and Other RCM Co). The seed uses the same UUIDs but different slugs,
+    // so ON CONFLICT (slug) wouldn't catch the PK collision. Use (id).
     await ctx.pool.query(
       `INSERT INTO org (id, name, slug, plan_tier) VALUES
-        ($1, 'Acme RCM', 'acme', 'org'),
-        ($2, 'Beta RCM', 'beta', 'org')
-       ON CONFLICT (slug) DO NOTHING`,
+        ($1, 'Acme RCM', 'acme-test', 'org'),
+        ($2, 'Beta RCM', 'beta-test', 'org')
+       ON CONFLICT (id) DO NOTHING`,
       [ORG_A, ORG_B],
     );
+    // Drop any pre-existing client_company rows for these orgs so the
+    // RLS row-count assertions below have a known baseline. Seed 0017
+    // adds two clients to ORG_A; we want ONLY the rows this test
+    // controls.
+    await ctx.pool.query(`DELETE FROM client_company WHERE org_id = $1 OR org_id = $2`, [
+      ORG_A,
+      ORG_B,
+    ]);
     await ctx.pool.query(
       `INSERT INTO client_company (id, org_id, name, primary_state, specialties) VALUES
         ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', $1, 'Acme Hospice', 'OH', ARRAY['hospice']),
@@ -53,9 +64,9 @@ integrationDescribe('RLS isolation (integration)', () => {
   });
 
   it('app role without app.current_org_id returns zero rows from tenant-scoped tables', async () => {
-    const r = await sql<{ count: number }>`SELECT count(*)::int AS count FROM client_company`.execute(
-      ctx.appDb,
-    );
+    const r = await sql<{
+      count: number;
+    }>`SELECT count(*)::int AS count FROM client_company`.execute(ctx.appDb);
     expect(Number(r.rows[0].count)).toBe(0);
   });
 

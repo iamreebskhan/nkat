@@ -26,8 +26,7 @@ import type { SynthesisRequest } from '../../src/synthesis/synthesis-types';
 const ENABLED = process.env.BEDROCK_SMOKE === '1';
 const smokeDescribe: jest.Describe = ENABLED ? describe : describe.skip;
 
-const MODEL_ID =
-  process.env.BEDROCK_MODEL_ID ?? 'anthropic.claude-3-5-sonnet-20241022-v2:0';
+const MODEL_ID = process.env.BEDROCK_MODEL_ID ?? 'anthropic.claude-3-5-sonnet-20241022-v2:0';
 const REGION = process.env.AWS_REGION ?? 'us-east-1';
 
 smokeDescribe('Bedrock live smoke', () => {

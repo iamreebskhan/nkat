@@ -57,7 +57,9 @@ export class ProviderTaxonomyService {
       };
     }
 
-    const status: ProviderTaxonomyStatus = row.provider_taxonomy_allowed.includes(input.provider_taxonomy)
+    const status: ProviderTaxonomyStatus = row.provider_taxonomy_allowed.includes(
+      input.provider_taxonomy,
+    )
       ? 'allowed'
       : 'not_allowed';
 

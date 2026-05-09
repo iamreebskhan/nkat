@@ -78,8 +78,13 @@ export class ScimUsersController {
         .selectFrom('org_member as m')
         .innerJoin('app_user as u', 'u.id', 'm.user_id')
         .select([
-          'u.id', 'u.email', 'u.full_name', 'u.created_at', 'u.last_login_at',
-          'm.role', 'm.status',
+          'u.id',
+          'u.email',
+          'u.full_name',
+          'u.created_at',
+          'u.last_login_at',
+          'm.role',
+          'm.status',
         ])
         .where('m.org_id', '=', orgId);
 
@@ -127,8 +132,13 @@ export class ScimUsersController {
         .selectFrom('org_member as m')
         .innerJoin('app_user as u', 'u.id', 'm.user_id')
         .select([
-          'u.id', 'u.email', 'u.full_name', 'u.created_at', 'u.last_login_at',
-          'm.role', 'm.status',
+          'u.id',
+          'u.email',
+          'u.full_name',
+          'u.created_at',
+          'u.last_login_at',
+          'm.role',
+          'm.status',
         ])
         .where('m.org_id', '=', orgId)
         .where('u.id', '=', id)
@@ -201,7 +211,11 @@ export class ScimUsersController {
   }
 
   @Patch(':id')
-  async patch(@Req() req: Request, @Param('id') id: string, @Body() body: { Operations?: unknown[] }) {
+  async patch(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { Operations?: unknown[] },
+  ) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     assertUuid(id, 'id');
     const ops = Array.isArray(body?.Operations) ? body.Operations : [];
@@ -251,8 +265,13 @@ export class ScimUsersController {
         .selectFrom('org_member as m')
         .innerJoin('app_user as a', 'a.id', 'm.user_id')
         .select([
-          'a.id', 'a.email', 'a.full_name', 'a.created_at', 'a.last_login_at',
-          'm.role', 'm.status',
+          'a.id',
+          'a.email',
+          'a.full_name',
+          'a.created_at',
+          'a.last_login_at',
+          'm.role',
+          'm.status',
         ])
         .where('m.org_id', '=', orgId)
         .where('a.id', '=', userId)
@@ -289,8 +308,13 @@ export class ScimUsersController {
         .selectFrom('org_member as m')
         .innerJoin('app_user as a', 'a.id', 'm.user_id')
         .select([
-          'a.id', 'a.email', 'a.full_name', 'a.created_at', 'a.last_login_at',
-          'm.role', 'm.status',
+          'a.id',
+          'a.email',
+          'a.full_name',
+          'a.created_at',
+          'a.last_login_at',
+          'm.role',
+          'm.status',
         ])
         .where('m.org_id', '=', orgId)
         .where('a.id', '=', userId)

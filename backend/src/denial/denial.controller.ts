@@ -25,11 +25,7 @@ export class DenialController {
   @ApiOperation({ summary: 'Top denial reasons (CARC) by dollar impact' })
   @ApiQuery({ name: 'days', type: Number, required: false })
   @ApiQuery({ name: 'limit', type: Number, required: false })
-  async top(
-    @Req() req: Request,
-    @Query() q: WindowDto,
-    @Query('limit') limitRaw?: string,
-  ) {
+  async top(@Req() req: Request, @Query() q: WindowDto, @Query('limit') limitRaw?: string) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     const limit = limitRaw ? Math.min(50, Math.max(1, Number(limitRaw))) : 10;
     return { window_days: q.days, items: await this.svc.topByCarc(orgId, q.days, limit) };
@@ -70,11 +66,11 @@ export class DenialController {
       preflight_catch_rate: catch_.catch_rate,
       buckets: top.map((b) => ({
         carc: b.carc,
-        rarc: null,                         // RARC not tracked at this aggregation level yet
+        rarc: null, // RARC not tracked at this aggregation level yet
         count: b.count,
         dollar_impact: b.dollar_impact,
         preflight_caught_count: b.preflight_caught_count,
-        description: null,                  // CARC catalog enrichment is a follow-up
+        description: null, // CARC catalog enrichment is a follow-up
       })),
     };
   }

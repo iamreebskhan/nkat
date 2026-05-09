@@ -10,12 +10,26 @@
 import { Body, Controller, Header, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsNumberString, IsString, Length, Matches, MaxLength, MinLength,
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsIn,
+  IsNumberString,
+  IsString,
+  Length,
+  Matches,
+  MaxLength,
+  MinLength,
 } from 'class-validator';
 import type { Request } from 'express';
 import { AuthGuard } from '../../auth/auth.guard';
 import { assertUuid } from '../../common/uuid';
-import { generate270, type Edi270Identity, type Edi270Information, type Edi270Control } from './generator';
+import {
+  generate270,
+  type Edi270Identity,
+  type Edi270Information,
+  type Edi270Control,
+} from './generator';
 
 class IdentityDto {
   @IsString() @Length(2, 15) senderId!: string;
@@ -34,7 +48,11 @@ class InformationDto {
   @IsString() @MaxLength(80) subscriberMemberId!: string;
   @IsNumberString() @Length(8, 8) subscriberDob!: string;
   @IsIn(['M', 'F', 'U']) subscriberGender!: 'M' | 'F' | 'U';
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @IsString({ each: true }) serviceTypeCodes!: string[];
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  serviceTypeCodes!: string[];
   @IsNumberString() @Length(8, 8) serviceDate!: string;
 }
 

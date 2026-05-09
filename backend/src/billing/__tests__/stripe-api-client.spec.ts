@@ -64,7 +64,11 @@ describe('StripeApiClient', () => {
   });
 
   it('updateSubscriptionSeats POSTs proration form-encoded', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(mockResponse({ ...SUB_FIXTURE, metadata: { ...SUB_FIXTURE.metadata, seats: '25' } }));
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(
+        mockResponse({ ...SUB_FIXTURE, metadata: { ...SUB_FIXTURE.metadata, seats: '25' } }),
+      );
     const client = new StripeApiClient({ apiKey: 'k', fetchImpl: fetchMock });
     await client.updateSubscriptionSeats({
       subscriptionId: 'sub_1',
@@ -112,9 +116,11 @@ describe('StripeApiClient', () => {
   });
 
   it('createCheckoutSession POSTs price + quantity + URLs + metadata', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
-      mockResponse({ id: 'cs_test_1', url: 'https://checkout.stripe.com/c/cs_test_1' }),
-    );
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(
+        mockResponse({ id: 'cs_test_1', url: 'https://checkout.stripe.com/c/cs_test_1' }),
+      );
     const client = new StripeApiClient({ apiKey: 'k', fetchImpl: fetchMock });
     const r = await client.createCheckoutSession({
       priceId: 'price_team',
@@ -150,7 +156,9 @@ describe('StripeApiClient', () => {
   });
 
   it('createCheckoutSession forwards Idempotency-Key when supplied', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(mockResponse({ id: 'cs_idem', url: 'https://x' }));
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(mockResponse({ id: 'cs_idem', url: 'https://x' }));
     const client = new StripeApiClient({ apiKey: 'k', fetchImpl: fetchMock });
     await client.createCheckoutSession({
       priceId: 'price_team',
@@ -195,9 +203,9 @@ describe('StripeApiClient', () => {
   });
 
   it('createPortalSession forwards Idempotency-Key', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
-      mockResponse({ id: 'bps_x', url: 'https://x', expires_at: 0 }),
-    );
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(mockResponse({ id: 'bps_x', url: 'https://x', expires_at: 0 }));
     const client = new StripeApiClient({ apiKey: 'k', fetchImpl: fetchMock });
     await client.createPortalSession({
       customerId: 'cus_x',
@@ -209,9 +217,9 @@ describe('StripeApiClient', () => {
   });
 
   it('createCheckoutSession omits trial + email + states when not provided', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
-      mockResponse({ id: 'cs_2', url: 'https://checkout.stripe.com/c/cs_2' }),
-    );
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(mockResponse({ id: 'cs_2', url: 'https://checkout.stripe.com/c/cs_2' }));
     const client = new StripeApiClient({ apiKey: 'k', fetchImpl: fetchMock });
     await client.createCheckoutSession({
       priceId: 'price_solo',
@@ -230,7 +238,11 @@ describe('StripeApiClient', () => {
 
   it('createPortalSession POSTs customer + return_url, returns url', async () => {
     const fetchMock = jest.fn().mockResolvedValue(
-      mockResponse({ id: 'bps_1', url: 'https://billing.stripe.com/session_xyz', expires_at: 1_700_000_900 }),
+      mockResponse({
+        id: 'bps_1',
+        url: 'https://billing.stripe.com/session_xyz',
+        expires_at: 1_700_000_900,
+      }),
     );
     const client = new StripeApiClient({ apiKey: 'k', fetchImpl: fetchMock });
     const r = await client.createPortalSession({
@@ -258,11 +270,15 @@ describe('StripeApiClient', () => {
   });
 
   it('advanceTestClock POSTs to /advance', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(mockResponse({ id: 'clock_1', status: 'advancing' }));
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(mockResponse({ id: 'clock_1', status: 'advancing' }));
     const client = new StripeApiClient({ apiKey: 'k', fetchImpl: fetchMock });
     const r = await client.advanceTestClock({ id: 'clock_1', frozenTime: 1_701_000_000 });
     expect(r.status).toBe('advancing');
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.stripe.com/v1/test_helpers/test_clocks/clock_1/advance');
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://api.stripe.com/v1/test_helpers/test_clocks/clock_1/advance',
+    );
   });
 
   it('deleteTestClock DELETEs and returns { id, deleted }', async () => {

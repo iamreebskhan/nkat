@@ -1,6 +1,15 @@
 import { Body, Controller, Get, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { ArrayMaxSize, IsArray, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
 import type { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { assertUuid } from '../common/uuid';
@@ -15,7 +24,10 @@ class ScoreDto {
   @Matches(ICD10_REGEX, { each: true, message: 'each diagnosis must be an ICD-10 code' })
   icd10!: string[];
 
-  @IsOptional() @IsInt() @Min(2020) @Max(2099)
+  @IsOptional()
+  @IsInt()
+  @Min(2020)
+  @Max(2099)
   effective_year?: number;
 }
 

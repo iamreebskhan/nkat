@@ -33,7 +33,11 @@ import type { Request, Response } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { assertUuid } from '../common/uuid';
 import { BillingService } from './billing.service';
-import { InvalidWebhookSignatureError, type StripeEventLike, type StripeSubscriptionLike } from './billing-types';
+import {
+  InvalidWebhookSignatureError,
+  type StripeEventLike,
+  type StripeSubscriptionLike,
+} from './billing-types';
 import { verifyStripeSignature } from './stripe-hmac';
 import { MetricsService } from '../observability/metrics.service';
 
@@ -65,8 +69,8 @@ export class BillingController {
     const secrets = Array.isArray(this.signingSecret)
       ? this.signingSecret.filter((s) => typeof s === 'string' && s.length > 0)
       : this.signingSecret
-      ? [this.signingSecret]
-      : [];
+        ? [this.signingSecret]
+        : [];
     if (secrets.length === 0) {
       throw new BadRequestException('webhook signing secret not configured');
     }
@@ -86,9 +90,7 @@ export class BillingController {
         // A non-primary secret matched. Surfaces the rotation
         // status to ops dashboards: when this number drops to zero
         // for ~24h the previous secret can be retired.
-        this.log.warn(
-          `stripe webhook verified by rotation secret #${secretIndex} (primary is #0)`,
-        );
+        this.log.warn(`stripe webhook verified by rotation secret #${secretIndex} (primary is #0)`);
       }
     } catch (e) {
       if (e instanceof InvalidWebhookSignatureError) {
@@ -125,7 +127,9 @@ export class BillingController {
 
   @Get('entitlement')
   @UseGuards(AuthGuard)
-  @ApiOperation({ summary: "Return the caller tenant's current entitlement (tier/seats/states/packs)" })
+  @ApiOperation({
+    summary: "Return the caller tenant's current entitlement (tier/seats/states/packs)",
+  })
   async entitlement(@Req() req: Request) {
     const orgId = assertUuid(req.auth?.orgId, 'orgId');
     const ent = await this.billing.getEntitlement(orgId);

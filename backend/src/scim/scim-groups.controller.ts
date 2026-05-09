@@ -12,7 +12,16 @@
  * set is fixed by our schema, not provisioned. Okta + Entra both
  * tolerate this — they detect via ServiceProviderConfig.
  */
-import { Controller, Get, Inject, NotFoundException, Param, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { assertUuid } from '../common/uuid';
@@ -26,7 +35,7 @@ const ROLES = ['admin', 'reviewer', 'employee', 'consultant'] as const;
 type Role = (typeof ROLES)[number];
 
 interface ScimGroupMember {
-  value: string;            // user id
+  value: string; // user id
   display?: string;
   type: 'User';
   $ref?: string;
@@ -34,7 +43,7 @@ interface ScimGroupMember {
 
 interface ScimGroup {
   schemas: string[];
-  id: string;               // synthesized — `${role}@${orgId}` so it's stable
+  id: string; // synthesized — `${role}@${orgId}` so it's stable
   displayName: string;
   members: ScimGroupMember[];
   meta: {

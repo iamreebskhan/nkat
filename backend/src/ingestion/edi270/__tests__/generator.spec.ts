@@ -46,7 +46,10 @@ describe('generate270', () => {
 
   it('SE segment count matches actual segment count from ST through SE', () => {
     const out = generate270(identity, info, ctl);
-    const segs = out.split('~').filter((s) => s.length > 0).map((s) => s.trim());
+    const segs = out
+      .split('~')
+      .filter((s) => s.length > 0)
+      .map((s) => s.trim());
     const stIdx = segs.findIndex((s) => s.startsWith('ST*'));
     const seIdx = segs.findIndex((s) => s.startsWith('SE*'));
     const declared = parseInt(segs[seIdx].split('*')[1], 10);
@@ -82,8 +85,8 @@ describe('generate270', () => {
       },
       ctl,
     );
-    expect(out).toContain('HL*3*2*22*1~');         // subscriber has-children flag = 1
-    expect(out).toContain('HL*4*3*23*0~');         // dependent
+    expect(out).toContain('HL*3*2*22*1~'); // subscriber has-children flag = 1
+    expect(out).toContain('HL*4*3*23*0~'); // dependent
     expect(out).toContain('INS*N*19~');
     expect(out).toContain('NM1*03*1*PUBLIC*JOHN');
     expect(out).toContain('DMG*D8*20100815*M~');

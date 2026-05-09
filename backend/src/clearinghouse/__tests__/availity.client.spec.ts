@@ -41,17 +41,13 @@ describe('AvailityClient.accessToken', () => {
   });
 
   it('throws AvailityError on a 401 from the token endpoint', async () => {
-    const fetchImpl = makeFetchSequence([
-      { status: 401, body: 'invalid_client' },
-    ]);
+    const fetchImpl = makeFetchSequence([{ status: 401, body: 'invalid_client' }]);
     const c = new AvailityClient(CREDS, { fetchImpl, nowMs: () => 1 });
     await expect(c.accessToken()).rejects.toBeInstanceOf(AvailityError);
   });
 
   it('throws on token-shape mismatch', async () => {
-    const fetchImpl = makeFetchSequence([
-      { status: 200, body: { something_else: 'x' } },
-    ]);
+    const fetchImpl = makeFetchSequence([{ status: 200, body: { something_else: 'x' } }]);
     const c = new AvailityClient(CREDS, { fetchImpl, nowMs: () => 1 });
     await expect(c.accessToken()).rejects.toMatchObject({ code: 'TOKEN_RESPONSE_SHAPE' });
   });
@@ -78,13 +74,15 @@ describe('AvailityClient.request', () => {
       // First call: token mint. Second: actual request.
       if (calls.length === 1) {
         return Promise.resolve({
-          ok: true, status: 200,
+          ok: true,
+          status: 200,
           json: () => Promise.resolve({ access_token: 'tok-Z', expires_in: 3600 }),
           text: () => Promise.resolve(''),
         } as Response);
       }
       return Promise.resolve({
-        ok: true, status: 200,
+        ok: true,
+        status: 200,
         json: () => Promise.resolve({ result: 'eligible' }),
         text: () => Promise.resolve(''),
       } as Response);

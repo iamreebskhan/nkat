@@ -72,7 +72,8 @@ export class SignupService {
     let slug = baseSlug;
     let orgId: string | null = null;
     for (let attempt = 0; attempt < 5 && !orgId; attempt++) {
-      const candidate = attempt === 0 ? baseSlug : suffixedSlug(baseSlug, randomBytes(4).toString('hex'));
+      const candidate =
+        attempt === 0 ? baseSlug : suffixedSlug(baseSlug, randomBytes(4).toString('hex'));
       try {
         const r = await this.db
           .insertInto('org')
@@ -160,7 +161,13 @@ export class SignupService {
         : (
             await tx
               .insertInto('app_user')
-              .values({ email: adminEmail, full_name: null, password_hash: null, mfa_secret: null, status: 'active' })
+              .values({
+                email: adminEmail,
+                full_name: null,
+                password_hash: null,
+                mfa_secret: null,
+                status: 'active',
+              })
               .returning('id')
               .executeTakeFirstOrThrow()
           ).id;

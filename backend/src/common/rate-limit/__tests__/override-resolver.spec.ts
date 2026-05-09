@@ -2,11 +2,7 @@
  * Pure-helper tests for OverrideResolver. The DB refresh path is
  * exercised in the integration suite.
  */
-import {
-  buildOverrideMap,
-  resolveOverride,
-  type OverrideRow,
-} from '../override-resolver';
+import { buildOverrideMap, resolveOverride, type OverrideRow } from '../override-resolver';
 
 const orgA = '11111111-1111-1111-1111-111111111111';
 const orgB = '22222222-2222-2222-2222-222222222222';
@@ -79,9 +75,7 @@ describe('buildOverrideMap', () => {
 
 describe('resolveOverride', () => {
   const m = buildOverrideMap(
-    [
-      { org_id: orgA, scope: 'lookup', limit: 100, refill_per_sec: 5, expires_at: null },
-    ],
+    [{ org_id: orgA, scope: 'lookup', limit: 100, refill_per_sec: 5, expires_at: null }],
     NOW,
   );
 

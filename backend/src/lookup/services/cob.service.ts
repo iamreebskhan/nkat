@@ -13,13 +13,17 @@ import type { Db } from '../../database/db';
 import type { PayerType } from '../../database/schema.types';
 
 export interface CobInput {
-  current_payer_type: string;       // e.g. 'medicare', 'commercial', 'medicaid'
-  other_coverage: string;           // e.g. 'employer_group_lt_20', 'medicaid'
+  current_payer_type: string; // e.g. 'medicare', 'commercial', 'medicaid'
+  other_coverage: string; // e.g. 'employer_group_lt_20', 'medicaid'
   dos: Date;
-  conditions?: Record<string, unknown>;  // employer_size, esrd, treatment_for_motor_vehicle_injury, etc.
+  conditions?: Record<string, unknown>; // employer_size, esrd, treatment_for_motor_vehicle_injury, etc.
 }
 
-export type CobStatus = 'current_is_primary' | 'current_is_secondary' | 'unknown' | 'depends_on_facts';
+export type CobStatus =
+  | 'current_is_primary'
+  | 'current_is_secondary'
+  | 'unknown'
+  | 'depends_on_facts';
 
 export interface CobResult {
   status: CobStatus;
@@ -70,10 +74,22 @@ export class CobService {
       )
       .where((eb) =>
         eb.or([
-          eb.and([eb('coverage_type_a', '=', input.current_payer_type), eb('coverage_type_b', '=', input.other_coverage)]),
-          eb.and([eb('coverage_type_a', '=', input.other_coverage), eb('coverage_type_b', '=', input.current_payer_type)]),
-          eb.and([eb('coverage_type_a', '=', 'any_other'), eb('coverage_type_b', '=', input.other_coverage)]),
-          eb.and([eb('coverage_type_a', '=', input.current_payer_type), eb('coverage_type_b', '=', 'any_other')]),
+          eb.and([
+            eb('coverage_type_a', '=', input.current_payer_type),
+            eb('coverage_type_b', '=', input.other_coverage),
+          ]),
+          eb.and([
+            eb('coverage_type_a', '=', input.other_coverage),
+            eb('coverage_type_b', '=', input.current_payer_type),
+          ]),
+          eb.and([
+            eb('coverage_type_a', '=', 'any_other'),
+            eb('coverage_type_b', '=', input.other_coverage),
+          ]),
+          eb.and([
+            eb('coverage_type_a', '=', input.current_payer_type),
+            eb('coverage_type_b', '=', 'any_other'),
+          ]),
         ]),
       )
       .selectAll()
