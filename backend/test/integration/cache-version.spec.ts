@@ -14,6 +14,14 @@ integrationDescribe('CacheVersionService (integration)', () => {
 
   beforeAll(async () => {
     ctx = await startIntegrationContext();
+    // Ensure the byUserId used in 'updated_by_user_id + note are persisted'
+    // exists — system_setting.updated_by_user_id has an FK to app_user.
+    await sql`
+      INSERT INTO app_user (id, email, full_name, status)
+      VALUES ('00000000-0000-4000-8000-000000000001',
+              'cache-version-test@example.com', 'Cache Version Test', 'active')
+      ON CONFLICT (id) DO NOTHING
+    `.execute(ctx.db);
   }, 120_000);
 
   afterAll(async () => {

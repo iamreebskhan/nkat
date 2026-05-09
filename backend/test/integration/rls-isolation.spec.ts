@@ -17,11 +17,14 @@ integrationDescribe('RLS isolation (integration)', () => {
   beforeAll(async () => {
     ctx = await startIntegrationContext();
     // Seed two orgs + one client_company per org (admin role bypasses RLS).
+    // ORG_A and ORG_B may already exist from db/seed/* (Design Partner Co
+    // and Other RCM Co). The seed uses the same UUIDs but different slugs,
+    // so ON CONFLICT (slug) wouldn't catch the PK collision. Use (id).
     await ctx.pool.query(
       `INSERT INTO org (id, name, slug, plan_tier) VALUES
-        ($1, 'Acme RCM', 'acme', 'org'),
-        ($2, 'Beta RCM', 'beta', 'org')
-       ON CONFLICT (slug) DO NOTHING`,
+        ($1, 'Acme RCM', 'acme-test', 'org'),
+        ($2, 'Beta RCM', 'beta-test', 'org')
+       ON CONFLICT (id) DO NOTHING`,
       [ORG_A, ORG_B],
     );
     await ctx.pool.query(

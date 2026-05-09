@@ -23,25 +23,30 @@ integrationDescribe('Phase 64–65 surfaces (integration)', () => {
 
   beforeAll(async () => {
     ctx = await startIntegrationContext();
+    // All INSERTs idempotent — the test DB may have rows from db/seed/*.
     await ctx.pool.query(
       `INSERT INTO org (id, slug, name) VALUES
          ($1, 'org-a', 'Org A'),
-         ($2, 'org-b', 'Org B')`,
+         ($2, 'org-b', 'Org B')
+       ON CONFLICT (id) DO NOTHING`,
       [ORG_A, ORG_B],
     );
     await ctx.pool.query(
       `INSERT INTO app_user (id, email, full_name, status)
-         VALUES ($1, 'a@example.com', 'Alice', 'active')`,
+         VALUES ($1, 'a@example.com', 'Alice', 'active')
+       ON CONFLICT (id) DO NOTHING`,
       [USER_A],
     );
     await ctx.pool.query(
       `INSERT INTO org_member (org_id, user_id, role, status)
-         VALUES ($1, $2, 'admin', 'active')`,
+         VALUES ($1, $2, 'admin', 'active')
+       ON CONFLICT (org_id, user_id) DO NOTHING`,
       [ORG_A, USER_A],
     );
     await ctx.pool.query(
       `INSERT INTO client_company (id, org_id, name, primary_state, specialties)
-         VALUES ($1, $2, 'Maple Hospice', 'OH', ARRAY['palliative']::text[])`,
+         VALUES ($1, $2, 'Maple Hospice', 'OH', ARRAY['palliative']::text[])
+       ON CONFLICT (id) DO NOTHING`,
       [CLIENT_A, ORG_A],
     );
   }, 90_000);

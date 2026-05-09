@@ -23,21 +23,25 @@ integrationDescribe('Phase 34–46 surfaces (integration)', () => {
   beforeAll(async () => {
     ctx = await startIntegrationContext();
     // Seed two orgs + one user.
+    // All INSERTs idempotent — the same DB may have run prior tests.
     await ctx.pool.query(
       `INSERT INTO org (id, slug, name) VALUES
          ($1, 'org-a', 'Org A'),
-         ($2, 'org-b', 'Org B')`,
+         ($2, 'org-b', 'Org B')
+       ON CONFLICT (id) DO NOTHING`,
       [ORG_A, ORG_B],
     );
     await ctx.pool.query(
       `INSERT INTO app_user (id, email, full_name, status)
-         VALUES ($1, 'a@example.com', 'Alice', 'active')`,
+         VALUES ($1, 'a@example.com', 'Alice', 'active')
+       ON CONFLICT (id) DO NOTHING`,
       [USER_A],
     );
     await ctx.pool.query(
       `INSERT INTO org_member (org_id, user_id, role, status)
          VALUES ($1, $2, 'admin', 'active'),
-                ($3, $2, 'admin', 'active')`,
+                ($3, $2, 'admin', 'active')
+       ON CONFLICT (org_id, user_id) DO NOTHING`,
       [ORG_A, USER_A, ORG_B],
     );
   }, 90_000);
