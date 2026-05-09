@@ -1,0 +1,150 @@
+// Prisma schema — Pallio
+//
+// This file is HAND-WRITTEN for Phase 1 to keep typechecking clean.
+// In Phase 2 we will run `prisma db pull` against the live Postgres
+// instance to introspect the full schema (29 migrations as of writing)
+// — at which point this file becomes the union of introspected tables
+// + any hand-modeled additions we want to surface differently.
+//
+// Until then, only the few models we actually touch from Phase 1 code
+// live here. Adding a new field/table? Either run `prisma db pull` to
+// regenerate from PG, or add the model by hand and ensure the SQL
+// migration matches.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Tenant + identity
+// ---------------------------------------------------------------------------
+
+model Org {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  patients Patient[]
+  visits   Visit[]
+
+  @@map("org")
+}
+
+model AppUser {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  fullName  String?  @map("full_name")
+  npi       String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  visitsAsClinician Visit[] @relation("ClinicianVisits")
+
+  @@map("app_user")
+}
+
+// ---------------------------------------------------------------------------
+// EMR (added in 0029_phase_pallio_emr.sql)
+// ---------------------------------------------------------------------------
+
+model Patient {
+  id                       String   @id @default(uuid()) @db.Uuid
+  orgId                    String   @map("org_id") @db.Uuid
+  firstName                String   @map("first_name")
+  lastName                 String   @map("last_name")
+  dateOfBirth              DateTime @map("date_of_birth") @db.Date
+  sexAssignedAtBirth       String?  @map("sex_assigned_at_birth")
+  addressLine1             String?  @map("address_line_1")
+  addressLine2             String?  @map("address_line_2")
+  city                     String?
+  state                    String?  @db.Char(2)
+  zip                      String?
+  phone                    String?
+  emergencyContactName     String?  @map("emergency_contact_name")
+  emergencyContactPhone    String?  @map("emergency_contact_phone")
+  primaryPayerId           String?  @map("primary_payer_id") @db.Uuid
+  primaryMemberId          String?  @map("primary_member_id")
+  primaryGroupNumber       String?  @map("primary_group_number")
+  insuranceEffectiveDate   DateTime? @map("insurance_effective_date") @db.Date
+  insuranceTerminationDate DateTime? @map("insurance_termination_date") @db.Date
+  primaryDiagnosisIcd10    String?  @map("primary_diagnosis_icd10")
+  referringPhysicianNpi    String?  @map("referring_physician_npi")
+  referringPhysicianName   String?  @map("referring_physician_name")
+  palliativeReferralReason String?  @map("palliative_referral_reason")
+  status                   String   @default("active")
+  dischargedAt             DateTime? @map("discharged_at")
+  archivedAt               DateTime? @map("archived_at")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+  createdByUserId          String?  @map("created_by_user_id") @db.Uuid
+
+  org    Org     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  visits Visit[]
+
+  @@index([orgId, status], name: "patient_org_status_idx")
+  @@index([orgId, primaryPayerId], name: "patient_org_payer_idx")
+  @@index([orgId, dateOfBirth], name: "patient_org_dob_idx")
+  @@map("patient")
+}
+
+model Visit {
+  id                          String   @id @default(uuid()) @db.Uuid
+  orgId                       String   @map("org_id") @db.Uuid
+  patientId                   String   @map("patient_id") @db.Uuid
+  clinicianUserId             String   @map("clinician_user_id") @db.Uuid
+
+  visitType                   String   @map("visit_type")
+  scheduledStart              DateTime? @map("scheduled_start")
+  scheduledEnd                DateTime? @map("scheduled_end")
+  startTime                   DateTime? @map("start_time")
+  stopTime                    DateTime? @map("stop_time")
+  totalMinutes                Int?     @map("total_minutes")
+  acpMinutes                  Int?     @default(0) @map("acp_minutes")
+  prolongedMinutes            Int?     @default(0) @map("prolonged_minutes")
+  isTelehealth                Boolean  @default(false) @map("is_telehealth")
+  telehealthModality          String?  @map("telehealth_modality")
+  telehealthConsentDocumented Boolean? @default(false) @map("telehealth_consent_documented")
+  documentText                String?  @map("document_text")
+  cptCodesAssigned            String[] @default([]) @map("cpt_codes_assigned")
+  icd10Codes                  String[] @default([]) @map("icd10_codes")
+  modifiers                   String[] @default([])
+  status                      String   @default("scheduled")
+  signedAt                    DateTime? @map("signed_at")
+  signedByUserId              String?  @map("signed_by_user_id") @db.Uuid
+  createdAt                   DateTime @default(now()) @map("created_at")
+  updatedAt                   DateTime @updatedAt @map("updated_at")
+
+  org       Org     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  patient   Patient @relation(fields: [patientId], references: [id])
+  clinician AppUser @relation("ClinicianVisits", fields: [clinicianUserId], references: [id])
+
+  @@index([patientId, scheduledStart(sort: Desc)], name: "visit_patient_idx")
+  @@index([clinicianUserId, scheduledStart(sort: Desc)], name: "visit_clinician_day_idx")
+  @@index([orgId, status], name: "visit_org_status_idx")
+  @@map("visit")
+}
+
+// ---------------------------------------------------------------------------
+// Permissions (added in 0029)
+// ---------------------------------------------------------------------------
+
+model UserPermission {
+  id                String   @id @default(uuid()) @db.Uuid
+  orgId             String   @map("org_id") @db.Uuid
+  userId            String?  @map("user_id") @db.Uuid
+  pendingInviteId   String?  @map("pending_invite_id") @db.Uuid
+  permission        String
+  grantedAt         DateTime @default(now()) @map("granted_at")
+  grantedByUserId   String?  @map("granted_by_user_id") @db.Uuid
+
+  @@index([userId, orgId], name: "user_permission_user_idx")
+  @@map("user_permission")
+}

@@ -62,3 +62,21 @@ playwright-report/
 # --- npm / pnpm caches ---
 .npm
 .pnpm-store
+
+# --- Next.js ---
+next-env.d.ts
+.vercel
+.next/
+.swc/
+
+# --- yarn (pnp) ---
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# --- legacy backup files from initial scaffold ---
+*.bak
