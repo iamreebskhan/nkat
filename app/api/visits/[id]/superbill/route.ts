@@ -1,0 +1,63 @@
+/**
+ * Superbill for a visit:
+ *   GET  — return the existing superbill (or a fresh draft).
+ *   POST — build + persist the draft (idempotent on visit_id).
+ */
+import { type NextRequest } from "next/server";
+
+import { fail, ok } from "@/lib/api";
+import { requireAuth } from "@/lib/auth";
+import {
+  buildDraftFromVisit,
+  getSuperbillByVisit,
+  persistDraft,
+} from "@/lib/features/superbills/superbill.service";
+
+interface Params {
+  params: Promise<{ id: string }>;
+}
+
+export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
+  const session = await requireAuth(["billing.superbills.view"]);
+  if (session instanceof Response) return session;
+
+  const { id } = await ctx.params;
+  const existing = await getSuperbillByVisit({
+    orgId: session.orgId,
+    visitId: id,
+  });
+  if (existing) return ok({ existing, draft: null });
+
+  // No row yet — return a fresh in-memory draft so the FE can render it
+  // without a separate POST round-trip.
+  try {
+    const draft = await buildDraftFromVisit({
+      orgId: session.orgId,
+      visitId: id,
+    });
+    return ok({ existing: null, draft });
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : "Build failed", {
+      status: 422,
+    });
+  }
+}
+
+export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
+  const session = await requireAuth(["billing.superbills.create"]);
+  if (session instanceof Response) return session;
+
+  const { id } = await ctx.params;
+  try {
+    const draft = await buildDraftFromVisit({
+      orgId: session.orgId,
+      visitId: id,
+    });
+    const r = await persistDraft({ orgId: session.orgId, draft });
+    return ok({ id: r.id, draft }, { status: 201 });
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : "Create failed", {
+      status: 422,
+    });
+  }
+}
