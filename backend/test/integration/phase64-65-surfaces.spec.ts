@@ -15,7 +15,10 @@ import { encrypt, parseMasterKey } from '../../src/clearinghouse/credential-cryp
 const ORG_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ORG_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const USER_A = '11111111-1111-4111-8111-111111111111';
-const CLIENT_A = 'cccc1111-1111-4111-8111-111111111111';
+// Avoid collision with seed 0017's Maple Hospice (cccc1111-...) — that
+// row is pinned to the design-partner org, not ORG_A. ON CONFLICT
+// DO NOTHING wouldn't relocate it; the RLS test would then 404 the row.
+const CLIENT_A = 'cccc6464-6464-4464-8464-646464646464';
 
 integrationDescribe('Phase 64–65 surfaces (integration)', () => {
   let ctx: IntegrationContext;
