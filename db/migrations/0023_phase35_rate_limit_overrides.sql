@@ -25,9 +25,11 @@ CREATE TABLE rate_limit_override (
   PRIMARY KEY (org_id, scope)
 );
 
--- Lookup index for the cache-warm path: scan every active override.
-CREATE INDEX rate_limit_override_active_idx ON rate_limit_override (org_id, scope)
-  WHERE expires_at IS NULL OR expires_at > now();
+-- Lookup index for the cache-warm path. Predicate dropped because
+-- `now()` is STABLE not IMMUTABLE; Postgres rejects it in partial
+-- indexes. The "active only" filter happens in the OverrideResolver
+-- query: `WHERE expires_at IS NULL OR expires_at > now()`.
+CREATE INDEX rate_limit_override_active_idx ON rate_limit_override (org_id, scope, expires_at);
 
 -- Tenant-scoped: customers can read their own overrides; only admin
 -- mutates (enforced at controller layer).
