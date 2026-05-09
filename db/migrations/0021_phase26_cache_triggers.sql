@@ -68,7 +68,6 @@ BEGIN
          AFTER INSERT ON %I
          REFERENCING NEW TABLE AS new_rows
          FOR EACH STATEMENT
-         WHEN (EXISTS (SELECT 1 FROM new_rows))
          EXECUTE FUNCTION app.bump_synthesis_cache_version()',
       tbl || '_bump', tbl
     );
@@ -78,7 +77,6 @@ BEGIN
          AFTER UPDATE ON %I
          REFERENCING NEW TABLE AS new_rows
          FOR EACH STATEMENT
-         WHEN (EXISTS (SELECT 1 FROM new_rows))
          EXECUTE FUNCTION app.bump_synthesis_cache_version()',
       tbl || '_bump', tbl
     );
@@ -88,7 +86,6 @@ BEGIN
          AFTER DELETE ON %I
          REFERENCING OLD TABLE AS old_rows
          FOR EACH STATEMENT
-         WHEN (EXISTS (SELECT 1 FROM old_rows))
          EXECUTE FUNCTION app.bump_synthesis_cache_version()',
       tbl || '_bump', tbl
     );
