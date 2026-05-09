@@ -12,6 +12,7 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 
+import { RuleSidebar } from "@/components/billing/rule-sidebar";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,6 +21,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import type { PatientView } from "@/lib/features/patients/patient.types";
 
 interface SuperbillDraft {
   visitId: string;
@@ -47,6 +49,7 @@ export default function SuperbillPage({
   const { id } = use(params);
   const [draft, setDraft] = useState<SuperbillDraft | null>(null);
   const [persistedId, setPersistedId] = useState<string | null>(null);
+  const [patient, setPatient] = useState<PatientView | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +89,17 @@ export default function SuperbillPage({
           });
         } else {
           setDraft(data.data.draft);
+        }
+        // Fetch patient for rule-check sidebar (need state).
+        const patientId = data.data.existing?.patientId ?? data.data.draft?.patientId;
+        if (patientId) {
+          try {
+            const pr = await fetch(`/api/patients/${patientId}`);
+            const pd = await pr.json();
+            if (pd.success && !abandoned) setPatient(pd.data as PatientView);
+          } catch {
+            /* sidebar shows hint */
+          }
         }
       } catch {
         if (!abandoned) setError("Network error.");
@@ -180,6 +194,24 @@ export default function SuperbillPage({
             label="Billed"
             value={`$${(draft.billedAmountCents / 100).toFixed(2)}`}
             mono
+          />
+        </CardContent>
+      </Card>
+
+      <Card className="mb-4">
+        <CardHeader>
+          <CardTitle>Pre-submission rule check</CardTitle>
+          <CardDescription>
+            Per-CPT coverage status from the patient&rsquo;s primary payer.
+            Resolve any red rows before marking ready-to-submit.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <RuleSidebar
+            payerId={patient?.primaryPayerId ?? draft.payerId}
+            state={patient?.state}
+            cptCodes={draft.cptCodes}
+            attribute="covered"
           />
         </CardContent>
       </Card>

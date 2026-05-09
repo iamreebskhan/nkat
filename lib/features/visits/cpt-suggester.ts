@@ -45,6 +45,8 @@ export interface SuggestVisitInput {
   payerCategory: PayerCategory;
   /** Telehealth modality affects the modifier suggestion (vision §5.2). */
   isTelehealth?: boolean;
+  /** "audio_video" → modifier 95; "audio_only" → modifier 93. */
+  telehealthModality?: "audio_video" | "audio_only";
 }
 
 export type SuggestionConfidence = "edge" | "confirmed";
@@ -136,11 +138,15 @@ export function suggestCodes(input: SuggestVisitInput): CptSuggestion {
   const acpHits = pickAcp(acpMinutes);
   acp.push(...acpHits);
 
-  // Telehealth modifier — added at the modifier level, not as a code.
+  // Telehealth modifier — 95 for audio+video (default), 93 for audio-only.
+  // Both follow CMS guidance + most commercial payer policies.
   if (input.isTelehealth) {
+    const audioOnly = input.telehealthModality === "audio_only";
     modifiers.push({
-      modifier: "95",
-      reason: "Telehealth modifier — synchronous audio + video. Switch to 93 for audio-only.",
+      modifier: audioOnly ? "93" : "95",
+      reason: audioOnly
+        ? "Telehealth modifier — audio-only. Switch to 95 for synchronous audio + video."
+        : "Telehealth modifier — synchronous audio + video. Switch to 93 for audio-only.",
     });
   }
 

@@ -165,12 +165,31 @@ describe("suggestCodes — ACP add-ons (99497 / 99498)", () => {
 });
 
 describe("suggestCodes — telehealth modifier", () => {
-  it("emits modifier 95 when isTelehealth=true", () => {
+  it("emits modifier 95 when isTelehealth=true (default audio+video)", () => {
     const r = suggestCodes({ ...baseInput, isTelehealth: true });
     expect(r.modifiers.find((m) => m.modifier === "95")).toBeTruthy();
   });
 
-  it("does NOT emit modifier 95 by default", () => {
+  it("emits modifier 95 when modality explicitly audio_video", () => {
+    const r = suggestCodes({
+      ...baseInput,
+      isTelehealth: true,
+      telehealthModality: "audio_video",
+    });
+    expect(r.modifiers.find((m) => m.modifier === "95")).toBeTruthy();
+  });
+
+  it("emits modifier 93 when modality is audio_only", () => {
+    const r = suggestCodes({
+      ...baseInput,
+      isTelehealth: true,
+      telehealthModality: "audio_only",
+    });
+    expect(r.modifiers.find((m) => m.modifier === "93")).toBeTruthy();
+    expect(r.modifiers.find((m) => m.modifier === "95")).toBeFalsy();
+  });
+
+  it("does NOT emit any telehealth modifier by default", () => {
     const r = suggestCodes({ ...baseInput });
     expect(r.modifiers).toEqual([]);
   });
