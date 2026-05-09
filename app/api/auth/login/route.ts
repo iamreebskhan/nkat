@@ -1,87 +1,65 @@
 /**
- * POST /api/auth/login
+ * POST /api/auth/login — DB-backed login.
  *
- * Phase 1 dev shim — issues a session cookie for any email when
- * NODE_ENV=development, with a role inferred from a `?role=` query
- * param (default `org_admin`). This unblocks the frontend shell while
- * the full user/password/bcrypt flow is built in Phase 2.
+ * 1. Validate body
+ * 2. login() service: bcrypt-verify, load org_member + permissions
+ * 3. Sign + set session cookie
+ * 4. ok({ redirectTo: '/' })
  *
- * The real implementation will:
- *   1. Look up the user by email in the `app_user` table
- *   2. Verify the bcrypt hash
- *   3. Load `user_permission` rows for the user × org pair
- *   4. Sign a session JWT including those permissions
- *   5. Set the HttpOnly cookie + return ok({ redirectTo })
- *
- * NEVER deploy this shim to production. The route enforces dev-only
- * via env().NODE_ENV check below.
+ * Audit: every successful login writes an audit_log row.
  */
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { fail, ok, parseJson } from "@/lib/api";
-import { setSessionCookie, signSession, type Session } from "@/lib/auth";
-import { env } from "@/lib/env";
+import { setSessionCookie, signSession } from "@/lib/auth";
+import { withOrgContext } from "@/lib/db";
+import { login } from "@/lib/features/auth/auth.service";
 
 const Schema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email().max(254),
+  password: z.string().min(1).max(200),
 });
 
-// All permission strings — used to grant org_admin everything in dev.
-const ALL_PERMISSIONS = [
-  "patients.list", "patients.view", "patients.create", "patients.edit", "patients.archive",
-  "visits.view.own", "visits.view.all", "visits.create", "visits.edit", "visits.submit",
-  "careplans.view", "careplans.edit",
-  "schedule.view", "schedule.create", "schedule.edit",
-  "billing.lookup.view", "billing.lookup.export",
-  "billing.superbills.view", "billing.superbills.create", "billing.superbills.edit", "billing.superbills.export",
-  "billing.denials.view", "billing.denials.log", "billing.denials.refile", "billing.denials.writeoff",
-  "cheatsheets.view", "cheatsheets.generate", "cheatsheets.download",
-  "knowledge.view", "knowledge.upload", "knowledge.attest", "knowledge.edit",
-  "reports.view", "reports.export",
-  "team.view", "team.invite", "team.permissions", "team.deactivate",
-  "settings.view", "settings.org", "settings.payers", "settings.integrations",
-  "audit.view",
-];
-
 export async function POST(req: NextRequest): Promise<Response> {
-  if (env().NODE_ENV === "production") {
-    return fail("Not implemented in production yet.", { status: 501 });
-  }
-
   const body = await parseJson(req, Schema);
   if (body instanceof Response) return body;
 
-  const { email } = body;
+  const result = await login({ email: body.email, password: body.password });
+  if ("error" in result) {
+    if (result.error === "user_inactive") {
+      return fail("Account is suspended. Contact your org admin.", { status: 403 });
+    }
+    return fail("Invalid email or password.", { status: 401 });
+  }
 
-  // Dev shim — derive role from email prefix for quick role-switching:
-  //   clinician@... → clinician
-  //   billing@...   → billing_agent
-  //   analyst@...   → analyst
-  //   admin@... or anything else → org_admin
-  const role: Session["role"] = email.startsWith("clinician@")
-    ? "clinician"
-    : email.startsWith("billing@")
-      ? "billing_agent"
-      : email.startsWith("analyst@")
-        ? "analyst"
-        : email.startsWith("readonly@")
-          ? "read_only"
-          : email.startsWith("platform@")
-            ? "platform_admin"
-            : "org_admin";
-
-  const session: Session = {
-    userId: "00000000-0000-0000-0000-000000000001",
-    orgId: "00000000-0000-0000-0000-000000000aaa",
-    role,
-    permissions: ALL_PERMISSIONS,  // dev: everything granted
-    email,
-  };
-
-  const token = await signSession(session);
+  const token = await signSession(result.session);
   await setSessionCookie(token);
+
+  // Audit log — fire-and-forget so a logging hiccup doesn't 5xx the user.
+  void writeLoginAudit(req, result.session.orgId, result.session.userId).catch(() => undefined);
 
   return ok({ redirectTo: "/" });
 }
+
+async function writeLoginAudit(
+  req: NextRequest,
+  orgId: string,
+  userId: string,
+): Promise<void> {
+  const ip = readIp(req);
+  const ua = req.headers.get("user-agent");
+  await withOrgContext(orgId, async (tx) => {
+    await tx.$executeRaw`
+      INSERT INTO audit_log (org_id, user_id, action, payload, ip_address, user_agent)
+      VALUES (${orgId}::uuid, ${userId}::uuid, 'login', '{}'::jsonb, ${ip}::inet, ${ua})
+    `;
+  });
+}
+
+function readIp(req: NextRequest): string | null {
+  const fwd = req.headers.get("x-forwarded-for");
+  if (fwd) return fwd.split(",")[0]!.trim();
+  return req.headers.get("x-real-ip") ?? null;
+}
+
