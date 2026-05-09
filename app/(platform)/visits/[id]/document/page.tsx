@@ -20,6 +20,7 @@ import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import type { JSONContent } from "@tiptap/react";
 
+import { RuleSidebar } from "@/components/billing/rule-sidebar";
 import { TipTapEditor } from "@/components/editor/tiptap-editor";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,12 +31,17 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { suggestCodes, type ProviderType } from "@/lib/features/visits/cpt-suggester";
-import { computeTotalMinutes } from "@/lib/features/visits/visit-pure";
+import {
+  computeTotalMinutes,
+  daysRemainingInMedicareWindow,
+  isInsideMedicareWindow,
+} from "@/lib/features/visits/visit-pure";
 import type {
   TelehealthModality,
   VisitType,
   VisitView,
 } from "@/lib/features/visits/visit.types";
+import type { PatientView } from "@/lib/features/patients/patient.types";
 
 type Doc = JSONContent | null;
 
@@ -46,6 +52,7 @@ export default function VisitDocumentPage({
 }) {
   const { id } = use(params);
   const [visit, setVisit] = useState<VisitView | null>(null);
+  const [patient, setPatient] = useState<PatientView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,6 +92,14 @@ export default function VisitDocumentPage({
         setTelehealthModality(v.telehealthModality ?? "audio_video");
         setTelehealthConsent(v.telehealthConsentDocumented);
         setDoc(parseDoc(v.documentText));
+        // Fetch patient in parallel (don't block render on it).
+        try {
+          const pr = await fetch(`/api/patients/${v.patientId}`);
+          const pd = await pr.json();
+          if (pd.success && !abandoned) setPatient(pd.data as PatientView);
+        } catch {
+          /* non-fatal — sidebar shows a hint to set payer on patient record */
+        }
       } catch {
         if (!abandoned) setError("Network error.");
       } finally {
@@ -107,17 +122,20 @@ export default function VisitDocumentPage({
   // Live CPT suggestion — pure, client-side.
   const suggestion = useMemo(() => {
     if (!visit) return null;
+    // The suggester picks G0318 (Medicare) vs 99417 (non-Medicare) for
+    // prolonged service based on payer category. We default to
+    // non-Medicare; Phase 5's payer-resolution layer flips it when the
+    // patient's primary payer is a Medicare/Medicare-Advantage plan.
     return suggestCodes({
       visitType: visit.visitType,
       totalMinutes,
       acpMinutes,
       providerType,
-      // Phase 4 will derive payer category from the patient's primary
-      // payer; today the default is Medicare-conservative.
       payerCategory: "non_medicare",
       isTelehealth,
+      telehealthModality,
     });
-  }, [visit, totalMinutes, acpMinutes, providerType, isTelehealth]);
+  }, [visit, totalMinutes, acpMinutes, providerType, isTelehealth, telehealthModality]);
 
   if (loading) return <div className="px-8 py-8 text-slate-500">Loading…</div>;
   if (error || !visit)
@@ -229,6 +247,8 @@ export default function VisitDocumentPage({
           {visit.status} · {totalMinutes} min documented
         </p>
       </header>
+
+      <MedicareWindowBanner visit={visit} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-4">
@@ -385,6 +405,33 @@ export default function VisitDocumentPage({
               </CardContent>
             </Card>
           )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Payer rules</CardTitle>
+              <CardDescription>
+                Live from /v1/billing/lookup for the patient&rsquo;s payer.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <RuleSidebar
+                payerId={patient?.primaryPayerId}
+                state={patient?.state}
+                cptCodes={
+                  suggestion
+                    ? Array.from(
+                        new Set([
+                          ...suggestion.base.map((c) => c.code),
+                          ...suggestion.prolongedAddOns.map((c) => c.code),
+                          ...suggestion.acpAddOns.map((c) => c.code),
+                        ]),
+                      )
+                    : []
+                }
+                attribute={isTelehealth ? "telehealth" : "covered"}
+              />
+            </CardContent>
+          </Card>
         </aside>
       </div>
 
@@ -440,6 +487,40 @@ function CodeRow({
       </span>
     </div>
   );
+}
+
+function MedicareWindowBanner({ visit }: { visit: VisitView }) {
+  const dosIso = visit.startTime ?? visit.scheduledStart;
+  if (!dosIso || visit.status === "billed") return null;
+  const dos = new Date(dosIso);
+  if (!isInsideMedicareWindow(dos)) {
+    // Past the window — only relevant if visit isn't billed yet.
+    if (visit.status === "documented" || visit.status === "pending_billing") {
+      return (
+        <div
+          role="alert"
+          className="mb-4 px-3 py-2 rounded-md bg-red-50 ring-1 ring-inset ring-red-600/20 text-sm text-red-800"
+        >
+          Outside the 11-day Medicare billing window (3 days before DOS + 7
+          days after). Submit ASAP — claim may be denied for timely filing.
+        </div>
+      );
+    }
+    return null;
+  }
+  const remaining = daysRemainingInMedicareWindow(dos);
+  if (remaining <= 2) {
+    return (
+      <div className="mb-4 px-3 py-2 rounded-md bg-amber-50 ring-1 ring-inset ring-amber-600/30 text-sm text-amber-900">
+        Medicare 11-day billing window closes in{" "}
+        <strong className="tabular">
+          {remaining} day{remaining === 1 ? "" : "s"}
+        </strong>
+        . Sign + submit before the window closes.
+      </div>
+    );
+  }
+  return null;
 }
 
 function toLocalDatetime(iso: string | null): string {
