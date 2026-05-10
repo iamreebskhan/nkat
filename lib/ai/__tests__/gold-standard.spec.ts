@@ -68,7 +68,7 @@ describe("Gold-standard rule-lookup eval (50 questions)", () => {
       // need a prompt tweak. Anything beyond fails the suite loudly.
       const passed = GOLD_STANDARD.length - failures.length;
       const passRate = passed / GOLD_STANDARD.length;
-      // eslint-disable-next-line no-console
+       
       if (failures.length > 0) console.log("Parser misses:\n" + failures.join("\n"));
       expect(passRate).toBeGreaterThanOrEqual(0.9);
     },

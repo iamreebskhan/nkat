@@ -16,7 +16,7 @@
 import { PrismaClient, type Prisma } from "@prisma/client";
 
 declare global {
-  // eslint-disable-next-line no-var
+   
   var __pallio_prisma__: PrismaClient | undefined;
 }
 
