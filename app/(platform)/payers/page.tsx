@@ -34,7 +34,8 @@ export default function PayersPage() {
           setError(d.error ?? "Failed to load.");
           return;
         }
-        setPayers(d.data?.rows ?? d.data ?? []);
+        const list = d.data?.payers ?? d.data?.rows ?? d.data;
+        setPayers(Array.isArray(list) ? list : []);
       })
       .catch(() => setError("Network error."))
       .finally(() => setLoading(false));
