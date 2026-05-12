@@ -149,10 +149,10 @@ export async function listPayers(): Promise<PayerOption[]> {
       id: string;
       name: string;
       payer_type: PayerType;
-      states_covered: string[];
+      states_served: string[];
     }[]
   >`
-    SELECT id, name, payer_type, states_covered
+    SELECT id, name, payer_type, states_served
     FROM payer
     ORDER BY name ASC
   `;
@@ -160,6 +160,6 @@ export async function listPayers(): Promise<PayerOption[]> {
     id: r.id,
     name: r.name,
     type: r.payer_type,
-    states: r.states_covered ?? [],
+    states: r.states_served ?? [],
   }));
 }

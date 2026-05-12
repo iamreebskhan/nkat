@@ -21,7 +21,7 @@
  */
 import bcrypt from "bcryptjs";
 
-import { prisma, withOrgContext } from "@/lib/db";
+import { prisma, withBreakglass, withOrgContext } from "@/lib/db";
 import {
   ROLE_DEFAULT_PERMISSIONS,
 } from "@/lib/features/team/team.types";
@@ -86,15 +86,21 @@ export async function login(input: LoginInput): Promise<LoginResult> {
     if (!okMfa) return { error: "mfa_bad_code" };
   }
 
-  const orgRows = await prisma.$queryRaw<
-    { org_id: string; role: string; org_status: string }[]
-  >`
-    SELECT m.org_id, m.role, o.status AS org_status
-    FROM org_member m JOIN org o ON o.id = m.org_id
-    WHERE m.user_id = ${user.id}::uuid AND m.status = 'active'
-    ORDER BY m.joined_at ASC
-    LIMIT 1
-  `;
+  // Login is pre-tenant: we don't know which org the user belongs to until
+  // we look it up. Use breakglass to read across the org boundary — the
+  // result is then used to set app.current_org_id for all subsequent calls.
+  const orgRows = await withBreakglass(
+    (client) => client.$queryRaw<
+      { org_id: string; role: string; org_status: string }[]
+    >`
+      SELECT m.org_id, m.role, o.status AS org_status
+      FROM org_member m JOIN org o ON o.id = m.org_id
+      WHERE m.user_id = ${user.id}::uuid AND m.status = 'active'
+      ORDER BY m.joined_at ASC
+      LIMIT 1
+    `,
+    "login: resolve org for authenticated user",
+  );
   const member = orgRows[0];
   if (!member || member.org_status !== "active") {
     return { error: "user_inactive" };
@@ -172,13 +178,22 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
   `;
   if (existingSlug[0]) return { error: "org_name_taken" };
 
+  // Pre-generate the org UUID so we can SET LOCAL app.current_org_id BEFORE
+  // the INSERT — RLS on `org` requires id = app.current_org_id() to pass
+  // WITH CHECK on the new row.
+  const orgIdRows = await prisma.$queryRaw<{ id: string }[]>`SELECT gen_random_uuid() AS id`;
+  const newOrgId = orgIdRows[0]!.id;
+
   const result = await prisma.$transaction(async (tx) => {
-    const orgRows = await tx.$queryRaw<{ id: string }[]>`
-      INSERT INTO org (name, slug, plan_tier, baa_signed_at, primary_contact_email, status)
-      VALUES (${input.orgName}, ${slug}, 'solo', now(), ${input.email}::citext, 'active')
-      RETURNING id
+    // Set the GUC for the rest of this tx so every tenant-scoped INSERT
+    // (org itself, org_member, user_permission) passes RLS.
+    await tx.$executeRawUnsafe(`SET LOCAL app.current_org_id = '${newOrgId}'`);
+
+    await tx.$executeRaw`
+      INSERT INTO org (id, name, slug, plan_tier, baa_signed_at, primary_contact_email, status)
+      VALUES (${newOrgId}::uuid, ${input.orgName}, ${slug}, 'solo', now(), ${input.email}::citext, 'active')
     `;
-    const orgId = orgRows[0]!.id;
+    const orgId = newOrgId;
 
     const userRows = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO app_user (email, full_name, password_hash, status)
@@ -192,9 +207,6 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
       VALUES (${orgId}::uuid, ${userId}::uuid, 'admin', 'active', now())
     `;
 
-    // The user_permission table requires app.current_org_id; set it
-    // inline in this same tx.
-    await tx.$executeRawUnsafe(`SET LOCAL app.current_org_id = '${orgId}'`);
     for (const perm of adminPerms) {
       await tx.$executeRaw`
         INSERT INTO user_permission (org_id, user_id, permission, granted_by_user_id)

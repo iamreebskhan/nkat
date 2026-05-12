@@ -84,7 +84,7 @@ export async function exportPatientRecord(
 
     const visits = await tx.$queryRaw<VisitRow[]>`
       SELECT id, visit_type, status, scheduled_start, start_time, total_minutes,
-             cpt_codes, icd10_codes
+             cpt_codes_assigned AS cpt_codes, icd10_codes
       FROM visit
       WHERE patient_id = ${input.patientId}::uuid
       ORDER BY COALESCE(start_time, scheduled_start, created_at) DESC
@@ -114,7 +114,10 @@ export async function exportPatientRecord(
   const page = await browser.newPage();
   let pdfBytes: Buffer;
   try {
-    await page.setContent(html, { waitUntil: "networkidle0" });
+    // domcontentloaded is sufficient — the HTML is fully inline (no
+     // external CSS / JS / images) so we don't need networkidle0, which
+     // can hang waiting for ghost requests inside Chromium.
+    await page.setContent(html, { waitUntil: "domcontentloaded", timeout: 10_000 });
     const result = await page.pdf({
       format: "Letter",
       margin: { top: "0.5in", bottom: "0.5in", left: "0.5in", right: "0.5in" },

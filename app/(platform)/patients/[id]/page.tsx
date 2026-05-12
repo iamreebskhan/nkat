@@ -98,6 +98,7 @@ export default function PatientDetailPage({
           </p>
         </div>
         <div className="flex gap-2">
+          <ExportRecordButton patientId={id} />
           <Link href={`/patients/${id}/care-plan`}>
             <Button variant="secondary">Care plan</Button>
           </Link>
@@ -196,20 +197,7 @@ export default function PatientDetailPage({
         </Card>
       )}
 
-      {tab === "billing" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Billing summary</CardTitle>
-            <CardDescription>Real billing data wires up in Phase 4.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-slate-500">
-              Superbill list, paid vs denied breakdown, and refile workflow lands
-              when the visit→superbill→submission pipeline is wired in Phase 4.
-            </p>
-          </CardContent>
-        </Card>
-      )}
+      {tab === "billing" && <BillingTab patientId={id} />}
 
       {tab === "care-plan" && (
         <Card>
@@ -236,5 +224,121 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
       <span className="text-slate-500">{label}</span>
       <span className={mono ? "font-mono tabular text-xs" : ""}>{value}</span>
     </div>
+  );
+}
+
+/**
+ * HIPAA right-of-access export — fetches the patient record PDF from
+ * /api/patients/[id]/export and triggers a browser download. The
+ * server-side route writes a phi_export_log row.
+ */
+function ExportRecordButton({ patientId }: { patientId: string }) {
+  const [downloading, setDownloading] = useState(false);
+  async function download() {
+    setDownloading(true);
+    try {
+      const res = await fetch(`/api/patients/${patientId}/export`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        alert(data?.error ?? `Export failed (${res.status})`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `patient-${patientId}-record.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloading(false);
+    }
+  }
+  return (
+    <Button
+      variant="secondary"
+      onClick={download}
+      loading={downloading}
+      title="Patient's HIPAA right-of-access export. Logged to phi_export_log."
+    >
+      Download record
+    </Button>
+  );
+}
+
+interface SuperbillRow {
+  id: string;
+  status: string;
+  dateOfService: string;
+  billedAmountCents: number;
+  paidAmountCents: number | null;
+}
+
+function BillingTab({ patientId }: { patientId: string }) {
+  const [rows, setRows] = useState<SuperbillRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let abandoned = false;
+    fetch(`/api/superbills?limit=200`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (abandoned || !d.success) return;
+        // Filter client-side to this patient — list endpoint doesn't yet
+        // take patientId. Add when needed at scale.
+        setRows((d.data?.rows ?? []).filter((r: SuperbillRow & { patientId?: string }) =>
+          r.patientId === patientId,
+        ));
+      })
+      .finally(() => {
+        if (!abandoned) setLoading(false);
+      });
+    return () => { abandoned = true; };
+  }, [patientId]);
+
+  const billed = rows.reduce((s, r) => s + r.billedAmountCents, 0);
+  const paid = rows.reduce((s, r) => s + (r.paidAmountCents ?? 0), 0);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Billing summary</CardTitle>
+        <CardDescription>
+          {loading
+            ? "Loading…"
+            : rows.length === 0
+              ? "No superbills yet — generate one from a documented visit."
+              : `${rows.length} superbill${rows.length === 1 ? "" : "s"} · $${(billed / 100).toFixed(2)} billed · $${(paid / 100).toFixed(2)} paid`}
+        </CardDescription>
+      </CardHeader>
+      {rows.length > 0 && (
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
+              <tr>
+                <th className="text-left font-semibold px-4 py-2.5">DOS</th>
+                <th className="text-left font-semibold px-4 py-2.5">Status</th>
+                <th className="text-right font-semibold px-4 py-2.5">Billed</th>
+                <th className="text-right font-semibold px-4 py-2.5">Paid</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r) => (
+                <tr key={r.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-2 tabular text-slate-700">{r.dateOfService.slice(0, 10)}</td>
+                  <td className="px-4 py-2 text-xs">{r.status.replace("_", " ")}</td>
+                  <td className="px-4 py-2 text-right tabular">${(r.billedAmountCents / 100).toFixed(2)}</td>
+                  <td className="px-4 py-2 text-right tabular">
+                    {r.paidAmountCents == null ? "—" : `$${(r.paidAmountCents / 100).toFixed(2)}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      )}
+    </Card>
   );
 }
