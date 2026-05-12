@@ -14,7 +14,7 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -75,6 +75,16 @@ export default function LookupPage() {
   const [result, setResult] = useState<LookupResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCitation, setShowCitation] = useState(true);
+  const [payers, setPayers] = useState<Payer[]>([]);
+
+  useEffect(() => {
+    fetch("/api/billing/payers")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) setPayers(d.data?.rows ?? d.data ?? []);
+      })
+      .catch(() => undefined);
+  }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -150,14 +160,20 @@ export default function LookupPage() {
                 >
                   Payer
                 </label>
-                <input
+                <select
                   id="payer"
-                  type="text"
                   value={payerId}
                   onChange={(e) => setPayerId(e.target.value)}
-                  placeholder="Payer UUID"
-                  className="w-full h-10 px-3 rounded-md border border-slate-300 bg-white text-base focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 font-mono text-xs"
-                />
+                  className="w-full h-10 px-3 rounded-md border border-slate-300 bg-white text-base focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2"
+                >
+                  <option value="">(any / pick…)</option>
+                  {payers.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                      {p.states && p.states.length ? ` · ${p.states.slice(0, 3).join("/")}` : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="space-y-1.5">
                 <label
