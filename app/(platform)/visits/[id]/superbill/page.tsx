@@ -52,6 +52,7 @@ export default function SuperbillPage({
   const [patient, setPatient] = useState<PatientView | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -220,8 +221,34 @@ export default function SuperbillPage({
         <Button onClick={persist} loading={saving}>
           {persistedId ? "Re-save" : "Save superbill"}
         </Button>
-        <Button variant="secondary" disabled={!persistedId}>
-          Export PDF (Phase 4)
+        <Button
+          variant="secondary"
+          disabled={!persistedId || exporting}
+          onClick={async () => {
+            if (!persistedId) return;
+            setExporting(true);
+            try {
+              const res = await fetch(`/api/superbills/${persistedId}/pdf`);
+              if (!res.ok) {
+                const data = await res.json().catch(() => null);
+                alert(data?.error ?? `Export failed (${res.status})`);
+                return;
+              }
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `superbill-${persistedId}.pdf`;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              URL.revokeObjectURL(url);
+            } finally {
+              setExporting(false);
+            }
+          }}
+        >
+          {exporting ? "Generating…" : "Export PDF"}
         </Button>
       </div>
     </div>

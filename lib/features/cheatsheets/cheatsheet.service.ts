@@ -63,7 +63,7 @@ export async function generateCheatSheet(
   const page = await browser.newPage();
   let pdfBytes: Buffer;
   try {
-    await page.setContent(html, { waitUntil: "networkidle0" });
+    await page.setContent(html, { waitUntil: "domcontentloaded", timeout: 10_000 });
     const result = await page.pdf({
       format: "Letter",
       margin: { top: "0.5in", bottom: "0.5in", left: "0.5in", right: "0.5in" },

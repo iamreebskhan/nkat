@@ -11,14 +11,16 @@
 import { withOrgContext } from "@/lib/db";
 import { buildSuperbill, type DraftSuperbill, type ProviderTier } from "./superbill-pure";
 
-export type SuperbillStatus =
-  | "draft"
-  | "ready_to_submit"
-  | "submitted"
-  | "paid"
-  | "partially_paid"
-  | "denied"
-  | "voided";
+export const SUPERBILL_STATUSES = [
+  "draft",
+  "ready_to_submit",
+  "submitted",
+  "paid",
+  "partially_paid",
+  "denied",
+  "voided",
+] as const;
+export type SuperbillStatus = (typeof SUPERBILL_STATUSES)[number];
 
 interface VisitForSuperbill {
   id: string;
