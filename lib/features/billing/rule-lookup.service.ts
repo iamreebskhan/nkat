@@ -100,7 +100,7 @@ const AI_SYNTHESIZED_CONFIDENCE = 0.4;
  */
 export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
   // Step 1 — fill in missing params from natural language if possible.
-  const payerId = req.payerId ?? null;
+  let payerId = req.payerId ?? null;
   let state = req.state ?? null;
   let cptCode = req.cptCode ?? null;
   let attribute = req.attribute ?? null;
@@ -119,9 +119,20 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
     state = state ?? parsed.state;
     cptCode = cptCode ?? parsed.cptCode;
     attribute = attribute ?? parsed.attribute;
-    // Note: parser returns the payer NAME; the caller resolves to id
-    // before invoking this service. We don't auto-lookup by name here
-    // to keep the service free of payer-dictionary concerns.
+
+    // Resolve the parser's payer NAME to a real UUID via the payer table.
+    // The payer table is global (no org_id / RLS), citext name column.
+    if (!payerId && parsed.payer) {
+      const { prisma } = await import("@/lib/db");
+      const rows = await prisma.$queryRaw<{ id: string }[]>`
+        SELECT id FROM payer
+        WHERE name = ${parsed.payer}::citext
+           OR name ILIKE '%' || ${parsed.payer} || '%'
+        ORDER BY (name = ${parsed.payer}::citext) DESC
+        LIMIT 1
+      `;
+      payerId = rows[0]?.id ?? null;
+    }
   }
 
   const missing: NonNullable<LookupResult["missing"]> = [];
