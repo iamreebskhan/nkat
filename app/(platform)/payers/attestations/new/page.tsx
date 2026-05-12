@@ -53,7 +53,9 @@ function NewAttestationInner() {
     fetch("/api/billing/payers")
       .then((r) => r.json())
       .then((data) => {
-        if (data.success) setPayers(data.data.rows ?? data.data ?? []);
+        if (!data.success) return;
+        const list = data.data?.payers ?? data.data?.rows ?? data.data;
+        setPayers(Array.isArray(list) ? list : []);
       })
       .catch(() => undefined);
   }, []);

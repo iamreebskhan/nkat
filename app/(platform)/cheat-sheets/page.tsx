@@ -28,7 +28,9 @@ export default function CheatSheetsPage() {
     fetch("/api/billing/payers")
       .then((r) => r.json())
       .then((d) => {
-        if (d.success) setPayers(d.data.rows ?? d.data ?? []);
+        if (!d.success) return;
+        const list = d.data?.payers ?? d.data?.rows ?? d.data;
+        setPayers(Array.isArray(list) ? list : []);
       })
       .catch(() => undefined);
     fetch("/api/settings/branding")

@@ -14,5 +14,7 @@ export async function GET(): Promise<Response> {
   const session = await requireAuth(["billing.lookup.view"]);
   if (session instanceof Response) return session;
   const payers = await listPayers();
-  return ok({ payers });
+  // Return both `payers` (semantic) and `rows` (consistent with every
+  // other list endpoint) so consumers can pick either key.
+  return ok({ payers, rows: payers });
 }
