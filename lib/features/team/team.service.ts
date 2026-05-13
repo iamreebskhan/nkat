@@ -9,6 +9,7 @@
  *   4. On accept, update each permission row's `user_id` and delete
  *      the pending_invite.
  */
+import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { sendEmail } from "@/lib/email/email.service";
 import { inviteEmail } from "@/lib/email/templates";
@@ -231,6 +232,18 @@ export async function setMemberPermissions(args: {
   grantedByUserId: string;
 }): Promise<{ before: number; after: number }> {
   return withOrgContext(args.orgId, async (tx) => {
+    // Member must exist for THIS tenant — RLS filters user_permission by
+    // org_id so beforeRow would be 0 for a cross-tenant user_id too.
+    // Explicit existence check via org_member gives a cleaner 404.
+    const member = await tx.$queryRaw<{ user_id: string }[]>`
+      SELECT user_id FROM org_member
+       WHERE org_id = ${args.orgId}::uuid
+         AND user_id = ${args.userId}::uuid
+         AND status = 'active'
+       LIMIT 1
+    `;
+    if (member.length === 0) throw new NotFoundError("Member not found in this org.");
+
     const beforeRow = await tx.$queryRaw<{ n: number }[]>`
       SELECT COUNT(*)::int AS n FROM user_permission
       WHERE user_id = ${args.userId}::uuid

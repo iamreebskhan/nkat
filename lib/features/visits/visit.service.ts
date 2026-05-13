@@ -3,6 +3,7 @@
  *
  * Every read + write tenant-scoped via withOrgContext.
  */
+import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import {
   type DocumentVisit,
@@ -154,6 +155,10 @@ export async function documentVisit(args: {
 }): Promise<{ updated: boolean }> {
   const p = args.payload;
   return withOrgContext(args.orgId, async (tx) => {
+    const exists = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM visit WHERE id = ${args.id}::uuid LIMIT 1
+    `;
+    if (exists.length === 0) throw new NotFoundError("Visit not found.");
     const startTs = p.startTime ? new Date(p.startTime) : null;
     const stopTs = p.stopTime ? new Date(p.stopTime) : null;
     const computed = computeTotalMinutes(startTs, stopTs);
@@ -196,7 +201,7 @@ export async function transitionVisit(args: {
       SELECT status FROM visit WHERE id = ${args.id}::uuid LIMIT 1
     `;
     const from = rows[0]?.status;
-    if (!from) throw new Error("transitionVisit: visit not found");
+    if (!from) throw new NotFoundError("Visit not found.");
     if (!canTransition(from, args.to)) {
       throw new Error(`Illegal status transition ${from} → ${args.to}`);
     }

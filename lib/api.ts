@@ -36,6 +36,34 @@ export function fail(
 }
 
 /**
+ * Throw from a service when a row that the caller referenced doesn't
+ * exist for this tenant. Route handlers catch this and respond 404 —
+ * matters because RLS-filtered UPDATEs / DELETEs silently affect 0
+ * rows when the target row belongs to a different org, and we need
+ * the API to say "not found" instead of "ok".
+ *
+ * Using "not found" (not "forbidden") on purpose: it avoids leaking
+ * the existence of cross-tenant rows.
+ */
+export class NotFoundError extends Error {
+  constructor(message: string = "Not found.") {
+    super(message);
+    this.name = "NotFoundError";
+  }
+}
+
+/**
+ * Helper for routes — wraps a service call. Catches NotFoundError →
+ * 404 envelope; otherwise re-throws or returns 422 on validation,
+ * 500 on unknown.
+ */
+export function handleServiceError(err: unknown): NextResponse<ApiResponse<null>> {
+  if (err instanceof NotFoundError) return fail(err.message, { status: 404 });
+  const msg = err instanceof Error ? err.message : "Unknown error";
+  return fail(msg, { status: 422 });
+}
+
+/**
  * Parse the request body against a Zod schema. Returns the parsed
  * value or a 400 envelope. Use in every API route that accepts JSON.
  *

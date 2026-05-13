@@ -3,7 +3,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { NotFoundError, fail, ok, parseJson } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   getPatient,
@@ -53,6 +53,7 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok(r);
   } catch (err) {
+    if (err instanceof NotFoundError) return fail(err.message, { status: 404 });
     return fail(err instanceof Error ? err.message : "Update failed", {
       status: 422,
     });
