@@ -1,7 +1,7 @@
 /** Single attestation: GET + DELETE (soft-void with reason). */
 import { type NextRequest } from "next/server";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { NotFoundError, fail, ok, parseJson } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   getAttestation,
@@ -28,11 +28,16 @@ export async function DELETE(req: NextRequest, ctx: Params): Promise<Response> {
   const { id } = await ctx.params;
   const body = await parseJson(req, VoidAttestationSchema);
   if (body instanceof Response) return body;
-  await voidAttestation({
-    orgId: session.orgId,
-    id,
-    byUserId: session.userId,
-    reason: body.reason,
-  });
-  return ok({ id });
+  try {
+    await voidAttestation({
+      orgId: session.orgId,
+      id,
+      byUserId: session.userId,
+      reason: body.reason,
+    });
+    return ok({ id });
+  } catch (err) {
+    if (err instanceof NotFoundError) return fail(err.message, { status: 404 });
+    return fail(err instanceof Error ? err.message : "Void failed", { status: 422 });
+  }
 }

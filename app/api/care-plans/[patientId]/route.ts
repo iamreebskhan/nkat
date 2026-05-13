@@ -6,7 +6,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { NotFoundError, fail, ok, parseJson } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   getCarePlan,
@@ -73,6 +73,7 @@ export async function PUT(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok(r);
   } catch (err) {
+    if (err instanceof NotFoundError) return fail(err.message, { status: 404 });
     return fail(err instanceof Error ? err.message : "Save failed", {
       status: 422,
     });

@@ -4,6 +4,7 @@
  *
  * Multi-tenant via withOrgContext.
  */
+import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { defaultExpiry } from "./attestation-pure";
 import type {
@@ -173,6 +174,10 @@ export async function voidAttestation(args: {
   reason: string;
 }): Promise<void> {
   await withOrgContext(args.orgId, async (tx) => {
+    const exists = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM analyst_attestation WHERE id = ${args.id}::uuid LIMIT 1
+    `;
+    if (exists.length === 0) throw new NotFoundError("Attestation not found.");
     await tx.$executeRaw`
       UPDATE analyst_attestation
          SET status = 'voided',

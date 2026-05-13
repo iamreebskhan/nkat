@@ -10,6 +10,7 @@
  * editor; downstream consumers (PDF, eval) read just the structured
  * fields (`goalsOfCareSummary`, `primarySymptoms`, `activeMedications`).
  */
+import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 
 export interface CarePlanView {
@@ -46,6 +47,14 @@ export async function upsertCarePlan(
   args: UpdateCarePlanArgs,
 ): Promise<{ id: string; version: number }> {
   return withOrgContext(args.orgId, async (tx) => {
+    // Verify the patient exists FOR THIS TENANT first — RLS hides
+    // cross-tenant patients, so this guards against creating an
+    // orphan/cross-tenant care plan row.
+    const patientExists = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM patient WHERE id = ${args.patientId}::uuid LIMIT 1
+    `;
+    if (patientExists.length === 0) throw new NotFoundError("Patient not found.");
+
     const upsert = await tx.$queryRaw<
       { id: string; current_version: number }[]
     >`
