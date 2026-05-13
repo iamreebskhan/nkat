@@ -12,8 +12,16 @@ import { z } from "zod";
 const Schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 
-  // Database (Postgres + pgvector — carried over from billing-rules-platform).
+  // Database (Postgres + pgvector). MUST connect as the `app` role
+  // (NOBYPASSRLS) in production so RLS is actually enforced.
   DATABASE_URL: z.string().min(1),
+
+  // Optional separate admin/breakglass URL. Connects as the `admin`
+  // SUPERUSER role (bypasses RLS). Used by withBreakglass() for the
+  // narrow set of pre-tenant + cross-tenant operations. When unset,
+  // breakglass falls back to DATABASE_URL — fine in dev, MUST be set
+  // in production for RLS isolation to be enforced.
+  ADMIN_DATABASE_URL: z.string().optional(),
 
   // Auth — JWT signed with HS256 in dev, RS256 in prod (TODO when we add OIDC).
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 chars"),

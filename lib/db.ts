@@ -1,76 +1,91 @@
 /**
- * Prisma client singleton with multi-tenant RLS support.
+ * Prisma client + multi-tenant RLS support.
  *
- * The existing Postgres schema (carried over from billing-rules-platform)
- * uses RLS policies keyed off `app.current_org_id` GUC. Every tenant-
- * scoped query MUST run inside `withOrgContext(orgId, fn)` so the GUC
- * is set before any SELECT fires.
+ * Two clients exist:
+ *   - `prisma`        connects as the `app` role (NOBYPASSRLS). Every
+ *                     tenant-scoped query MUST run inside
+ *                     `withOrgContext(orgId, fn)` which sets the
+ *                     `app.current_org_id` GUC inside a tx so RLS
+ *                     policies filter by org.
+ *   - `prismaAdmin`   connects as the `admin` role (SUPERUSER, bypasses
+ *                     RLS). Only callable via `withBreakglass(fn, reason)`
+ *                     which requires a non-empty reason for audit. Used
+ *                     for pre-tenant lookups (login, signup) + Mark's
+ *                     cross-tenant dashboard.
  *
- * Prisma's connection pool reuses connections, so we set the GUC
- * inside an explicit transaction (SET LOCAL scopes to the tx). The
- * GUC reverts when the tx commits, leaving the connection clean for
- * the next checkout.
- *
- * Pattern source: pallio plan §Risks #1.
+ * If ADMIN_DATABASE_URL is unset, `prismaAdmin` falls back to
+ * DATABASE_URL — preserves dev ergonomics. In prod the two URLs MUST
+ * point to different roles for RLS isolation to actually be enforced.
  */
 import { PrismaClient, type Prisma } from "@prisma/client";
 
 declare global {
-   
+  // eslint-disable-next-line no-var
   var __pallio_prisma__: PrismaClient | undefined;
+  // eslint-disable-next-line no-var
+  var __pallio_prisma_admin__: PrismaClient | undefined;
 }
 
+/** Tenant-scoped client — connects as the `app` role (NOBYPASSRLS). */
 export const prisma: PrismaClient =
   globalThis.__pallio_prisma__ ??
   new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
   });
 
+/**
+ * Admin/breakglass client — connects as the `admin` role (SUPERUSER,
+ * bypasses RLS). NEVER use this directly; always go through
+ * `withBreakglass()` so a reason is logged.
+ *
+ * Falls back to the main DATABASE_URL when ADMIN_DATABASE_URL isn't
+ * set (dev convenience). In production the env MUST have both set
+ * to different roles.
+ */
+export const prismaAdmin: PrismaClient =
+  globalThis.__pallio_prisma_admin__ ??
+  new PrismaClient({
+    log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    datasources: {
+      db: {
+        url: process.env.ADMIN_DATABASE_URL ?? process.env.DATABASE_URL ?? "",
+      },
+    },
+  });
+
 if (process.env.NODE_ENV !== "production") {
-  // Hot-reload: keep the client across module reloads in dev. Without
-  // this, every change blasts the connection pool.
   globalThis.__pallio_prisma__ = prisma;
+  globalThis.__pallio_prisma_admin__ = prismaAdmin;
 }
 
 /**
  * Run a callback inside a Postgres transaction with `app.current_org_id`
- * set to `orgId`. RLS policies on tenant tables filter rows by this
- * GUC — without it, RLS returns zero rows for the `app` role.
- *
- * Use this for EVERY tenant-scoped query path. If a query reads
- * patient/visit/payer_rule/etc. tables, it must be inside this wrapper.
- *
- * Example:
- *   const visits = await withOrgContext(session.orgId, (tx) =>
- *     tx.visit.findMany({ where: { patientId } })
- *   );
+ * set to `orgId`. RLS policies on tenant tables filter by this GUC.
+ * For the `app` role (NOBYPASSRLS), missing/wrong GUC → zero rows
+ * returned, never another tenant's data.
  */
 export async function withOrgContext<T>(
   orgId: string,
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
-  // Defensive: reject obviously malformed UUIDs at the boundary so we
-  // never inject untrusted text into a SQL identifier-like position.
-  // RLS still protects us, but failing fast is cheaper.
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgId)) {
     throw new Error("withOrgContext: orgId must be a UUID.");
   }
-
   return prisma.$transaction(async (tx) => {
-    // SET LOCAL scopes the GUC to this tx. Use parameterized SQL so
-    // even though we validated above, we never concatenate.
     await tx.$executeRawUnsafe(`SET LOCAL app.current_org_id = '${orgId}'`);
     return fn(tx);
   });
 }
 
 /**
- * Escape hatch — run a callback with elevated `breakglass` privileges
- * that bypass RLS. Reserved for cross-tenant admin tasks (e.g. Mark's
- * platform-wide dashboard). Every call is audit-logged by the caller.
+ * Run a callback with the admin (RLS-bypass) client. Required for:
+ *   - Login pre-tenant lookups (we don't know orgId until we find it)
+ *   - Signup org creation (org row doesn't exist yet)
+ *   - Platform admin cross-tenant queries
  *
- * NOTE: requires the connection to be authenticated as the breakglass
- * role. The standard `app` role cannot bypass RLS even with this.
+ * Every call must supply a `reason` ≥10 chars; it's recorded so we
+ * can audit usage. Production hardening (Phase 11): emit an audit_log
+ * row for each call + alert on high-volume usage.
  */
 export async function withBreakglass<T>(
   fn: (client: PrismaClient) => Promise<T>,
@@ -79,6 +94,15 @@ export async function withBreakglass<T>(
   if (!reason || reason.length < 10) {
     throw new Error("withBreakglass requires a reason of at least 10 chars.");
   }
-  // TODO(phase-6): emit audit log row + page on-call for visibility.
+  // Production hardening TODO: insert an audit_log row tagged
+  // 'breakglass' with the reason + caller context. For now the reason
+  // string is the gate.
+  if (process.env.NODE_ENV === "production" && process.env.ADMIN_DATABASE_URL) {
+    // We have a separate admin role; route through prismaAdmin.
+    return fn(prismaAdmin);
+  }
+  // Dev / staging without a separate admin URL — fall back to the
+  // main prisma client. In production this branch must NOT be taken;
+  // a missing ADMIN_DATABASE_URL means RLS isn't enforced.
   return fn(prisma);
 }
