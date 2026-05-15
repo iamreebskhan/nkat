@@ -142,10 +142,14 @@ export async function saveCptCodes(args: {
   return withOrgContext(args.orgId, async (tx) => {
     // CPT selections live in `org_cpt_code_set` (added in 0029). Replace
     // the active set wholesale; preserve any custom notes per code.
+    // Use ANY(array) instead of IN(...) — Prisma's tagged-template
+    // interpolates JS arrays as a postgres array literal, not as an
+    // IN-list, so `IN (${codes})` produced `IN (text[])` which is a
+    // type error.
     await tx.$executeRaw`
       DELETE FROM org_cpt_code_set
       WHERE org_id = ${args.orgId}::uuid
-        AND cpt_code NOT IN (${args.cptCodes.length > 0 ? args.cptCodes : [""]})
+        AND NOT (cpt_code = ANY(${args.cptCodes}::text[]))
     `;
     for (const code of args.cptCodes) {
       await tx.$executeRaw`
