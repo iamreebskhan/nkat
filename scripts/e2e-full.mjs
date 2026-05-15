@@ -144,6 +144,22 @@ async function main() {
     record("onboarding.cpt-codes", r.status === 200, `status=${r.status} err=${r.json?.error ?? ""}`);
   }
 
+  // 6b. Rulebook — generate (Path A)
+  {
+    const r = await req("POST", "/api/rulebook/generate");
+    record("rulebook.generate", r.status === 200, `status=${r.status} err="${r.json?.error ?? ""}" text=${r.text.slice(0,200)}`);
+  }
+  // 6c. Rulebook — save + finalize (no edits, just mark complete)
+  {
+    const r = await req("POST", "/api/rulebook/save", { edits: [], finalize: true });
+    record("rulebook.save+finalize", r.status === 200, `status=${r.status} err=${r.json?.error ?? ""}`);
+  }
+  // 6d. Rulebook GET (loaded with rows)
+  {
+    const r = await req("GET", "/api/rulebook");
+    record("rulebook.get", r.status === 200);
+  }
+
   // 7. Patient create
   let patientId;
   {
@@ -247,12 +263,20 @@ async function main() {
     record("superbills.pdf", r.status === 200 && r.isPdf && r.bytes > 1000, `${r.bytes}B ${r.contentType}`);
   }
 
-  // 18. Billing lookup
+  // 18. Billing lookup — structured
   if (humanaId) {
     const r = await req("POST", "/api/billing/lookup", {
       payerId: humanaId, state: "OH", cptCode: "99349", attribute: "covered",
     });
-    record("billing.lookup", r.status === 200 && r.json?.success === true,
+    record("billing.lookup.structured", r.status === 200 && r.json?.success === true,
+      `source=${r.json?.data?.source ?? "?"}`);
+  }
+  // 18b. Billing lookup — natural-language
+  {
+    const r = await req("POST", "/api/billing/lookup", {
+      query: "Does Humana Ohio cover 99349 telehealth?",
+    });
+    record("billing.lookup.natural", r.status === 200 && r.json?.success === true,
       `source=${r.json?.data?.source ?? "?"}`);
   }
 
@@ -264,17 +288,30 @@ async function main() {
     record("cheatsheets.pdf", r.status === 200 && r.isPdf && r.bytes > 1000, `${r.bytes}B`);
   }
 
-  // 20. Denial — log + list
+  // 20. Denial — log + list + analyze + refile
+  let denialId;
   if (superbillId) {
     const r = await req("POST", "/api/denials", {
       superbillId, cptCode: "99349", carcCode: "16", denialReason: "E2E test denial",
       deniedAmountCents: 12500, deniedAt: new Date().toISOString(),
     });
-    record("denials.log", r.status === 201 || r.status === 200, `status=${r.status} err=${r.json?.error ?? ""}`);
+    denialId = r.json?.data?.id;
+    record("denials.log", (r.status === 201 || r.status === 200) && !!denialId);
 
     const r2 = await req("GET", "/api/denials");
     const rows = r2.json?.data?.rows || [];
     record("denials.list", r2.status === 200, `total=${rows.length}`);
+
+    if (denialId) {
+      const r3 = await req("POST", `/api/denials/${denialId}/analyze`);
+      record("denials.analyze (AI)", r3.status === 200, `status=${r3.status}`);
+
+      const r4 = await req("POST", `/api/denials/${denialId}/refile`, {
+        refiledAt: new Date().toISOString(),
+        notes: "E2E refile test",
+      });
+      record("denials.refile", r4.status === 200, `status=${r4.status} err=${r4.json?.error ?? ""}`);
+    }
   }
 
   // 21. Attestation requests list
@@ -316,6 +353,15 @@ async function main() {
       displayName: ORG_NAME, primaryColor: "#14b8a6",
     });
     record("settings.branding.put", r2.status === 200, `err=${r2.json?.error ?? ""}`);
+  }
+
+  // 26b. MFA setup (initiates enrollment — can't verify without authenticator)
+  {
+    const r = await req("GET", "/api/auth/mfa/status");
+    record("mfa.status", r.status === 200, `enrolled=${r.json?.data?.enrolled ?? "?"}`);
+
+    const r2 = await req("POST", "/api/auth/mfa/setup");
+    record("mfa.setup", r2.status === 200 && r2.json?.data?.secretBase32, `hasSecret=${!!r2.json?.data?.secretBase32} hasUri=${!!r2.json?.data?.otpauthUri}`);
   }
 
   // 27. Change password

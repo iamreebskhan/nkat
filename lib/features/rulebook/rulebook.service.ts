@@ -217,7 +217,11 @@ export async function generateRulebook(args: {
           ${orgId}::uuid, ${rulebook.id}::uuid,
           payer_id::uuid, state, cpt_code, attribute,
           rule_value::jsonb, coverage_status, origin, confidence,
-          source_payer_rule_id::uuid, source_quote
+          -- source_payer_rule_id is nullable. UNNEST gives us empty
+          -- strings for missing values (cells where the rulebook
+          -- generator had to emit 'unknown' with no PayerRule source);
+          -- cast '' to NULL before the uuid cast.
+          NULLIF(source_payer_rule_id, '')::uuid, source_quote
         FROM UNNEST(
           ${inserts.map((i) => i.payer_id)}::text[],
           ${inserts.map((i) => i.state)}::text[],
