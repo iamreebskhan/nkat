@@ -24,6 +24,7 @@ import {
   FileStack,
   FileText,
   HeartPulse,
+  HelpCircle,
   Inbox,
   LineChart,
   LogOut,
@@ -148,12 +149,26 @@ export function Sidebar({ items, badges = {}, orgName, userEmail }: Props) {
       {/* User */}
       {userEmail && (
         <div className="px-3 py-3 border-t border-slate-800">
-          <div className="px-3 py-2 rounded-md bg-slate-800/40 text-xs text-slate-300 truncate">
+          <Link
+            href="/settings/account"
+            className="block px-3 py-2 rounded-md bg-slate-800/40 hover:bg-slate-800/70 text-xs text-slate-300 hover:text-white truncate transition-colors"
+            title="Your account"
+          >
             {userEmail}
-          </div>
+          </Link>
           <div className="px-3 mt-2 flex items-center justify-between gap-2">
             <AmaLicenseBadge />
-            <LogoutButton />
+            <div className="flex items-center gap-2">
+              <a
+                href="mailto:support@pallio.io?subject=Pallio%20support%20request"
+                className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-white transition-colors"
+                title="Email support"
+              >
+                <HelpCircle className="h-3 w-3" aria-hidden />
+                Help
+              </a>
+              <LogoutButton />
+            </div>
           </div>
         </div>
       )}

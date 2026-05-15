@@ -6,10 +6,11 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 
 const SECTIONS = [
+  { href: "/settings/account",  title: "Account",  desc: "Your name, password, email, role." },
+  { href: "/settings/security", title: "Security", desc: "Multi-factor authentication, recovery codes." },
   { href: "/settings/branding", title: "Branding", desc: "Logo, primary color, custom domain, email identity." },
   { href: "/settings/billing",  title: "Billing",  desc: "Subscription tier, seats, invoice history." },
   { href: "/settings/rulebook", title: "Rulebook", desc: "Org's source of truth for payer rules." },
-  { href: "/settings/security", title: "Security", desc: "Multi-factor authentication, recovery codes." },
 ];
 
 export default function SettingsIndexPage() {
