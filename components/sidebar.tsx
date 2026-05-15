@@ -26,6 +26,7 @@ import {
   HeartPulse,
   Inbox,
   LineChart,
+  LogOut,
   type LucideIcon,
   Receipt,
   ScrollText,
@@ -150,11 +151,34 @@ export function Sidebar({ items, badges = {}, orgName, userEmail }: Props) {
           <div className="px-3 py-2 rounded-md bg-slate-800/40 text-xs text-slate-300 truncate">
             {userEmail}
           </div>
-          <div className="px-3 mt-2">
+          <div className="px-3 mt-2 flex items-center justify-between gap-2">
             <AmaLicenseBadge />
+            <LogoutButton />
           </div>
         </div>
       )}
     </aside>
+  );
+}
+
+function LogoutButton() {
+  async function logout() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      // Hard redirect so any cached client state is dropped.
+      window.location.href = "/login";
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={logout}
+      className="inline-flex items-center gap-1 text-[11px] text-slate-300 hover:text-white hover:bg-slate-800/60 rounded px-2 py-1 transition-colors"
+      title="Sign out"
+    >
+      <LogOut className="h-3 w-3" aria-hidden />
+      Sign out
+    </button>
   );
 }
