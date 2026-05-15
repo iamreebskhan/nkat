@@ -50,15 +50,22 @@ export async function buildDraftFromVisit(args: {
   providerTier?: ProviderTier;
 }): Promise<DraftSuperbill> {
   return withOrgContext(args.orgId, async (tx) => {
+    // NOTE: rendering-provider NPI is intentionally NOT pulled from
+    // app_user — that column doesn't exist in the live schema (the
+    // Prisma model is out of sync). For solo-practice orgs we fall
+    // back to org.npi captured during onboarding; multi-clinician
+    // orgs will need a clinician_profile.npi column in a follow-up.
     const rows = await tx.$queryRaw<VisitForSuperbill[]>`
       SELECT v.id, v.patient_id, v.is_telehealth,
              v.cpt_codes_assigned, v.icd10_codes, v.modifiers,
              v.scheduled_start, v.start_time,
              p.primary_payer_id, p.primary_member_id,
-             u.npi, u.full_name
+             COALESCE(ob.npi, '') AS npi,
+             u.full_name
       FROM visit v
       JOIN patient p ON p.id = v.patient_id
       LEFT JOIN app_user u ON u.id = v.clinician_user_id
+      LEFT JOIN onboarding_status ob ON ob.org_id = v.org_id
       WHERE v.id = ${args.visitId}::uuid
       LIMIT 1
     `;

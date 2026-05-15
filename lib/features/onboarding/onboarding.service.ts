@@ -78,18 +78,20 @@ export async function saveProfile(args: {
 
     const rows = await tx.$queryRaw<Row[]>`
       INSERT INTO onboarding_status (
-        org_id, profile_complete, org_type, custom_domain, notes
+        org_id, profile_complete, org_type, custom_domain, notes, npi
       ) VALUES (
         ${args.orgId}::uuid, TRUE,
         ${args.profile.orgType},
         ${args.profile.customDomain ?? null},
-        ${args.profile.notes ?? null}
+        ${args.profile.notes ?? null},
+        ${args.profile.npi}
       )
       ON CONFLICT (org_id) DO UPDATE SET
         profile_complete = TRUE,
         org_type = EXCLUDED.org_type,
         custom_domain = EXCLUDED.custom_domain,
         notes = COALESCE(EXCLUDED.notes, onboarding_status.notes),
+        npi = EXCLUDED.npi,
         updated_at = now()
       RETURNING *
     `;
