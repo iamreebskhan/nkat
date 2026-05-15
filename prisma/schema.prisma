@@ -38,13 +38,18 @@ model Org {
 }
 
 model AppUser {
-  id        String   @id @default(uuid()) @db.Uuid
-  email     String   @unique
-  fullName  String?  @map("full_name")
-  npi       String?
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  // Mirrors live schema (see 0036_phase_pallio_password_mfa.sql). Old
+  // model had phantom npi/active/updated_at columns; raw queries
+  // referencing them crashed at runtime.
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique
+  fullName      String?   @map("full_name")
+  passwordHash  String?   @map("password_hash")
+  mfaSecret     String?   @map("mfa_secret")
+  mfaEnrolledAt DateTime? @map("mfa_enrolled_at")
+  status        String    @default("active")
+  lastLoginAt   DateTime? @map("last_login_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
   visitsAsClinician Visit[] @relation("ClinicianVisits")
 
