@@ -333,6 +333,65 @@ export async function applyEdits(args: {
 }
 
 /**
+ * Path B merge (§9.4.3): persist the org's per-row decisions from the
+ * comparison view into org_rulebook_row (origin='org_upload'), then
+ * mark the upload 'merged'. Each decision carries the final
+ * coverage_status + rule_value the org chose (accept-source /
+ * keep-org / custom — resolved client-side).
+ */
+export async function mergeUploadedRulebook(args: {
+  orgId: string;
+  uploadId: string;
+  byUserId: string;
+  decisions: Array<{
+    payerId: string | null;
+    state: string;
+    cptCode: string;
+    attribute: string;
+    coverageStatus: CoverageStatus;
+    ruleValue: Record<string, unknown>;
+  }>;
+}): Promise<{ merged: number }> {
+  return withOrgContext(args.orgId, async (tx) => {
+    const rb = await tx.$queryRaw<{ id: string }[]>`
+      INSERT INTO org_rulebook (org_id, origin, current_version, finalized_by_user_id)
+      VALUES (${args.orgId}::uuid, 'uploaded', 1, ${args.byUserId}::uuid)
+      ON CONFLICT (org_id) DO UPDATE SET
+        origin = 'uploaded',
+        current_version = org_rulebook.current_version + 1,
+        finalized_by_user_id = ${args.byUserId}::uuid,
+        updated_at = now()
+      RETURNING id
+    `;
+    const rulebookId = rb[0]!.id;
+
+    let merged = 0;
+    for (const d of args.decisions) {
+      await tx.$executeRaw`
+        INSERT INTO org_rulebook_row (
+          org_id, rulebook_id, payer_id, state, cpt_code, attribute,
+          rule_value, coverage_status, origin, last_edited_by_user_id,
+          last_edited_at
+        ) VALUES (
+          ${args.orgId}::uuid, ${rulebookId}::uuid,
+          ${d.payerId}::uuid, ${d.state}, ${d.cptCode}, ${d.attribute},
+          ${JSON.stringify(d.ruleValue)}::jsonb, ${d.coverageStatus},
+          'org_upload', ${args.byUserId}::uuid, now()
+        )
+      `;
+      merged++;
+    }
+
+    await tx.$executeRaw`
+      UPDATE rulebook_upload
+         SET status = 'merged', updated_at = now()
+       WHERE id = ${args.uploadId}::uuid AND org_id = ${args.orgId}::uuid
+    `;
+    return { merged };
+  });
+}
+
+/**
  * Build the §9.4 side-by-side comparison: the org's uploaded rows vs
  * the source library. Pure logic delegates to `compareRulebooks`.
  */
