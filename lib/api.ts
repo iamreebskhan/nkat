@@ -53,12 +53,24 @@ export class NotFoundError extends Error {
 }
 
 /**
+ * Raised when an action would exceed the org's paid seat count.
+ * Maps to HTTP 402 (Payment Required) — the UI shows an upgrade CTA.
+ */
+export class SeatLimitError extends Error {
+  constructor(message: string = "Seat limit reached for your plan.") {
+    super(message);
+    this.name = "SeatLimitError";
+  }
+}
+
+/**
  * Helper for routes — wraps a service call. Catches NotFoundError →
- * 404 envelope; otherwise re-throws or returns 422 on validation,
- * 500 on unknown.
+ * 404, SeatLimitError → 402; otherwise 422 on validation, 500 on
+ * unknown.
  */
 export function handleServiceError(err: unknown): NextResponse<ApiResponse<null>> {
   if (err instanceof NotFoundError) return fail(err.message, { status: 404 });
+  if (err instanceof SeatLimitError) return fail(err.message, { status: 402 });
   const msg = err instanceof Error ? err.message : "Unknown error";
   return fail(msg, { status: 422 });
 }

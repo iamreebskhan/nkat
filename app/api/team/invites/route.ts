@@ -1,7 +1,7 @@
 /** Team invites: POST creates invite + permission rows in a tx. GET lists pending. */
 import { type NextRequest } from "next/server";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { handleServiceError, ok, parseJson } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   InviteSchema,
@@ -29,6 +29,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     });
     return ok(r, { status: 201 });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Invite failed", { status: 422 });
+    // SeatLimitError → 402, NotFoundError → 404, else 422.
+    return handleServiceError(err);
   }
 }

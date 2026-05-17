@@ -9,11 +9,13 @@
  *   4. On accept, update each permission row's `user_id` and delete
  *      the pending_invite.
  */
-import { NotFoundError } from "@/lib/api";
+import { NotFoundError, SeatLimitError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { sendEmail } from "@/lib/email/email.service";
 import { inviteEmail } from "@/lib/email/templates";
 import { env } from "@/lib/env";
+import type { Tier } from "@/lib/features/billing-saas/stripe.service";
+import { resolveSeatCap, wouldExceedSeatCap } from "./seat-limit";
 import {
   InviteSchema,
   ROLE_DEFAULT_PERMISSIONS,
@@ -34,6 +36,30 @@ export {
   type RoleTemplate,
 };
 
+/**
+ * Resolve the org's seat cap inside an open tx: prefer the paid
+ * subscription seat count, fall back to org.plan_tier.
+ */
+async function resolveOrgSeatCap(
+  tx: { $queryRaw: <T>(q: TemplateStringsArray, ...v: unknown[]) => Promise<T> },
+  orgId: string,
+): Promise<number> {
+  const rows = await tx.$queryRaw<
+    { subscription_seats: number | null; plan_tier: Tier }[]
+  >`
+    SELECT s.seats AS subscription_seats, o.plan_tier AS plan_tier
+      FROM org o
+      LEFT JOIN subscription s ON s.org_id = o.id
+     WHERE o.id = ${orgId}::uuid
+     LIMIT 1
+  `;
+  const r = rows[0];
+  return resolveSeatCap({
+    subscriptionSeats: r?.subscription_seats ?? null,
+    planTier: r?.plan_tier ?? "solo",
+  });
+}
+
 export async function createInvite(args: {
   orgId: string;
   invitedByUserId: string;
@@ -42,6 +68,50 @@ export async function createInvite(args: {
   const token = generateToken();
   const expiresAt = new Date(Date.now() + 48 * 3600 * 1000);
   return withOrgContext(args.orgId, async (tx) => {
+    // ---- Seat-limit guard (gap H) -------------------------------------
+    // Re-inviting an email that's already a member or pending invite
+    // updates that row in place (ON CONFLICT) — no new seat consumed.
+    const existing = await tx.$queryRaw<{ kind: string }[]>`
+      SELECT 'invite' AS kind
+        FROM pending_invite
+       WHERE org_id = ${args.orgId}::uuid AND email = ${args.payload.email}
+      UNION ALL
+      SELECT 'member' AS kind
+        FROM org_member m JOIN app_user u ON u.id = m.user_id
+       WHERE m.org_id = ${args.orgId}::uuid
+         AND u.email = ${args.payload.email}::citext
+         AND m.status = 'active'
+      LIMIT 1
+    `;
+    const reInvitingExisting = existing.length > 0;
+
+    const usage = await tx.$queryRaw<
+      { active_members: bigint; outstanding_invites: bigint }[]
+    >`
+      SELECT
+        (SELECT COUNT(*) FROM org_member
+          WHERE org_id = ${args.orgId}::uuid AND status = 'active')
+          AS active_members,
+        (SELECT COUNT(*) FROM pending_invite
+          WHERE org_id = ${args.orgId}::uuid AND expires_at > now())
+          AS outstanding_invites
+    `;
+    const cap = await resolveOrgSeatCap(tx, args.orgId);
+    if (
+      wouldExceedSeatCap({
+        activeMembers: Number(usage[0]?.active_members ?? 0),
+        outstandingInvites: Number(usage[0]?.outstanding_invites ?? 0),
+        cap,
+        reInvitingExisting,
+      })
+    ) {
+      throw new SeatLimitError(
+        `Your plan includes ${cap} seat${cap === 1 ? "" : "s"}. ` +
+          `Upgrade in Settings → Billing to invite more teammates.`,
+      );
+    }
+    // -------------------------------------------------------------------
+
     const inv = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO pending_invite (
         org_id, email, role_template, invited_by_user_id, token, expires_at
