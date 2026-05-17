@@ -250,3 +250,31 @@ jobs:
             git diff ../docs/openapi.json
             exit 1
           fi
+
+  gold-standard-eval:
+    name: ai / gold-standard eval (≥90%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+      - name: Install
+        run: npm ci || npm install
+      - name: Run gold-standard eval (fails if pass rate < 90%)
+        # Hits live Anthropic + OpenAI. Skips gracefully when the
+        # secrets aren't configured (forks / contributors) so CI stays
+        # green; enforce by adding ANTHROPIC_API_KEY + OPENAI_API_KEY
+        # to the repo's Actions secrets.
+        env:
+          EVAL: "1"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::warning::ANTHROPIC_API_KEY not set — skipping gold-standard eval. Add it to Actions secrets to enforce the ≥90% gate."
+            exit 0
+          fi
+          npx vitest run gold-standard
