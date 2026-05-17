@@ -23,6 +23,26 @@ export type PayerRuleAttribute =
   | "frequency_limit"
   | "modifier_required";
 
+/**
+ * The Pallio lookup layer uses short attribute names, but the
+ * `payer_rule.attribute` column has a CHECK constraint that only
+ * permits the canonical long-form names (see
+ * db/migrations/0003_payers_and_rules.sql). Without this map a query
+ * for `prior_auth` could never match a stored `prior_auth_required`
+ * row — 6 of 9 attributes were silently un-answerable.
+ */
+export const ATTRIBUTE_DB_MAP: Record<PayerRuleAttribute, string> = {
+  covered: "covered",
+  prior_auth: "prior_auth_required",
+  telehealth: "telehealth_allowed",
+  provider_type: "provider_taxonomy_allowed",
+  billing_limit: "units_per_period_max",
+  addon_compatible: "bundled_with",
+  documentation: "documentation_required",
+  frequency_limit: "frequency_limit",
+  modifier_required: "modifier_required",
+};
+
 export type CoverageStatus = "covered" | "not_covered" | "varies" | "unknown";
 
 export type PayerType =
@@ -83,6 +103,13 @@ interface RuleRow {
 export async function fetchPayerRule(
   input: FetchRuleInput,
 ): Promise<PayerRuleHit | null> {
+  // The caller defaults product_line to 'commercial', but many payers
+  // are Medicaid MCOs / MA orgs whose rules are stored under a
+  // different product line. Rank an exact product_line match first,
+  // then fall back to any product line for the same
+  // payer+state+code+attribute — a cited cross-product rule beats a
+  // false "unknown".
+  const dbAttribute = ATTRIBUTE_DB_MAP[input.attribute] ?? input.attribute;
   const rows = await prisma.$queryRaw<RuleRow[]>`
     SELECT
       pr.id              AS rule_id,
@@ -100,12 +127,13 @@ export async function fetchPayerRule(
     LEFT JOIN source_document sd ON sd.id = pr.source_doc_id
     WHERE pr.payer_id     = ${input.payerId}::uuid
       AND pr.state        = ${input.state}
-      AND pr.product_line = ${input.productLine}
       AND pr.code         = ${input.code}
-      AND pr.attribute    = ${input.attribute}
+      AND pr.attribute    = ${dbAttribute}
       AND pr.effective_date <= ${input.dos}
       AND (pr.expiration_date IS NULL OR pr.expiration_date > ${input.dos})
-    ORDER BY pr.effective_date DESC
+    ORDER BY
+      (pr.product_line = ${input.productLine}) DESC,
+      pr.effective_date DESC
     LIMIT 1
   `;
 
