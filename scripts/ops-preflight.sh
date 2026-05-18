@@ -55,14 +55,28 @@ else
 fi
 
 echo "[5] RLS tenant isolation audit"
-if command -v npm >/dev/null && [ -d "$APP_DIR" ]; then
-  if ( cd "$APP_DIR" && sudo -u pallio npm run -s rls:audit ) >/tmp/rls.out 2>&1; then
-    ok "RLS audit: every tenant table protected"
-  else
-    no "RLS audit FAILED — see /tmp/rls.out"
-  fi
+# Pure SQL — no Node/tsx (prod has no dev tooling). Every table with an
+# org_id column MUST have row-level security enabled AND a policy.
+RLS_SQL="
+SELECT string_agg(c.relname, ', ')
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname='public' AND c.relkind='r'
+  AND EXISTS (SELECT 1 FROM information_schema.columns col
+              WHERE col.table_schema='public' AND col.table_name=c.relname
+                AND col.column_name='org_id')
+  AND (c.relrowsecurity=false
+       OR NOT EXISTS (SELECT 1 FROM pg_policies p
+                      WHERE p.schemaname='public' AND p.tablename=c.relname));
+"
+offenders=$(sudo -u postgres psql -tAc "$RLS_SQL" "$PG_DB" 2>/tmp/rls.out)
+nt=$(sudo -u postgres psql -tAc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name='org_id'" "$PG_DB" 2>/dev/null || echo "?")
+if [ -s /tmp/rls.out ] && [ -z "$offenders" ]; then
+  no "RLS query errored — see /tmp/rls.out"
+elif [ -z "$offenders" ]; then
+  ok "RLS: all $nt tenant tables have row-level security + policy"
 else
-  wn "Cannot run RLS audit here (npm/app dir missing) — run 'npm run rls:audit' in $APP_DIR"
+  no "RLS: tables WITHOUT isolation → $offenders"
 fi
 
 echo "[6] Billing rule corpus"
