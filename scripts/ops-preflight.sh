@@ -56,12 +56,25 @@ fi
 
 echo "[5] RLS tenant isolation audit"
 # Pure SQL — no Node/tsx (prod has no dev tooling). Every table with an
-# org_id column MUST have row-level security enabled AND a policy.
+# org_id column MUST have row-level security + a policy, EXCEPT a
+# documented allow-list of intentionally non-tenant-RLS tables:
+#   feature_flag   — org_id is NULLable; NULL = global default. Holds
+#                     global + per-org config toggles (no PHI). The
+#                     standard org_id=current_org policy would hide the
+#                     global rows from every tenant. Admin-managed.
+#   signup_attempt — written pre-auth during signup when no org session
+#                     context exists; standard RLS would block the
+#                     INSERT. Prospect funnel metadata, no patient PHI;
+#                     breakglass/admin access only.
+# Both verified to carry no patient PHI. Mirrors the NON_TENANT_TABLES
+# allow-list in scripts/rls-audit.ts.
+RLS_EXEMPT="'feature_flag','signup_attempt'"
 RLS_SQL="
 SELECT string_agg(c.relname, ', ')
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname='public' AND c.relkind='r'
+  AND c.relname NOT IN ($RLS_EXEMPT)
   AND EXISTS (SELECT 1 FROM information_schema.columns col
               WHERE col.table_schema='public' AND col.table_name=c.relname
                 AND col.column_name='org_id')
@@ -74,7 +87,7 @@ nt=$(sudo -u postgres psql -tAc "SELECT count(*) FROM information_schema.columns
 if [ -s /tmp/rls.out ] && [ -z "$offenders" ]; then
   no "RLS query errored — see /tmp/rls.out"
 elif [ -z "$offenders" ]; then
-  ok "RLS: all $nt tenant tables have row-level security + policy"
+  ok "RLS: all tenant tables protected (feature_flag, signup_attempt exempt by design — global/pre-auth, no PHI)"
 else
   no "RLS: tables WITHOUT isolation → $offenders"
 fi
