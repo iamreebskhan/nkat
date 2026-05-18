@@ -30,8 +30,15 @@ describe('encrypt + decrypt', () => {
   });
 
   it('produces a fresh IV per call (no reuse)', () => {
-    const a = encrypt({ master, plaintext: 'x' });
-    const b = encrypt({ master, plaintext: 'x' });
+    // GCM is a stream cipher: a 1-byte plaintext yields a 1-byte
+    // ciphertext, so two fresh IVs still collide ~1/256 of the time
+    // (a flaky false-failure even though the crypto is correct). Use
+    // a long plaintext so the ciphertext-difference check is
+    // deterministic (~2^-256 collision) while still proving IV reuse
+    // doesn't happen.
+    const sample = 'fresh-iv-check-' + 'x'.repeat(64);
+    const a = encrypt({ master, plaintext: sample });
+    const b = encrypt({ master, plaintext: sample });
     expect(a.iv).not.toBe(b.iv);
     expect(a.ciphertext).not.toBe(b.ciphertext);
   });
