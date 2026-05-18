@@ -49,6 +49,7 @@ export default function RulebookPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [canAttest, setCanAttest] = useState(false);
 
   async function load() {
     try {
@@ -69,6 +70,14 @@ export default function RulebookPage() {
 
   useEffect(() => {
     load();
+    // Analysts (internal staff) keep one-click access to the
+    // attestation queue now that /payers redirects here.
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) setCanAttest(d.data.permissions?.includes("knowledge.attest") ?? false);
+      })
+      .catch(() => {});
   }, []);
 
   // Auto-generate when ?init=generate (from the onboarding wizard).
@@ -150,11 +159,27 @@ export default function RulebookPage() {
     <div className="px-8 py-8">
       <header className="flex items-end justify-between mb-6 gap-4">
         <div>
-          <h1 className="font-display text-3xl tracking-tight">Org rulebook</h1>
-          <p className="text-slate-600 mt-1 tabular text-sm">
+          <h1 className="font-display text-3xl tracking-tight">Rulebook</h1>
+          <p className="text-slate-600 mt-1 text-sm max-w-2xl">
+            Your account&rsquo;s billing rulebook. Generate it from Pallio&rsquo;s
+            reference library or upload your own, reconcile the two, edit,
+            and finalize. This is private to your organization.
+          </p>
+          <p className="text-slate-500 mt-1 tabular text-xs">
             {rb && rb.id
               ? `v${rb.currentVersion} · ${rb.rows.length} rules · origin: ${rb.origin}`
               : "Not generated yet"}
+            {canAttest && (
+              <>
+                {" · "}
+                <Link
+                  href="/payers/attestations"
+                  className="text-[var(--color-brand-700)] underline"
+                >
+                  Attestations queue →
+                </Link>
+              </>
+            )}
           </p>
         </div>
         <div className="flex gap-2">
