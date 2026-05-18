@@ -51,6 +51,23 @@ describe("checkForPhi", () => {
     expect(r.ok).toBe(false);
   });
 
+  it("still flags a bare 'patient John Smith' (proper-cased name)", () => {
+    expect(checkForPhi("Does Humana cover patient John Smith?").ok).toBe(false);
+    expect(checkForPhi("member Jane Doe eligibility").ok).toBe(false);
+  });
+
+  it("does NOT flag lowercase billing phrasing (eval regression)", () => {
+    // The /i flag made these trip 'name_trigger' and refused the
+    // Anthropic call — caught by the gold-standard eval.
+    for (const q of [
+      "Does Medicare cover a new patient home visit (99341) in OH?",
+      "established patient home visit 99349 telehealth Humana",
+      "is member group number required for 99497 prior auth",
+    ]) {
+      expect(checkForPhi(q).ok, q).toBe(true);
+    }
+  });
+
   it("flags MRN-like long alphanumerics", () => {
     const r = checkForPhi("Member ID ABC123XY789 needs eligibility check.");
     expect(r.ok).toBe(false);

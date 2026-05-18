@@ -99,17 +99,50 @@ export async function parseRuleQuery(query: string): Promise<ParsedQuery> {
     throw new Error("parseRuleQuery: unexpected response shape from Anthropic");
   }
   const text = block.text.trim();
+  return ParsedQuery.parse(extractJsonObject(text));
+}
 
-  let raw: unknown;
+/**
+ * Robustly pull the first balanced JSON object out of a model
+ * response. Haiku usually returns bare JSON, but despite the
+ * "JSON only" instruction it sometimes wraps it in ```json fences or
+ * appends an explanation after the closing brace (which made a naive
+ * JSON.parse throw "Unexpected non-whitespace character after JSON").
+ * Strategy: strip code fences, then scan for the first '{' and walk
+ * braces (quote/escape aware) to its matching '}', parsing only that.
+ */
+export function extractJsonObject(text: string): unknown {
+  const unfenced = text.replace(/```(?:json)?/gi, "").trim();
   try {
-    raw = JSON.parse(text);
+    return JSON.parse(unfenced);
   } catch {
-    // Some models occasionally wrap JSON in ```json fences despite the
-    // explicit instruction. Strip + retry once.
-    const stripped = text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
-    raw = JSON.parse(stripped);
+    /* fall through to brace scan */
   }
-  return ParsedQuery.parse(raw);
+  const start = unfenced.indexOf("{");
+  if (start === -1) {
+    throw new Error("parseRuleQuery: no JSON object in model response");
+  }
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < unfenced.length; i++) {
+    const c = unfenced[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        return JSON.parse(unfenced.slice(start, i + 1));
+      }
+    }
+  }
+  throw new Error("parseRuleQuery: unterminated JSON object in model response");
 }
 
 // ---------------------------------------------------------------------------
