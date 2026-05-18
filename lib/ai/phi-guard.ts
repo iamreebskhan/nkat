@@ -44,8 +44,14 @@ const SAFE_HARBOR_PATTERNS: { name: string; re: RegExp }[] = [
  * (Aetna, Humana etc.) and rule citations.
  */
 const NAME_TRIGGERS = [
-  /\bpatient\s+(?:is\s+)?[A-Z][a-z]+\s+[A-Z][a-z]+\b/i,
-  /\bmember\s+(?:is\s+)?[A-Z][a-z]+\s+[A-Z][a-z]+\b/i,
+  // Human names are proper-cased. These two MUST stay case-SENSITIVE:
+  // with /i they fired on ordinary billing phrasing like "patient
+  // home visit" / "member group number" and refused legitimate
+  // rule-lookup queries (caught by the gold-standard eval).
+  // "patient is John Smith" / "member Jane Doe" still match.
+  /\b[Pp]atient\s+(?:is\s+)?[A-Z][a-z]+\s+[A-Z][a-z]+\b/,
+  /\b[Mm]ember\s+(?:is\s+)?[A-Z][a-z]+\s+[A-Z][a-z]+\b/,
+  // Keyword markers — case-insensitive is correct here.
   /\bdob\s*[:=]/i,
   /\bdate\s+of\s+birth\s*[:=]/i,
   /\bsocial\s+security\s+number\s*[:=]/i,
