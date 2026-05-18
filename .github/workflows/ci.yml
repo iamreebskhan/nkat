@@ -272,6 +272,12 @@ jobs:
           EVAL: "1"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # lib/env.ts validates the FULL schema eagerly on first env()
+          # call. The parser-only eval never touches the DB/auth, but
+          # these two are required (no default) so supply inert
+          # placeholders or env() throws before any Anthropic call.
+          DATABASE_URL: "postgres://eval:eval@localhost:5432/eval"
+          JWT_SECRET: "ci_eval_placeholder_secret_min_32_chars_long"
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
             echo "::warning::ANTHROPIC_API_KEY not set — skipping gold-standard eval. Add it to Actions secrets to enforce the ≥90% gate."
