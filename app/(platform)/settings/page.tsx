@@ -10,7 +10,7 @@ const SECTIONS = [
   { href: "/settings/security", title: "Security", desc: "Multi-factor authentication, recovery codes." },
   { href: "/settings/branding", title: "Branding", desc: "Logo, primary color, custom domain, email identity." },
   { href: "/settings/billing",  title: "Billing",  desc: "Subscription tier, seats, invoice history." },
-  { href: "/settings/rulebook", title: "Rulebook", desc: "Org's source of truth for payer rules." },
+  // Rulebook is now a top-level nav item ("Rulebook") — no duplicate door here.
 ];
 
 export default function SettingsIndexPage() {
