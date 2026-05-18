@@ -21,9 +21,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Gate: this load test needs a real staging target. Until
+  # K6_STAGING_BASE_URL is set in repo Actions secrets, skip the load
+  # jobs cleanly (workflow stays green — no nightly failure emails).
+  # Adding the secret auto-activates it; no workflow edit needed.
+  preflight:
+    name: preflight (staging configured?)
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          K6_STAGING_BASE_URL: ${{ secrets.K6_STAGING_BASE_URL }}
+        run: |
+          if [ -n "$K6_STAGING_BASE_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::K6_STAGING_BASE_URL not set — skipping nightly load test. Add K6_STAGING_BASE_URL, K6_STAGING_ORG_ID, DATADOG_API_KEY to Actions secrets to enable it."
+          fi
+
   lookup:
     name: lookup (5m @ 25 RPS)
     runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Install k6
@@ -72,7 +95,8 @@ jobs:
   synthesis:
     name: synthesis (5m, three-stage)
     runs-on: ubuntu-latest
-    needs: lookup
+    needs: [preflight, lookup]
+    if: needs.preflight.outputs.configured == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Install k6
