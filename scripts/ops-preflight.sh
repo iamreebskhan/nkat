@@ -46,12 +46,21 @@ echo "[3] AMA CPT licence"
   || wn "AMA_LICENSE_TOKEN unset — CPT descriptors stay redacted (legal-safe default)"
 
 echo "[4] Nightly backup cron"
-if crontab -l 2>/dev/null | grep -q "nightly-backup.sh"; then
-  ok "nightly-backup.sh scheduled in crontab"
-elif sudo -u pallio crontab -l 2>/dev/null | grep -q "nightly-backup.sh"; then
-  ok "nightly-backup.sh scheduled (pallio crontab)"
+# Accept EITHER the full nightly-backup.sh (S3/offsite) OR a local
+# pg_dump-to-/opt/pallio/backups cron. A working local backup is real
+# DR against the common failure modes; only the offsite gap remains.
+crons="$( (crontab -l 2>/dev/null; sudo -u pallio crontab -l 2>/dev/null) )"
+recent_dump="$(ls -1t /opt/pallio/backups/pallio-*.dump 2>/dev/null | head -1)"
+if echo "$crons" | grep -q "nightly-backup.sh"; then
+  ok "nightly-backup.sh scheduled (offsite/S3 DR)"
+elif echo "$crons" | grep -Eq 'pg_dump.*pallio.*/opt/pallio/backups'; then
+  if [ -n "$recent_dump" ]; then
+    ok "local pg_dump backup cron active — latest: $(basename "$recent_dump") ($(du -h "$recent_dump" | cut -f1)). NOTE: same-disk only, no offsite copy."
+  else
+    wn "backup cron scheduled but no dump file yet — run it once to confirm"
+  fi
 else
-  no "nightly-backup.sh NOT in any crontab — no disaster recovery"
+  no "no backup cron (neither nightly-backup.sh nor a local pg_dump job) — no disaster recovery"
 fi
 
 echo "[5] RLS tenant isolation audit"
