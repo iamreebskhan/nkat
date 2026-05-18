@@ -63,13 +63,13 @@ export async function hybridSearch(input: VectorSearchInput): Promise<ChunkHit[]
     }[]
   >`
     SELECT
-      dc.id, dc.doc_id, dc.content,
-      dc.cpt_codes_mentioned, dc.policy_section,
+      dc.id, dc.source_doc_id AS doc_id, dc.content,
+      dc.codes_mentioned AS cpt_codes_mentioned, dc.policy_section,
       1 - (dc.embedding <=> ${vectorLiteral(queryVec)}::vector) AS sim
     FROM document_chunk dc
-    JOIN source_document sd ON sd.id = dc.doc_id
-    WHERE sd.payer_id = ${input.payerId}::uuid
-      AND ${input.state} = ANY(sd.states_covered)
+    WHERE dc.payer_id = ${input.payerId}::uuid
+      AND dc.state = ${input.state}
+      AND dc.embedding IS NOT NULL
     ORDER BY dc.embedding <=> ${vectorLiteral(queryVec)}::vector
     LIMIT ${TOP_K_PER_LANE}
   `;
@@ -86,13 +86,12 @@ export async function hybridSearch(input: VectorSearchInput): Promise<ChunkHit[]
     }[]
   >`
     SELECT
-      dc.id, dc.doc_id, dc.content,
-      dc.cpt_codes_mentioned, dc.policy_section,
+      dc.id, dc.source_doc_id AS doc_id, dc.content,
+      dc.codes_mentioned AS cpt_codes_mentioned, dc.policy_section,
       ts_rank_cd(to_tsvector('english', dc.content), plainto_tsquery('english', ${input.query})) AS rank
     FROM document_chunk dc
-    JOIN source_document sd ON sd.id = dc.doc_id
-    WHERE sd.payer_id = ${input.payerId}::uuid
-      AND ${input.state} = ANY(sd.states_covered)
+    WHERE dc.payer_id = ${input.payerId}::uuid
+      AND dc.state = ${input.state}
       AND to_tsvector('english', dc.content) @@ plainto_tsquery('english', ${input.query})
     ORDER BY rank DESC
     LIMIT ${TOP_K_PER_LANE}
