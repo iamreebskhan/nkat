@@ -14,6 +14,7 @@
  * then we persist the merged set.
  */
 import { withOrgContext } from "@/lib/db";
+import { hasAmaLicense } from "@/lib/features/billing/code.service";
 import { compareRulebooks } from "./rulebook-pure";
 import type {
   ComparisonRow,
@@ -40,8 +41,12 @@ interface RulebookRow {
 interface RowRow {
   id: string;
   payer_id: string | null;
+  payer_name: string | null;
+  payer_type: string | null;
   state: string;
   cpt_code: string;
+  code_system: string | null;
+  cpt_description: string | null;
   attribute: RulebookAttribute;
   rule_value: Record<string, unknown>;
   coverage_status: CoverageStatus;
@@ -57,8 +62,12 @@ function rowToView(r: RowRow): RulebookRowView {
   return {
     id: r.id,
     payerId: r.payer_id,
+    payerName: r.payer_name,
+    payerType: r.payer_type,
     state: r.state,
     cptCode: r.cpt_code,
+    codeSystem: r.code_system,
+    cptDescription: r.cpt_description,
     attribute: r.attribute,
     ruleValue: r.rule_value,
     coverageStatus: r.coverage_status,
@@ -278,14 +287,33 @@ async function readRulebook(args: {
     };
   }
 
+  // Join payer for human-readable header (name + type), and `code`
+  // for the CPT/HCPCS short descriptor. CPT descriptors are AMA-
+  // licensed: if AMA_LICENSE_TOKEN isn't set we swap the text for a
+  // placeholder server-side; HCPCS (CMS public domain) flows freely.
+  const amaLicensed = hasAmaLicense();
   const rows = await tx.$queryRaw<RowRow[]>`
-    SELECT id, payer_id, state, cpt_code, attribute, rule_value,
-           coverage_status, origin, confidence::text AS confidence,
-           source_payer_rule_id, source_quote,
-           last_edited_by_user_id, last_edited_at
-    FROM org_rulebook_row
-    WHERE rulebook_id = ${rb[0].id}::uuid
-    ORDER BY state, payer_id, cpt_code, attribute
+    SELECT
+      r.id, r.payer_id,
+      p.name        AS payer_name,
+      p.payer_type  AS payer_type,
+      r.state, r.cpt_code,
+      c.code_system AS code_system,
+      CASE
+        WHEN c.code IS NULL THEN NULL
+        WHEN c.code_system = 'CPT' AND NOT ${amaLicensed} THEN '[AMA license required]'
+        ELSE c.short_descriptor
+      END AS cpt_description,
+      r.attribute, r.rule_value,
+      r.coverage_status, r.origin,
+      r.confidence::text AS confidence,
+      r.source_payer_rule_id, r.source_quote,
+      r.last_edited_by_user_id, r.last_edited_at
+    FROM org_rulebook_row r
+    LEFT JOIN payer p ON p.id = r.payer_id
+    LEFT JOIN code  c ON c.code = r.cpt_code
+    WHERE r.rulebook_id = ${rb[0].id}::uuid
+    ORDER BY r.state, p.name NULLS LAST, r.cpt_code, r.attribute
   `;
 
   return {

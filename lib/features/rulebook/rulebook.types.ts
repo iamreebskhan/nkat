@@ -38,8 +38,20 @@ export type RulebookAttribute = (typeof RULEBOOK_ATTRIBUTES)[number];
 export interface RulebookRowView {
   id: string;
   payerId: string | null;
+  /** Human-readable payer name from the payer table (LEFT JOIN). */
+  payerName: string | null;
+  /** payer.payer_type (commercial / medicaid_mco / …). */
+  payerType: string | null;
   state: string;
   cptCode: string;
+  /** 'CPT' | 'HCPCS2' — null when the code isn't in the global table. */
+  codeSystem: string | null;
+  /**
+   * Short descriptor for the code. Server AMA-gated: CPT descriptors
+   * are replaced by "[AMA license required]" until AMA_LICENSE_TOKEN
+   * is set; HCPCS (public domain) shows the real text.
+   */
+  cptDescription: string | null;
   attribute: RulebookAttribute;
   ruleValue: Record<string, unknown>;
   coverageStatus: CoverageStatus;
@@ -66,6 +78,26 @@ export interface RulebookView {
 }
 
 /** Editable cell value the FE sends back on save. */
+/**
+ * Conventional shape for `rule_value` JSONB when the org edits a cell
+ * inline. Callers are not required to use this shape (the column is
+ * an open JSON record), but the UI does, and rendering checks for
+ * these keys. Keeping it explicit avoids the "every edit means
+ * something different" drift.
+ */
+export interface OrgRuleValue {
+  /** Plain-English summary, shown as the row's primary text. */
+  answer?: string;
+  /** Free-text the editor typed (e.g. payer-call notes). */
+  notes?: string;
+  /** Where the editor learned this (payer_call/contract/portal/other). */
+  source?: "payer_call" | "contract" | "portal" | "other";
+  /** Who confirmed it — human-readable name. */
+  verifiedBy?: string;
+  /** ISO date the verification happened. */
+  verifiedAt?: string;
+}
+
 export const EditCellSchema = z.object({
   rowId: z.string().uuid(),
   ruleValue: z.record(z.unknown()),
