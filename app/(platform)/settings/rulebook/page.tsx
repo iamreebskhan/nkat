@@ -50,6 +50,42 @@ export default function RulebookPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [canAttest, setCanAttest] = useState(false);
+  /** Expanded CPT detail cards keyed by `${payerKey}:${cptCode}`. */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  /** Per-row "Flag for attestation" pending state. */
+  const [flagBusy, setFlagBusy] = useState<Record<string, boolean>>({});
+
+  function toggleExpand(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  async function flagForAttestation(row: RulebookRowView) {
+    setFlagBusy((b) => ({ ...b, [row.id]: true }));
+    try {
+      const r = await fetch("/api/attestations/requests", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          payerId: row.payerId,
+          state: row.state,
+          cptCode: row.cptCode,
+          attribute: row.attribute,
+          sourceQuery: `rulebook UI: ${row.payerName ?? row.payerId} · ${row.state} · ${row.cptCode} · ${row.attribute}`,
+        }),
+      });
+      const d = await r.json();
+      if (!d.success) throw new Error(d.error ?? "Flag failed");
+      setInfo(`Flagged ${row.cptCode}/${row.attribute} for analyst attestation.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Flag failed");
+    } finally {
+      setFlagBusy((b) => ({ ...b, [row.id]: false }));
+    }
+  }
 
   async function load() {
     try {
@@ -238,74 +274,48 @@ export default function RulebookPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {groups.map(({ key, payerId, state, items }) => (
-            <Card key={key}>
+          {groups.map((g) => (
+            <Card key={g.key}>
               <CardHeader>
                 <CardTitle className="text-lg">
-                  <span className="tabular text-slate-700">{state}</span>{" "}
-                  <span className="text-slate-500 text-sm font-normal font-mono ml-2">
-                    payer {payerId.slice(0, 8)}…
+                  {g.payerName ?? <span className="text-slate-500">Unknown payer</span>}
+                  <span className="text-slate-500 text-sm font-normal ml-3">
+                    · <span className="tabular">{g.state}</span>
+                    {g.payerType && <> · {prettyPayerType(g.payerType)}</>}
                   </span>
                 </CardTitle>
                 <CardDescription>
-                  {items.length} rule{items.length === 1 ? "" : "s"}
+                  {g.cpts.length} code{g.cpts.length === 1 ? "" : "s"} ·{" "}
+                  {g.cpts.reduce((n, c) => n + c.attrs.length, 0)} rules
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-0">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
                     <tr>
+                      <th className="text-left font-semibold px-4 py-2 w-6"></th>
                       <th className="text-left font-semibold px-4 py-2">CPT</th>
-                      <th className="text-left font-semibold px-4 py-2">Attribute</th>
+                      <th className="text-left font-semibold px-4 py-2">Description</th>
                       <th className="text-left font-semibold px-4 py-2">Coverage</th>
-                      <th className="text-left font-semibold px-4 py-2">Origin</th>
+                      <th className="text-left font-semibold px-4 py-2">Rules</th>
                       <th className="text-left font-semibold px-4 py-2">Confidence</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {items.map((row) => {
-                      const edit = edits[row.id];
-                      const status = edit?.coverageStatus ?? row.coverageStatus;
-                      return (
-                        <tr key={row.id}>
-                          <td className="px-4 py-1.5 font-mono tabular text-xs text-slate-900">
-                            {row.cptCode}
-                          </td>
-                          <td className="px-4 py-1.5 text-slate-700">
-                            {row.attribute.replace(/_/g, " ")}
-                          </td>
-                          <td className="px-4 py-1.5">
-                            <select
-                              value={status}
-                              onChange={(e) =>
-                                setCellEdit(row.id, {
-                                  rowId: row.id,
-                                  ruleValue: row.ruleValue,
-                                  coverageStatus: e.target
-                                    .value as CoverageStatus,
-                                })
-                              }
-                              className="h-7 px-2 text-xs rounded border border-slate-300 bg-white"
-                              aria-label={`Coverage for ${row.cptCode}`}
-                            >
-                              <option value="covered">Covered</option>
-                              <option value="not_covered">Not covered</option>
-                              <option value="varies">Varies</option>
-                              <option value="unknown">Unknown</option>
-                            </select>
-                            <span className="ml-2 align-middle">
-                              <CoverageBadge status={status} size="sm" />
-                            </span>
-                          </td>
-                          <td className="px-4 py-1.5 text-xs text-slate-600">
-                            {edit ? "edited" : row.origin.replace(/_/g, " ")}
-                          </td>
-                          <td className="px-4 py-1.5 text-xs tabular text-slate-600">
-                            {(row.confidence * 100).toFixed(0)}%
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {g.cpts.map((cpt) => (
+                      <CptRows
+                        key={`${g.key}:${cpt.cptCode}`}
+                        cpt={cpt}
+                        payerId={g.payerId}
+                        state={g.state}
+                        expanded={expanded.has(`${g.key}:${cpt.cptCode}`)}
+                        toggle={() => toggleExpand(`${g.key}:${cpt.cptCode}`)}
+                        edits={edits}
+                        setCellEdit={setCellEdit}
+                        flagForAttestation={flagForAttestation}
+                        flagBusy={flagBusy}
+                      />
+                    ))}
                   </tbody>
                 </table>
               </CardContent>
@@ -317,25 +327,286 @@ export default function RulebookPage() {
   );
 }
 
-function groupByPayerState(rows: RulebookRowView[]) {
-  const map = new Map<
-    string,
-    { key: string; payerId: string; state: string; items: RulebookRowView[] }
-  >();
+interface CptGroup {
+  cptCode: string;
+  cptDescription: string | null;
+  codeSystem: string | null;
+  attrs: RulebookRowView[];
+}
+interface PayerStateGroup {
+  key: string;
+  payerId: string;
+  payerName: string | null;
+  payerType: string | null;
+  state: string;
+  cpts: CptGroup[];
+}
+
+function groupByPayerState(rows: RulebookRowView[]): PayerStateGroup[] {
+  const byPayer = new Map<string, PayerStateGroup>();
   for (const row of rows) {
     const k = `${row.payerId ?? "ANY"}:${row.state}`;
-    const g = map.get(k) ?? {
-      key: k,
-      payerId: row.payerId ?? "ANY",
-      state: row.state,
-      items: [],
-    };
-    g.items.push(row);
-    map.set(k, g);
+    let g = byPayer.get(k);
+    if (!g) {
+      g = {
+        key: k,
+        payerId: row.payerId ?? "ANY",
+        payerName: row.payerName,
+        payerType: row.payerType,
+        state: row.state,
+        cpts: [],
+      };
+      byPayer.set(k, g);
+    }
+    let cpt = g.cpts.find((c) => c.cptCode === row.cptCode);
+    if (!cpt) {
+      cpt = {
+        cptCode: row.cptCode,
+        cptDescription: row.cptDescription,
+        codeSystem: row.codeSystem,
+        attrs: [],
+      };
+      g.cpts.push(cpt);
+    }
+    cpt.attrs.push(row);
   }
-  return Array.from(map.values()).sort(
+  for (const g of byPayer.values()) {
+    g.cpts.sort((a, b) => a.cptCode.localeCompare(b.cptCode));
+    for (const c of g.cpts) c.attrs.sort((a, b) => a.attribute.localeCompare(b.attribute));
+  }
+  return Array.from(byPayer.values()).sort(
     (a, b) =>
-      a.state.localeCompare(b.state) || a.payerId.localeCompare(b.payerId),
+      a.state.localeCompare(b.state) ||
+      (a.payerName ?? "").localeCompare(b.payerName ?? "") ||
+      a.payerId.localeCompare(b.payerId),
+  );
+}
+
+/** Map payer_type DB enum → human label. */
+function prettyPayerType(t: string): string {
+  const m: Record<string, string> = {
+    commercial: "Commercial",
+    medicaid_mco: "Medicaid MCO",
+    medicaid_state: "Medicaid",
+    medicare_mac: "Medicare",
+    medicare_advantage_org: "Medicare Advantage",
+    tpa: "TPA",
+    workers_comp: "Workers' Comp",
+    auto_no_fault: "Auto / No-fault",
+    tribal: "Tribal / IHS",
+    self_insured: "Self-insured",
+    other: "Other",
+  };
+  return m[t] ?? t;
+}
+
+// ---------------------------------------------------------------------------
+// One pivoted summary row per CPT + optional expanded detail row showing
+// every attribute as a sub-row with inline editor + "Flag for attestation".
+// ---------------------------------------------------------------------------
+
+function CptRows(props: {
+  cpt: CptGroup;
+  payerId: string;
+  state: string;
+  expanded: boolean;
+  toggle: () => void;
+  edits: Record<string, PendingEdit>;
+  setCellEdit: (rowId: string, edit: PendingEdit) => void;
+  flagForAttestation: (row: RulebookRowView) => Promise<void>;
+  flagBusy: Record<string, boolean>;
+}) {
+  const { cpt, expanded, toggle, edits, setCellEdit, flagForAttestation, flagBusy } = props;
+  // Headline coverage = the "covered" attribute if present, else the first attr.
+  const primary = cpt.attrs.find((a) => a.attribute === "covered") ?? cpt.attrs[0];
+  const primaryStatus =
+    (primary && (edits[primary.id]?.coverageStatus ?? primary.coverageStatus)) ??
+    "unknown";
+  // Confidence shown is the max across attrs (best evidence we have for this CPT).
+  const maxConfidence = Math.max(...cpt.attrs.map((a) => a.confidence ?? 0));
+
+  return (
+    <>
+      <tr className="hover:bg-slate-50/50">
+        <td className="px-4 py-2 text-slate-400">
+          <button
+            onClick={toggle}
+            aria-label={expanded ? "Collapse" : "Expand"}
+            className="inline-flex h-5 w-5 items-center justify-center rounded hover:bg-slate-200"
+          >
+            {expanded ? "▾" : "▸"}
+          </button>
+        </td>
+        <td className="px-4 py-2 font-mono tabular text-xs text-slate-900">{cpt.cptCode}</td>
+        <td className="px-4 py-2 text-slate-700">
+          {cpt.cptDescription ?? <span className="text-slate-400 italic">no descriptor</span>}
+        </td>
+        <td className="px-4 py-2">
+          <CoverageBadge status={primaryStatus} size="sm" />
+        </td>
+        <td className="px-4 py-2 text-xs text-slate-600">
+          {cpt.attrs.length} attribute{cpt.attrs.length === 1 ? "" : "s"}
+        </td>
+        <td className="px-4 py-2 text-xs tabular text-slate-600">
+          {(maxConfidence * 100).toFixed(0)}%
+        </td>
+      </tr>
+
+      {expanded && (
+        <tr>
+          <td colSpan={6} className="bg-slate-50/50 px-4 py-3">
+            <div className="space-y-2">
+              {cpt.attrs.map((row) => {
+                const edit = edits[row.id];
+                const status = edit?.coverageStatus ?? row.coverageStatus;
+                const value = (edit?.ruleValue ?? row.ruleValue) as Record<
+                  string,
+                  unknown
+                >;
+                const notes = (value.notes as string | undefined) ?? "";
+                const source = (value.source as string | undefined) ?? "";
+                const verifiedBy = (value.verifiedBy as string | undefined) ?? "";
+                const answer = (value.answer as string | undefined) ?? "";
+                const isUnknown = status === "unknown";
+                return (
+                  <div
+                    key={row.id}
+                    className="rounded border border-slate-200 bg-white p-3 text-sm"
+                  >
+                    <div className="flex items-center justify-between mb-2 gap-3">
+                      <div className="font-medium text-slate-800">
+                        {row.attribute.replace(/_/g, " ")}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={status}
+                          onChange={(e) =>
+                            setCellEdit(row.id, {
+                              rowId: row.id,
+                              ruleValue: value,
+                              coverageStatus: e.target.value as CoverageStatus,
+                            })
+                          }
+                          className="h-7 px-2 text-xs rounded border border-slate-300 bg-white"
+                          aria-label={`Coverage for ${row.cptCode} ${row.attribute}`}
+                        >
+                          <option value="covered">Covered</option>
+                          <option value="not_covered">Not covered</option>
+                          <option value="varies">Varies</option>
+                          <option value="unknown">Unknown</option>
+                        </select>
+                        <CoverageBadge status={status} size="sm" />
+                        <span className="text-xs tabular text-slate-500 ml-1">
+                          {(row.confidence * 100).toFixed(0)}%
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          · {edit ? "edited" : row.origin.replace(/_/g, " ")}
+                        </span>
+                      </div>
+                    </div>
+
+                    {answer && (
+                      <p className="text-xs text-slate-700 mb-2">{answer}</p>
+                    )}
+                    {row.sourceQuote && !edit && (
+                      <p className="text-xs italic text-slate-500 mb-2 border-l-2 border-slate-200 pl-2">
+                        &ldquo;{row.sourceQuote}&rdquo;
+                      </p>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                          Notes
+                        </span>
+                        <textarea
+                          rows={2}
+                          value={notes}
+                          onChange={(e) =>
+                            setCellEdit(row.id, {
+                              rowId: row.id,
+                              ruleValue: { ...value, notes: e.target.value },
+                              coverageStatus: status,
+                            })
+                          }
+                          placeholder='e.g. "Confirmed by payer call 12 May 2026"'
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
+                        />
+                      </label>
+                      <div className="space-y-1">
+                        <label className="block">
+                          <span className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                            Source
+                          </span>
+                          <select
+                            value={source}
+                            onChange={(e) =>
+                              setCellEdit(row.id, {
+                                rowId: row.id,
+                                ruleValue: { ...value, source: e.target.value || undefined },
+                                coverageStatus: status,
+                              })
+                            }
+                            className="w-full h-7 px-2 text-xs rounded border border-slate-300 bg-white"
+                          >
+                            <option value="">—</option>
+                            <option value="payer_call">Payer call</option>
+                            <option value="contract">Contract document</option>
+                            <option value="portal">Provider portal</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                            Verified by
+                          </span>
+                          <input
+                            value={verifiedBy}
+                            onChange={(e) =>
+                              setCellEdit(row.id, {
+                                rowId: row.id,
+                                ruleValue: {
+                                  ...value,
+                                  verifiedBy: e.target.value || undefined,
+                                  verifiedAt: e.target.value
+                                    ? new Date().toISOString().slice(0, 10)
+                                    : undefined,
+                                },
+                                coverageStatus: status,
+                              })
+                            }
+                            placeholder="Your name"
+                            className="w-full h-7 px-2 text-xs rounded border border-slate-300 bg-white"
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    {isUnknown && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => flagForAttestation(row)}
+                          disabled={flagBusy[row.id]}
+                          className="text-xs px-2 py-1 rounded border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                        >
+                          {flagBusy[row.id]
+                            ? "Flagging…"
+                            : "🔔 Flag for analyst attestation"}
+                        </button>
+                        <span className="text-[11px] text-slate-500">
+                          Pushes this to /payers/attestations for an analyst to confirm.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
