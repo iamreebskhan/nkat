@@ -3,7 +3,8 @@
  *
  * Core rule-lookup endpoint. Wraps `lookupRule()` in the standard
  * response envelope, enforces auth, and (when source=ai_synthesized)
- * pushes the proposed rule to the analyst queue for review.
+ * persists the synthesized rule into the corpus + flags it for
+ * analyst review. Self-reinforcing knowledge base.
  *
  * Auth: requires `billing.lookup.view` permission.
  *
@@ -14,7 +15,10 @@ import { z } from "zod";
 
 import { fail, ok, parseJson } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+import { pushAttestationRequest } from "@/lib/features/attestations/attestation.service";
+import { ATTRIBUTE_DB_MAP } from "@/lib/features/billing/payer-rule.repository";
 import { lookupRule } from "@/lib/features/billing/rule-lookup.service";
+import { prisma } from "@/lib/db";
 
 const Schema = z.object({
   query: z.string().max(500).optional(),
@@ -51,8 +55,18 @@ export async function POST(req: NextRequest): Promise<Response> {
   // and AI-availability fallbacks. The route is just plumbing + audit.
   try {
     const result = await lookupRule(body);
-    // TODO(phase-6): if result.source === 'ai_synthesized', insert a
-    // PayerRule row with confidence=0.4 + flag in analyst queue.
+
+    // Self-reinforcing corpus (closes the long-standing phase-6 TODO):
+    // when the engine synthesizes an answer from RAG, persist it as a
+    // low-confidence payer_rule + queue it for an analyst to confirm.
+    // Next lookup with the same key hits the SQL path → no AI cost,
+    // same answer, faster. If the analyst voids it, the rule expires.
+    if (result.status === "ok" && result.source === "ai_synthesized") {
+      await persistSynthesizedRule(result, session.orgId).catch((e) => {
+        console.warn("ai_synthesized persist failed (non-fatal):", e);
+      });
+    }
+
     return ok(result);
   } catch (err) {
     // Most errors here are PHI-detection refusals or upstream API
@@ -60,4 +74,77 @@ export async function POST(req: NextRequest): Promise<Response> {
     const message = err instanceof Error ? err.message : "Rule lookup failed.";
     return fail(message, { status: 422 });
   }
+}
+
+/**
+ * Side-effect: write a payer_rule (confidence=0.4, created_by='ai')
+ * referencing the citation's source_document, and push the same key
+ * to the analyst attestation queue so a human verifies before it gets
+ * promoted to higher confidence.
+ *
+ * Best-effort: failures are logged but don't surface to the caller —
+ * the user already has their answer.
+ */
+async function persistSynthesizedRule(
+  result: Awaited<ReturnType<typeof lookupRule>>,
+  orgId: string,
+): Promise<void> {
+  if (result.status !== "ok" || result.source !== "ai_synthesized") return;
+  if (!result.citation) return;
+  if (!result.resolved.payerId || !result.resolved.state || !result.resolved.cptCode) return;
+
+  // Look up the source_document by the citation URL — required FK.
+  const url = result.citation.documentUrl;
+  if (!url) return;
+  const docs = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM source_document WHERE url = ${url} LIMIT 1
+  `;
+  if (docs.length === 0) return;
+
+  const dbAttr =
+    ATTRIBUTE_DB_MAP[result.resolved.attribute as keyof typeof ATTRIBUTE_DB_MAP] ??
+    result.resolved.attribute;
+
+  // Don't double-insert if we've already persisted for this exact key.
+  const dup = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM payer_rule
+     WHERE payer_id = ${result.resolved.payerId}::uuid
+       AND state    = ${result.resolved.state}
+       AND code     = ${result.resolved.cptCode}
+       AND attribute = ${dbAttr}
+       AND created_by = 'ai'
+       AND expiration_date IS NULL
+     LIMIT 1
+  `;
+  if (dup.length > 0) return;
+
+  await prisma.$executeRaw`
+    INSERT INTO payer_rule (
+      payer_id, state, product_line, code, attribute,
+      value, coverage_status, confidence,
+      effective_date, expiration_date,
+      source_doc_id, source_quote,
+      created_by
+    ) VALUES (
+      ${result.resolved.payerId}::uuid, ${result.resolved.state}, 'commercial',
+      ${result.resolved.cptCode}, ${dbAttr},
+      ${JSON.stringify({ answer: result.answer })}::jsonb,
+      ${result.coverageStatus}, 0.40,
+      CURRENT_DATE, NULL,
+      ${docs[0]!.id}::uuid,
+      ${result.citation.verbatimQuote},
+      'ai'
+    )
+  `;
+
+  // Queue it for analyst review so confidence can be bumped after
+  // a human confirms. pushAttestationRequest is org-scoped.
+  await pushAttestationRequest({
+    orgId,
+    payerId: result.resolved.payerId,
+    state: result.resolved.state,
+    cptCode: result.resolved.cptCode,
+    attribute: result.resolved.attribute ?? "covered",
+    sourceQuery: `AI-synthesized rule, conf=0.4, cited from ${result.citation.documentName}`,
+  });
 }
