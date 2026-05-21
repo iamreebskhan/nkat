@@ -97,7 +97,9 @@ export async function login(input: LoginInput): Promise<LoginResult> {
     >`
       SELECT m.org_id, m.role, o.status AS org_status
       FROM org_member m JOIN org o ON o.id = m.org_id
-      WHERE m.user_id = ${user.id}::uuid AND m.status = 'active'
+      WHERE m.user_id = ${user.id}::uuid
+        AND m.status = 'active'
+        AND o.deleted_at IS NULL
       ORDER BY m.joined_at ASC
       LIMIT 1
     `,
