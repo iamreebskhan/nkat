@@ -57,12 +57,14 @@ export async function login(input: LoginInput): Promise<LoginResult> {
       status: string;
     }[]
   >`
-    SELECT id, email, password_hash, status
+    SELECT id, email, password_hash, status, is_platform_admin
     FROM app_user
     WHERE email = ${input.email}::citext
     LIMIT 1
   `;
-  const user = rows[0];
+  const user = rows[0] as
+    | { id: string; email: string; password_hash: string | null; status: string; is_platform_admin: boolean }
+    | undefined;
   // Always run a bcrypt compare even on no-such-user to keep timing constant.
   const dummyHash = "$2a$12$AAAAAAAAAAAAAAAAAAAAAOaaKvg5j/Y9JZ9Gq3pXk4t5bHJX/Vbpu";
   const ok = await bcrypt.compare(input.password, user?.password_hash ?? dummyHash);
@@ -123,7 +125,12 @@ export async function login(input: LoginInput): Promise<LoginResult> {
     session: {
       userId: user.id,
       orgId: member.org_id,
-      role: mapDbRoleToSession(member.role),
+      // is_platform_admin trumps the org-member role mapping so the
+      // operator (Mark) can hit /api/admin/* + /admin/* without
+      // belonging to any specific org's role.
+      role: user.is_platform_admin
+        ? "platform_admin"
+        : mapDbRoleToSession(member.role),
       permissions,
       email: user.email,
     },
