@@ -1,0 +1,83 @@
+# Pallio scheduled crons — fires the production CRON_SECRET-protected
+# endpoints on a real cadence so Sources 1 & 2 (ingestion) and the
+# payer-rule alerts actually run automatically.
+#
+# Required Actions secrets (Settings → Secrets and variables →
+# Actions):
+#   PALLIO_BASE_URL   e.g. https://app.pallio.io
+#   PALLIO_CRON_SECRET  matches /etc/pallio/env CRON_SECRET on the VPS
+#
+# Both jobs skip gracefully when the secrets aren't set so a fork
+# never receives unwanted production traffic.
+name: scheduled crons
+
+on:
+  # 03:15 UTC daily — gentle window, off prime hours for everyone.
+  schedule:
+    - cron: "15 3 * * *"
+  # Manual fire button on the Actions tab.
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which cron to run (default: both)"
+        required: false
+        type: choice
+        default: both
+        options: ["both", "ingest-documents", "payer-rule-alerts"]
+
+# Disable concurrent runs of the same workflow — if a run is slow,
+# the next scheduled tick should wait, not pile up.
+concurrency:
+  group: scheduled-crons
+  cancel-in-progress: false
+
+jobs:
+  ingest-documents:
+    name: ingest-documents (re-pull ingestion sources)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'schedule' || github.event.inputs.job == 'both' || github.event.inputs.job == 'ingest-documents' }}
+    steps:
+      - name: Hit /api/cron/ingest-documents
+        env:
+          BASE: ${{ secrets.PALLIO_BASE_URL }}
+          SECRET: ${{ secrets.PALLIO_CRON_SECRET }}
+        run: |
+          if [ -z "$BASE" ] || [ -z "$SECRET" ]; then
+            echo "::warning::PALLIO_BASE_URL or PALLIO_CRON_SECRET not set — skipping. Add them to Actions secrets to activate."
+            exit 0
+          fi
+          # 8-minute timeout — ingestion + Claude extraction is slow.
+          curl --max-time 500 -sS -o /tmp/r.json -w 'HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "x-cron-secret: $SECRET" \
+            "$BASE/api/cron/ingest-documents"
+          cat /tmp/r.json | head -c 600; echo
+          # Fail the job if the cron route itself errored (HTTP 5xx).
+          code=$(jq -r '.success' /tmp/r.json 2>/dev/null || echo "")
+          if [ "$code" != "true" ]; then
+            echo "::error::cron route did not return success:true"
+            exit 1
+          fi
+
+  payer-rule-alerts:
+    name: payer-rule-alerts (notify orgs of rule changes)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'schedule' || github.event.inputs.job == 'both' || github.event.inputs.job == 'payer-rule-alerts' }}
+    steps:
+      - name: Hit /api/cron/payer-rule-alerts
+        env:
+          BASE: ${{ secrets.PALLIO_BASE_URL }}
+          SECRET: ${{ secrets.PALLIO_CRON_SECRET }}
+        run: |
+          if [ -z "$BASE" ] || [ -z "$SECRET" ]; then
+            echo "::warning::PALLIO_BASE_URL or PALLIO_CRON_SECRET not set — skipping."
+            exit 0
+          fi
+          curl --max-time 120 -sS -o /tmp/r.json -w 'HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "x-cron-secret: $SECRET" \
+            "$BASE/api/cron/payer-rule-alerts"
+          cat /tmp/r.json | head -c 600; echo
+          code=$(jq -r '.success' /tmp/r.json 2>/dev/null || echo "")
+          if [ "$code" != "true" ]; then
+            echo "::error::cron route did not return success:true"
+            exit 1
+          fi
