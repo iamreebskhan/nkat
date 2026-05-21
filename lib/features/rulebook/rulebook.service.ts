@@ -54,8 +54,30 @@ interface RowRow {
   confidence: string | number;
   source_payer_rule_id: string | null;
   source_quote: string | null;
+  source_created_by: string | null;
   last_edited_by_user_id: string | null;
   last_edited_at: Date | null;
+}
+
+/**
+ * Derive a stable source-kind enum from (org_rulebook_row.origin,
+ * payer_rule.created_by). Used by the UI for a one-glance "where did
+ * this rule come from?" badge.
+ */
+function deriveSourceKind(
+  origin: RowRow["origin"],
+  createdBy: string | null,
+): "crawler" | "analyst" | "ai" | "org" | "manual" | "unknown" {
+  // Org-side provenance trumps the underlying payer_rule.
+  if (origin === "org_upload") return "org";
+  if (origin === "org_override") return "org";
+  if (origin === "analyst") return "analyst";
+  // origin === 'source' — fall through to the linked payer_rule.
+  if (!createdBy) return "unknown";
+  if (createdBy === "ai") return "ai";
+  if (createdBy.startsWith("crawler:")) return "crawler";
+  if (createdBy.startsWith("analyst:")) return "analyst";
+  return "manual";
 }
 
 function rowToView(r: RowRow): RulebookRowView {
@@ -75,6 +97,8 @@ function rowToView(r: RowRow): RulebookRowView {
     confidence: typeof r.confidence === "string" ? parseFloat(r.confidence) : r.confidence,
     sourcePayerRuleId: r.source_payer_rule_id,
     sourceQuote: r.source_quote,
+    sourceCreatedBy: r.source_created_by,
+    sourceKind: deriveSourceKind(r.origin, r.source_created_by),
     lastEditedByUserId: r.last_edited_by_user_id,
     lastEditedAt: r.last_edited_at?.toISOString() ?? null,
   };
@@ -308,10 +332,12 @@ async function readRulebook(args: {
       r.coverage_status, r.origin,
       r.confidence::text AS confidence,
       r.source_payer_rule_id, r.source_quote,
+      pr.created_by AS source_created_by,
       r.last_edited_by_user_id, r.last_edited_at
     FROM org_rulebook_row r
     LEFT JOIN payer p ON p.id = r.payer_id
     LEFT JOIN code  c ON c.code = r.cpt_code
+    LEFT JOIN payer_rule pr ON pr.id = r.source_payer_rule_id
     WHERE r.rulebook_id = ${rb[0].id}::uuid
     ORDER BY r.state, p.name NULLS LAST, r.cpt_code, r.attribute
   `;

@@ -499,9 +499,11 @@ function CptRows(props: {
                         <span className="text-xs tabular text-slate-500 ml-1">
                           {(row.confidence * 100).toFixed(0)}%
                         </span>
-                        <span className="text-xs text-slate-500">
-                          · {edit ? "edited" : row.origin.replace(/_/g, " ")}
-                        </span>
+                        {edit ? (
+                          <span className="text-xs text-slate-500">· edited</span>
+                        ) : (
+                          <SourceKindBadge kind={row.sourceKind} />
+                        )}
                       </div>
                     </div>
 
@@ -815,5 +817,31 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Tiny pill showing which of the 4 corpus feeders sourced this rule.
+ * Lets a user tell at a glance: was this from an official document
+ * ingest (crawler), an analyst phone call, AI synthesis, or their
+ * own org's manual entry? Maps to the documented confidence ladder.
+ */
+function SourceKindBadge({ kind }: { kind: RulebookRowView["sourceKind"] }) {
+  const meta: Record<RulebookRowView["sourceKind"], { label: string; cls: string; title: string }> = {
+    crawler: { label: "official doc", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200", title: "Extracted from a CMS / payer public policy URL (high confidence)" },
+    analyst: { label: "analyst", cls: "bg-amber-50 text-amber-800 ring-amber-200", title: "Confirmed via analyst payer call (medium confidence)" },
+    ai: { label: "AI · review", cls: "bg-sky-50 text-sky-700 ring-sky-200", title: "AI-synthesized from a related document — pending analyst review" },
+    org: { label: "your org", cls: "bg-indigo-50 text-indigo-700 ring-indigo-200", title: "Entered or uploaded by your organization" },
+    manual: { label: "analyst (manual)", cls: "bg-amber-50 text-amber-700 ring-amber-200", title: "Manually entered by an analyst" },
+    unknown: { label: "unsourced", cls: "bg-slate-100 text-slate-600 ring-slate-200", title: "No linked source — likely a placeholder; click to attest or edit" },
+  };
+  const m = meta[kind];
+  return (
+    <span
+      title={m.title}
+      className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded ring-1 ring-inset ${m.cls}`}
+    >
+      {m.label}
+    </span>
   );
 }
