@@ -142,7 +142,12 @@ export async function createAttestation(args: {
     // attestation also writes a payer_rule row so it actually surfaces
     // in rule lookups (without this, attested rules sat in
     // analyst_attestation forever and the engine never saw them).
-    await mirrorAttestationToPayerRule(tx, {
+    // Returns the metadata createAttestation needs to refresh the
+    // org_rulebook_row in a separate (post-commit) transaction so the
+    // FK from org_rulebook_row.source_payer_rule_id → payer_rule.id
+    // is satisfied (the rule has to be COMMITTED before the
+    // cross-org breakglass UPDATE can see it).
+    const mirror = await mirrorAttestationToPayerRule(tx, {
       attestationId,
       payerId: payload.payerId,
       state: payload.state,
@@ -157,7 +162,15 @@ export async function createAttestation(args: {
       attestedByUserId,
     });
 
-    return { id: attestationId };
+    return { id: attestationId, mirror };
+  }).then(async ({ id, mirror }) => {
+    // POST-COMMIT: now the new payer_rule row is visible to other
+    // connections. Run the cross-org rulebook refresh via its own
+    // breakglass tx — FK to payer_rule.id is satisfied.
+    if (mirror) {
+      await refreshOrgRulebookRowsForRule(mirror);
+    }
+    return { id };
   });
 }
 
@@ -190,7 +203,17 @@ async function mirrorAttestationToPayerRule(
     expiresAt: string;
     attestedByUserId: string;
   },
-): Promise<void> {
+): Promise<{
+  ruleId: string;
+  payerId: string;
+  state: string;
+  cptCode: string;
+  dbAttribute: string;
+  coverageStatus: CoverageStatus;
+  ruleValue: Record<string, unknown>;
+  confidence: number;
+  sourceQuote: string | null;
+}> {
   const dbAttribute =
     ATTRIBUTE_DB_MAP[args.attributeApi as keyof typeof ATTRIBUTE_DB_MAP] ??
     args.attributeApi;
@@ -254,9 +277,9 @@ async function mirrorAttestationToPayerRule(
     RETURNING id
   `;
 
-  // Auto-refresh every org's rulebook so the display matches what
-  // the lookup engine will now return. Cross-org by design.
-  await refreshOrgRulebookRowsForRule({
+  // Return the metadata the caller needs to run the cross-org
+  // rulebook refresh AFTER this withOrgContext tx commits.
+  return {
     ruleId: inserted[0]!.id,
     payerId: args.payerId,
     state: args.state,
@@ -266,7 +289,7 @@ async function mirrorAttestationToPayerRule(
     ruleValue: args.ruleValue,
     confidence: 0.6,
     sourceQuote: args.sourceQuote || null,
-  });
+  };
 }
 
 export async function getAttestation(args: {
