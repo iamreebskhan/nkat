@@ -93,13 +93,20 @@ async function persistSynthesizedRule(
   if (!result.citation) return;
   if (!result.resolved.payerId || !result.resolved.state || !result.resolved.cptCode) return;
 
-  // Look up the source_document by the citation URL — required FK.
-  const url = result.citation.documentUrl;
-  if (!url) return;
-  const docs = await prisma.$queryRaw<{ id: string }[]>`
-    SELECT id FROM source_document WHERE url = ${url} LIMIT 1
-  `;
-  if (docs.length === 0) return;
+  // Prefer the source_doc_id the engine carried from the top RAG
+  // chunk; fall back to a URL lookup if (legacy) callers don't carry
+  // it. Without one, we can't satisfy payer_rule.source_doc_id NOT
+  // NULL, so we skip the persist rather than write a dangling row.
+  let sourceDocId = result.sourceDocId ?? null;
+  if (!sourceDocId) {
+    const url = result.citation.documentUrl;
+    if (!url) return;
+    const docs = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM source_document WHERE url = ${url} LIMIT 1
+    `;
+    if (docs.length === 0) return;
+    sourceDocId = docs[0]!.id;
+  }
 
   const dbAttr =
     ATTRIBUTE_DB_MAP[result.resolved.attribute as keyof typeof ATTRIBUTE_DB_MAP] ??
@@ -131,7 +138,7 @@ async function persistSynthesizedRule(
       ${JSON.stringify({ answer: result.answer })}::jsonb,
       ${result.coverageStatus}, 0.40,
       CURRENT_DATE, NULL,
-      ${docs[0]!.id}::uuid,
+      ${sourceDocId}::uuid,
       ${result.citation.verbatimQuote},
       'ai'
     )
