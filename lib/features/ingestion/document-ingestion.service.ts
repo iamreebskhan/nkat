@@ -26,8 +26,12 @@ import {
   type ExtractedRule,
 } from "@/lib/ai/document-rule-extractor";
 import { withBreakglass } from "@/lib/db";
-import { ATTRIBUTE_DB_MAP } from "@/lib/features/billing/payer-rule.repository";
+import {
+  ATTRIBUTE_DB_MAP,
+  type CoverageStatus,
+} from "@/lib/features/billing/payer-rule.repository";
 import { chunkText } from "@/lib/features/documents/extractor";
+import { refreshOrgRulebookRowsForRule } from "@/lib/features/rulebook/rulebook.service";
 
 /**
  * source_document.document_type values that map to a confidence band
@@ -170,6 +174,14 @@ export async function ingestDocumentFromUrl(
   // 6. Insert payer_rule rows for everything extracted.
   const confidence = CONFIDENCE_BY_TYPE[args.documentType] ?? 0.7;
   let ruleCount = 0;
+  const newPayerRuleIds: Array<{
+    ruleId: string;
+    cptCode: string;
+    dbAttribute: string;
+    coverageStatus: CoverageStatus;
+    answer: string;
+    sourceQuote: string;
+  }> = [];
   if (extracted.length > 0 && args.payerId && args.state) {
     await withBreakglass(async (tx) => {
       for (const r of extracted) {
@@ -185,7 +197,7 @@ export async function ingestDocumentFromUrl(
              AND attribute = ${dbAttr}
              AND expiration_date IS NULL
         `;
-        await tx.$executeRaw`
+        const ins = await tx.$queryRaw<{ id: string }[]>`
           INSERT INTO payer_rule (
             payer_id, state, product_line, code, attribute,
             value, coverage_status, confidence,
@@ -201,10 +213,36 @@ export async function ingestDocumentFromUrl(
             ${docId}::uuid, ${r.sourceQuote},
             ${"crawler:" + args.documentType}
           )
+          RETURNING id
         `;
+        newPayerRuleIds.push({
+          ruleId: ins[0]!.id,
+          cptCode: r.cptCode,
+          dbAttribute: dbAttr,
+          coverageStatus: r.coverageStatus,
+          answer: r.answer,
+          sourceQuote: r.sourceQuote,
+        });
         ruleCount++;
       }
     }, "ingestion: write payer_rule rows");
+
+    // Refresh org rulebooks for each inserted rule (cross-org).
+    // Done outside the breakglass loop because refresh uses its own
+    // breakglass session — keeps the writes scoped.
+    for (const n of newPayerRuleIds) {
+      await refreshOrgRulebookRowsForRule({
+        ruleId: n.ruleId,
+        payerId: args.payerId!,
+        state: args.state!,
+        cptCode: n.cptCode,
+        dbAttribute: n.dbAttribute,
+        coverageStatus: n.coverageStatus,
+        ruleValue: { answer: n.answer },
+        confidence,
+        sourceQuote: n.sourceQuote,
+      });
+    }
   }
 
   // 7. Chunk + embed for RAG fallback (only for non-PDF text — PDFs

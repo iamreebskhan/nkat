@@ -8,7 +8,11 @@ import { createHash } from "node:crypto";
 
 import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
-import { ATTRIBUTE_DB_MAP } from "@/lib/features/billing/payer-rule.repository";
+import {
+  ATTRIBUTE_DB_MAP,
+  type CoverageStatus,
+} from "@/lib/features/billing/payer-rule.repository";
+import { refreshOrgRulebookRowsForRule } from "@/lib/features/rulebook/rulebook.service";
 import { defaultExpiry } from "./attestation-pure";
 import type {
   AttestationLifecycle,
@@ -230,7 +234,7 @@ async function mirrorAttestationToPayerRule(
        AND expiration_date IS NULL
   `;
 
-  await tx.$executeRaw`
+  const inserted = await tx.$queryRaw<{ id: string }[]>`
     INSERT INTO payer_rule (
       payer_id, state, product_line, code, attribute,
       value, coverage_status, confidence,
@@ -241,13 +245,28 @@ async function mirrorAttestationToPayerRule(
       ${args.payerId}::uuid, ${args.state}, 'commercial',
       ${args.cptCode}, ${dbAttribute},
       ${JSON.stringify(args.ruleValue)}::jsonb,
-      ${args.coverageStatus}, 0.60,
+      ${args.coverageStatus as CoverageStatus}, 0.60,
       ${args.callDate}::date, ${args.expiresAt}::date,
       ${sourceDocId}::uuid,
       ${args.sourceQuote || null},
       ${"analyst:" + args.attestedByUserId}
     )
+    RETURNING id
   `;
+
+  // Auto-refresh every org's rulebook so the display matches what
+  // the lookup engine will now return. Cross-org by design.
+  await refreshOrgRulebookRowsForRule({
+    ruleId: inserted[0]!.id,
+    payerId: args.payerId,
+    state: args.state,
+    cptCode: args.cptCode,
+    dbAttribute,
+    coverageStatus: args.coverageStatus as CoverageStatus,
+    ruleValue: args.ruleValue,
+    confidence: 0.6,
+    sourceQuote: args.sourceQuote || null,
+  });
 }
 
 export async function getAttestation(args: {
