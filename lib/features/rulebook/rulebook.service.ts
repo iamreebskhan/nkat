@@ -13,7 +13,7 @@
  * produce the side-by-side view. The org admin resolves each row,
  * then we persist the merged set.
  */
-import { withOrgContext } from "@/lib/db";
+import { withBreakglass, withOrgContext } from "@/lib/db";
 import { hasAmaLicense } from "@/lib/features/billing/code.service";
 import { compareRulebooks } from "./rulebook-pure";
 import type {
@@ -384,6 +384,51 @@ export async function applyEdits(args: {
     }
   });
   return { updated: n };
+}
+
+/**
+ * Auto-refresh every org's rulebook_row that points at the same
+ * (payer, state, code, attribute) key as a freshly-written
+ * payer_rule. CROSS-ORG by design — payer_rule is global, so when a
+ * new rule lands (analyst attestation, ingestion engine, AI persist)
+ * every org's rulebook should pick up the change without a manual
+ * Re-generate. Uses breakglass to bypass tenant RLS.
+ *
+ * Skipped for rows with origin='org_override' (the user explicitly
+ * customized that cell; we never silently overwrite local edits).
+ *
+ * Returns the number of org rulebook rows refreshed across all orgs.
+ */
+export async function refreshOrgRulebookRowsForRule(args: {
+  ruleId: string;
+  payerId: string;
+  state: string;
+  /** DB-enum attribute name (already mapped via ATTRIBUTE_DB_MAP). */
+  dbAttribute: string;
+  cptCode: string;
+  coverageStatus: CoverageStatus;
+  ruleValue: Record<string, unknown>;
+  confidence: number;
+  sourceQuote: string | null;
+}): Promise<number> {
+  return withBreakglass(async (tx) => {
+    const updated = await tx.$executeRaw`
+      UPDATE org_rulebook_row SET
+        source_payer_rule_id = ${args.ruleId}::uuid,
+        coverage_status = ${args.coverageStatus},
+        rule_value = ${JSON.stringify(args.ruleValue)}::jsonb,
+        source_quote = ${args.sourceQuote},
+        confidence = ${args.confidence},
+        origin = 'source',
+        updated_at = now()
+       WHERE payer_id = ${args.payerId}::uuid
+         AND state = ${args.state}
+         AND cpt_code = ${args.cptCode}
+         AND attribute = ${args.dbAttribute}
+         AND origin <> 'org_override'
+    `;
+    return Number(updated);
+  }, "refresh org_rulebook_row from payer_rule change");
 }
 
 /**

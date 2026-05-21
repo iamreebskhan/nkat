@@ -18,6 +18,7 @@ import { requireAuth } from "@/lib/auth";
 import { pushAttestationRequest } from "@/lib/features/attestations/attestation.service";
 import { ATTRIBUTE_DB_MAP } from "@/lib/features/billing/payer-rule.repository";
 import { lookupRule } from "@/lib/features/billing/rule-lookup.service";
+import { refreshOrgRulebookRowsForRule } from "@/lib/features/rulebook/rulebook.service";
 import { prisma } from "@/lib/db";
 
 const Schema = z.object({
@@ -125,7 +126,7 @@ async function persistSynthesizedRule(
   `;
   if (dup.length > 0) return;
 
-  await prisma.$executeRaw`
+  const ins = await prisma.$queryRaw<{ id: string }[]>`
     INSERT INTO payer_rule (
       payer_id, state, product_line, code, attribute,
       value, coverage_status, confidence,
@@ -142,7 +143,24 @@ async function persistSynthesizedRule(
       ${result.citation.verbatimQuote},
       'ai'
     )
+    RETURNING id
   `;
+
+  // Cross-org rulebook refresh — every org with this (payer/state/code)
+  // cell now reflects the AI-synthesized data instead of an "unknown"
+  // placeholder. Lookups already query payer_rule directly so they
+  // would see the new row; this keeps the rulebook display in sync.
+  await refreshOrgRulebookRowsForRule({
+    ruleId: ins[0]!.id,
+    payerId: result.resolved.payerId,
+    state: result.resolved.state,
+    cptCode: result.resolved.cptCode,
+    dbAttribute: dbAttr,
+    coverageStatus: result.coverageStatus,
+    ruleValue: { answer: result.answer },
+    confidence: 0.4,
+    sourceQuote: result.citation.verbatimQuote,
+  });
 
   // Queue it for analyst review so confidence can be bumped after
   // a human confirms. pushAttestationRequest is org-scoped.
