@@ -59,6 +59,24 @@ export interface RulebookRowView {
   confidence: number;
   sourcePayerRuleId: string | null;
   sourceQuote: string | null;
+  /**
+   * Raw `payer_rule.created_by` text for the underlying source rule,
+   * if any. Format: 'crawler:<doc_type>' | 'analyst:<userId>' | 'ai'
+   * | analyst-email | 'test@…' for seed rows.
+   */
+  sourceCreatedBy: string | null;
+  /**
+   * Server-derived provenance bucket. One of:
+   *   - 'crawler'  — payer_rule from CMS / payer URL ingestion
+   *   - 'analyst'  — analyst-attested call
+   *   - 'ai'       — AI-synthesized + auto-persisted (low confidence)
+   *   - 'org'      — Path B upload or inline org override
+   *   - 'manual'   — payer_rule with an analyst-email created_by
+   *                  (legacy / explicit analyst entry)
+   *   - 'unknown'  — origin='source' with no linked payer_rule (rare;
+   *                  shouldn't happen post-regenerate)
+   */
+  sourceKind: "crawler" | "analyst" | "ai" | "org" | "manual" | "unknown";
   lastEditedByUserId: string | null;
   lastEditedAt: string | null;
 }
