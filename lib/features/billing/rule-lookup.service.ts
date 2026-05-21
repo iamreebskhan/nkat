@@ -76,6 +76,14 @@ export interface LookupResult {
   /** 0–1; 1.0 = official payer PDF, 0.0 = no source. */
   confidence: number;
   citation: LookupCitation | null;
+  /**
+   * When source='ai_synthesized', the source_document id of the top
+   * RAG chunk that supports the answer. Used by the lookup route to
+   * persist the synthesized rule with a valid source_doc_id FK
+   * (citation.documentUrl alone isn't reliable — Claude only sees
+   * chunk content, not URLs).
+   */
+  sourceDocId?: string | null;
   /** Fields the caller should ask the user to fill in (if any). */
   missing?: ("payer" | "state" | "cptCode" | "attribute")[];
   /** Echoes back the resolved parameters for the UI to show. */
@@ -238,6 +246,10 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
   }
 
   // Step 6 — caller persists the synthesized rule for analyst review.
+  // Carry the top retrieval chunk's source_doc_id so the route can
+  // INSERT payer_rule.source_doc_id without a fragile URL lookup
+  // (Claude only saw chunk content, not URLs, so synth.citation
+  // documentUrl is unreliable).
   return {
     status: "ok",
     source: "ai_synthesized",
@@ -251,6 +263,7 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
       verbatimQuote: synth.citation.verbatimQuote,
       page: null,
     },
+    sourceDocId: chunks[0]?.docId ?? null,
     resolved: {
       payerId: fullPayerId,
       state: fullState,
