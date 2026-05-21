@@ -41,6 +41,7 @@ export async function listAllOrgs(reason: string): Promise<AdminOrgRow[]> {
         (SELECT COUNT(*) FROM superbill WHERE org_id = o.id) AS superbill_count,
         (SELECT COUNT(*) FROM superbill_denial WHERE org_id = o.id) AS denial_count
       FROM org o
+      WHERE o.deleted_at IS NULL
       ORDER BY o.created_at DESC
     `;
     return rows.map((r) => ({
