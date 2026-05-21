@@ -113,7 +113,10 @@ async function persistSynthesizedRule(
     ATTRIBUTE_DB_MAP[result.resolved.attribute as keyof typeof ATTRIBUTE_DB_MAP] ??
     result.resolved.attribute;
 
-  // Don't double-insert if we've already persisted for this exact key.
+  // Don't double-insert the global payer_rule if we've already
+  // persisted for this exact key. We still queue an attestation
+  // request for THIS org below — each tenant gets their own gap
+  // flagged even when the global rule already exists.
   const dup = await prisma.$queryRaw<{ id: string }[]>`
     SELECT id FROM payer_rule
      WHERE payer_id = ${result.resolved.payerId}::uuid
@@ -124,9 +127,10 @@ async function persistSynthesizedRule(
        AND expiration_date IS NULL
      LIMIT 1
   `;
-  if (dup.length > 0) return;
+  const alreadyPersisted = dup.length > 0;
 
-  const ins = await prisma.$queryRaw<{ id: string }[]>`
+  if (!alreadyPersisted) {
+    const ins = await prisma.$queryRaw<{ id: string }[]>`
     INSERT INTO payer_rule (
       payer_id, state, product_line, code, attribute,
       value, coverage_status, confidence,
@@ -146,24 +150,28 @@ async function persistSynthesizedRule(
     RETURNING id
   `;
 
-  // Cross-org rulebook refresh — every org with this (payer/state/code)
-  // cell now reflects the AI-synthesized data instead of an "unknown"
-  // placeholder. Lookups already query payer_rule directly so they
-  // would see the new row; this keeps the rulebook display in sync.
-  await refreshOrgRulebookRowsForRule({
-    ruleId: ins[0]!.id,
-    payerId: result.resolved.payerId,
-    state: result.resolved.state,
-    cptCode: result.resolved.cptCode,
-    dbAttribute: dbAttr,
-    coverageStatus: result.coverageStatus,
-    ruleValue: { answer: result.answer },
-    confidence: 0.4,
-    sourceQuote: result.citation.verbatimQuote,
-  });
+    // Cross-org rulebook refresh — every org with this (payer/state/code)
+    // cell now reflects the AI-synthesized data instead of an "unknown"
+    // placeholder. Lookups already query payer_rule directly so they
+    // would see the new row; this keeps the rulebook display in sync.
+    await refreshOrgRulebookRowsForRule({
+      ruleId: ins[0]!.id,
+      payerId: result.resolved.payerId,
+      state: result.resolved.state,
+      cptCode: result.resolved.cptCode,
+      dbAttribute: dbAttr,
+      coverageStatus: result.coverageStatus,
+      ruleValue: { answer: result.answer },
+      confidence: 0.4,
+      sourceQuote: result.citation.verbatimQuote,
+    });
+  }
 
-  // Queue it for analyst review so confidence can be bumped after
-  // a human confirms. pushAttestationRequest is org-scoped.
+  // Queue an attestation request FOR THIS ORG (even when the global
+  // rule was already persisted by a prior session). Every tenant
+  // should see the gap in their queue and be able to confirm or
+  // re-confirm it independently. analyst_attestation_request is
+  // tenant-scoped via RLS so no leak across orgs.
   await pushAttestationRequest({
     orgId,
     payerId: result.resolved.payerId,
