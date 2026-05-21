@@ -106,6 +106,7 @@ export const MANIFESTS: Record<RoleKey, Manifest> = {
       { label: "Organizations", href: "/admin/orgs", icon: "Building2" },
       { label: "Compliance", href: "/admin/compliance", icon: "BadgeCheck" },
       { label: "Platform health", href: "/admin/health", icon: "LineChart" },
+      { label: "Ingestion sources", href: "/admin/ingestion-sources", icon: "FileStack" },
       { label: "Settings", href: "/admin/settings", icon: "Settings" },
     ],
     cards: ["compliance", "platform_kpis"],
