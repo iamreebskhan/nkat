@@ -59,6 +59,7 @@ export async function createPatient(args: {
         insurance_effective_date, insurance_termination_date,
         primary_diagnosis_icd10, referring_physician_npi,
         referring_physician_name, palliative_referral_reason,
+        acuity, acuity_updated_at, acuity_updated_by_user_id,
         status, created_by_user_id
       ) VALUES (
         ${orgId}::uuid, ${d.firstName}, ${d.lastName}, ${d.dateOfBirth}::date,
@@ -69,6 +70,9 @@ export async function createPatient(args: {
         ${i.insuranceEffectiveDate ?? null}::date, ${i.insuranceTerminationDate ?? null}::date,
         ${c.primaryDiagnosisIcd10 ?? null}, ${c.referringPhysicianNpi ?? null},
         ${c.referringPhysicianName ?? null}, ${c.palliativeReferralReason ?? null},
+        ${c.acuity ?? null},
+        ${c.acuity ? new Date() : null},
+        ${c.acuity ? createdByUserId : null}::uuid,
         'active', ${createdByUserId}::uuid
       )
       RETURNING id
@@ -92,6 +96,7 @@ interface PatientRow {
   primary_payer_id: string | null;
   primary_member_id: string | null;
   primary_diagnosis_icd10: string | null;
+  acuity: PatientView["acuity"];
   status: PatientStatus;
   created_at: Date;
   updated_at: Date;
@@ -112,6 +117,7 @@ function rowToView(row: PatientRow): PatientView {
     primaryPayerId: row.primary_payer_id,
     primaryMemberId: row.primary_member_id,
     primaryDiagnosisIcd10: row.primary_diagnosis_icd10,
+    acuity: row.acuity,
     status: row.status,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -127,7 +133,7 @@ export async function getPatient(args: {
       SELECT id, first_name, last_name, date_of_birth,
              sex_assigned_at_birth, address_line_1, city, state, zip, phone,
              primary_payer_id, primary_member_id,
-             primary_diagnosis_icd10, status, created_at, updated_at
+             primary_diagnosis_icd10, acuity, status, created_at, updated_at
       FROM patient
       WHERE id = ${args.id}::uuid
       LIMIT 1
@@ -166,7 +172,7 @@ export async function listPatients(
           SELECT id, first_name, last_name, date_of_birth,
                  sex_assigned_at_birth, address_line_1, city, state, zip, phone,
                  primary_payer_id, primary_member_id,
-                 primary_diagnosis_icd10, status, created_at, updated_at
+                 primary_diagnosis_icd10, acuity, status, created_at, updated_at
           FROM patient
           WHERE status = ${status}
             AND (
@@ -174,17 +180,23 @@ export async function listPatients(
               OR lower(last_name) LIKE ${searchPattern}
               OR lower(first_name || ' ' || last_name) LIKE ${searchPattern}
             )
-          ORDER BY last_name ASC, first_name ASC
+          ORDER BY
+            CASE acuity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+                       WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END ASC,
+            last_name ASC, first_name ASC
           LIMIT ${limit} OFFSET ${offset}
         `
       : await tx.$queryRaw<PatientRow[]>`
           SELECT id, first_name, last_name, date_of_birth,
                  sex_assigned_at_birth, address_line_1, city, state, zip, phone,
                  primary_payer_id, primary_member_id,
-                 primary_diagnosis_icd10, status, created_at, updated_at
+                 primary_diagnosis_icd10, acuity, status, created_at, updated_at
           FROM patient
           WHERE status = ${status}
-          ORDER BY last_name ASC, first_name ASC
+          ORDER BY
+            CASE acuity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+                       WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END ASC,
+            last_name ASC, first_name ASC
           LIMIT ${limit} OFFSET ${offset}
         `;
     const totals = await tx.$queryRaw<{ n: bigint }[]>`
@@ -210,7 +222,7 @@ export async function searchPatients(args: {
       SELECT id, first_name, last_name, date_of_birth,
              sex_assigned_at_birth, address_line_1, city, state, zip, phone,
              primary_payer_id, primary_member_id,
-             primary_diagnosis_icd10, status, created_at, updated_at
+             primary_diagnosis_icd10, acuity, status, created_at, updated_at
       FROM patient
       WHERE status = 'active'
         AND (
@@ -229,6 +241,8 @@ export async function updatePatient(args: {
   orgId: string;
   id: string;
   payload: UpdatePatient;
+  /** Caller's user id — required for acuity audit columns. */
+  userId?: string;
 }): Promise<{ updated: boolean }> {
   // Only persist what's provided. We use a series of conditional UPDATE
   // statements rather than building one mega-UPDATE because Prisma's
@@ -281,6 +295,9 @@ export async function updatePatient(args: {
           referring_physician_npi = COALESCE(${c.referringPhysicianNpi ?? null}, referring_physician_npi),
           referring_physician_name = COALESCE(${c.referringPhysicianName ?? null}, referring_physician_name),
           palliative_referral_reason = COALESCE(${c.palliativeReferralReason ?? null}, palliative_referral_reason),
+          acuity = COALESCE(${c.acuity ?? null}, acuity),
+          acuity_updated_at = CASE WHEN ${c.acuity ?? null}::text IS NULL THEN acuity_updated_at ELSE now() END,
+          acuity_updated_by_user_id = CASE WHEN ${c.acuity ?? null}::text IS NULL THEN acuity_updated_by_user_id ELSE ${args.userId ?? null}::uuid END,
           updated_at = now()
         WHERE id = ${args.id}::uuid
       `;

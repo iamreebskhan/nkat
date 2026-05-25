@@ -117,6 +117,21 @@ ok("patients.list contains it", (await req("GET", "/api/patients")).j?.data?.row
 ok("patients.get", (await req("GET", `/api/patients/${patientId}`)).j?.data?.id === patientId);
 ok("patients.patch", (await req("PATCH", `/api/patients/${patientId}`, { clinical: { palliativeReferralReason: "Updated" } })).s === 200);
 
+// Phase D — acuity
+ok(
+  "patients.patch — set acuity=critical",
+  (await req("PATCH", `/api/patients/${patientId}`, { clinical: { acuity: "critical" } })).s === 200,
+);
+const pAcuity = await req("GET", `/api/patients/${patientId}`);
+ok("patient.acuity persisted = critical", pAcuity.j?.data?.acuity === "critical", `acuity=${pAcuity.j?.data?.acuity}`);
+const listSorted = await req("GET", "/api/patients?status=active&limit=20");
+const firstAcuity = listSorted.j?.data?.rows?.[0]?.acuity;
+ok(
+  "patient list sorts critical-first",
+  firstAcuity === "critical" || (listSorted.j?.data?.rows ?? []).length === 1,
+  `first=${firstAcuity ?? "(none)"}`,
+);
+
 // visit + care plan + superbill
 const start = new Date(Date.now() + 86_400_000).toISOString();
 const v = await req("POST", "/api/visits", { patientId, clinicianUserId: me.userId, visitType: "new_patient_home", scheduledStart: start, isTelehealth: false });
@@ -153,6 +168,55 @@ const sawOverride = (audit.j?.data?.rows || []).some(
     (r.payload && (r.payload.code === "X9999" || r.payload.code === "x9999")),
 );
 ok("override appears in audit log", sawOverride, `entries=${audit.j?.data?.rows?.length ?? 0}`);
+
+// Phase B — pre-submission predictor
+const predict = await req("POST", "/api/superbills/predict", {
+  payerId: aetna, state: "OH",
+  dos: new Date().toISOString().slice(0, 10),
+  cptCodes: ["99348", "X9999"],
+});
+ok("predict endpoint responds", predict.s === 200, `worst=${predict.j?.data?.worstBand}`);
+ok(
+  "predict flags the unknown code",
+  (predict.j?.data?.perLine || []).some((p) => p.code === "X9999" && p.riskBand !== "low"),
+  `lines=${JSON.stringify((predict.j?.data?.perLine || []).map((p) => p.code + ":" + p.riskBand))}`,
+);
+const sbReload = await req("GET", `/api/visits/${visitId}/superbill`);
+ok(
+  "superbill carries predicted_risk after persist",
+  !!sbReload.j?.data?.existing?.predictedRisk,
+  `keys=${Object.keys(sbReload.j?.data?.existing?.predictedRisk ?? {}).join(",")}`,
+);
+const fbNoSec = await req("POST", "/api/cron/denial-feedback");
+ok("cron gate: /api/cron/denial-feedback no secret → 401", fbNoSec.s === 401, `status=${fbNoSec.s}`);
+
+// Phase G — cheat-sheet templates: org cannot reach admin endpoints
+const adminCt = await req("GET", "/api/admin/cheatsheet-templates");
+ok("admin gate: /api/admin/cheatsheet-templates → 403", adminCt.s === 403, `status=${adminCt.s}`);
+const adminCtScan = await req("POST", "/api/admin/cheatsheet-templates");
+ok("admin gate: POST /api/admin/cheatsheet-templates → 403", adminCtScan.s === 403, `status=${adminCtScan.s}`);
+const adminCtPub = await req("POST", "/api/admin/cheatsheet-templates/00000000-0000-0000-0000-000000000000/publish", {});
+ok("admin gate: publish endpoint → 403", adminCtPub.s === 403, `status=${adminCtPub.s}`);
+
+// Phase E — Google integration: connecting without config → 503 (or 401 if unauth).
+// We just confirm the routes exist; full OAuth round-trip needs Google creds.
+const gStatus = await req("GET", "/api/integrations/google");
+ok("google status responds (200 or config 503)", gStatus.s === 200 || gStatus.s === 503,
+  `status=${gStatus.s}`);
+const gBusy = await req("POST", "/api/integrations/google/busy", {
+  fromIso: new Date().toISOString(), toIso: new Date(Date.now() + 3600_000).toISOString(),
+});
+ok("google busy route responds (status 422/503/200)", [200, 422, 503].includes(gBusy.s), `status=${gBusy.s}`);
+
+// Phase F — messaging (nurses-only v1)
+const postMsg = await req("POST", `/api/patients/${patientId}/messages`, { body: "Probe: hi team about this patient" });
+ok("post message succeeds", postMsg.s === 201 || postMsg.s === 200, `status=${postMsg.s}`);
+const listMsg = await req("GET", `/api/patients/${patientId}/messages`);
+ok(
+  "list messages returns at least one",
+  listMsg.s === 200 && (listMsg.j?.data?.messages?.length ?? 0) >= 1,
+  `count=${listMsg.j?.data?.messages?.length ?? 0}`,
+);
 
 // billing intelligence
 const look = await req("POST", "/api/billing/lookup", { payerId: aetna, state: "OH", cptCode: "99349", attribute: "covered" });

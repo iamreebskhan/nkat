@@ -24,8 +24,9 @@ import {
 } from "@/components/ui/card";
 import type { PatientView } from "@/lib/features/patients/patient.types";
 import type { VisitView } from "@/lib/features/visits/visit.types";
+import { ThreadPanel } from "@/components/messaging/thread-panel";
 
-type Tab = "overview" | "visits" | "billing" | "care-plan";
+type Tab = "overview" | "visits" | "billing" | "care-plan" | "messages";
 
 export default function PatientDetailPage({
   params,
@@ -38,6 +39,16 @@ export default function PatientDetailPage({
   const [tab, setTab] = useState<Tab>("overview");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Self user id for the messaging panel — fetch from /api/auth/me.
+  const [selfUserId, setSelfUserId] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success && d.data?.userId) setSelfUserId(d.data.userId);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let abandoned = false;
@@ -109,7 +120,7 @@ export default function PatientDetailPage({
       </header>
 
       <div className="border-b border-slate-200 mb-6 flex gap-1">
-        {(["overview", "visits", "billing", "care-plan"] as const).map((t) => (
+        {(["overview", "visits", "billing", "care-plan", "messages"] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -198,6 +209,16 @@ export default function PatientDetailPage({
       )}
 
       {tab === "billing" && <BillingTab patientId={id} />}
+
+      {tab === "messages" && (
+        <div>
+          {selfUserId ? (
+            <ThreadPanel patientId={id} selfUserId={selfUserId} />
+          ) : (
+            <p className="text-slate-500 text-sm">Loading messages…</p>
+          )}
+        </div>
+      )}
 
       {tab === "care-plan" && (
         <Card>

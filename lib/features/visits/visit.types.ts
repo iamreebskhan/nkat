@@ -39,6 +39,13 @@ export const ScheduleVisitSchema = z.object({
   scheduledEnd: Iso.or(IsoLoose).optional(),
   isTelehealth: z.boolean(),
   telehealthModality: z.enum(TELEHEALTH_MODALITIES).optional(),
+  /**
+   * Phase E — set true to bypass the Google-calendar conflict warning.
+   * When false (default), the server checks the clinician's Google
+   * calendar and refuses with a 409 + list of conflicting events if
+   * any overlap is found.
+   */
+  confirmDoubleBook: z.boolean().optional(),
 });
 export type ScheduleVisit = z.infer<typeof ScheduleVisitSchema>;
 

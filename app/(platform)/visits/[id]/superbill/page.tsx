@@ -13,7 +13,9 @@ import Link from "next/link";
 import { use, useEffect, useState } from "react";
 
 import { CodePicker } from "@/components/billing/code-picker";
+import { RiskBadge, RiskSummary, type RiskBand, type RiskReason } from "@/components/billing/risk-badge";
 import { RuleSidebar } from "@/components/billing/rule-sidebar";
+import { TimeSpentPanel } from "@/components/billing/time-spent-panel";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -63,6 +65,22 @@ export default function SuperbillPage({
     modifiers?: string[];
     pendingOverrides?: Array<{ code: string; reason: string }>;
   }>({});
+
+  interface PredictResult {
+    worstBand: RiskBand;
+    blockCount: number;
+    highCount: number;
+    mediumCount: number;
+    perLine: Array<{
+      code: string;
+      score: number;
+      riskBand: RiskBand;
+      reasons: RiskReason[];
+    }>;
+  }
+  const [risk, setRisk] = useState<PredictResult | null>(null);
+  const [minutes, setMinutes] = useState<number>(0);
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   useEffect(() => {
     let abandoned = false;
@@ -122,7 +140,108 @@ export default function SuperbillPage({
     };
   }, [id]);
 
+  // Phase C — autosave: every 5s, if there are unflushed edits and we
+  // already have a persisted superbill, PATCH them quietly.
+  useEffect(() => {
+    if (!persistedId) return;
+    const hasEdits =
+      edits.cpt !== undefined ||
+      edits.icd10 !== undefined ||
+      edits.modifiers !== undefined ||
+      (edits.pendingOverrides && edits.pendingOverrides.length > 0);
+    if (!hasEdits) return;
+    const t = setTimeout(async () => {
+      setAutosaveStatus("saving");
+      try {
+        const r = await fetch(`/api/superbills/${persistedId}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            patch: {
+              ...(edits.cpt && { cptCodes: edits.cpt }),
+              ...(edits.icd10 && { icd10Codes: edits.icd10 }),
+              ...(edits.modifiers && { modifiers: edits.modifiers }),
+            },
+            overrides: edits.pendingOverrides ?? [],
+          }),
+        });
+        const data = await r.json();
+        if (data.success) {
+          setDraft((d) =>
+            d
+              ? {
+                  ...d,
+                  cptCodes: edits.cpt ?? d.cptCodes,
+                  icd10Codes: edits.icd10 ?? d.icd10Codes,
+                  modifiers: edits.modifiers ?? d.modifiers,
+                }
+              : d,
+          );
+          setEdits({});
+          setAutosaveStatus("saved");
+          setTimeout(() => setAutosaveStatus("idle"), 1500);
+        } else {
+          setAutosaveStatus("error");
+        }
+      } catch {
+        setAutosaveStatus("error");
+      }
+    }, 5000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistedId, JSON.stringify(edits)]);
+
+  // Phase B — debounced predictor call. Re-runs whenever the codes,
+  // modifiers, payer or state change. Preview-only; the persist hook
+  // captures the same data into superbill.predicted_risk server-side.
+  const currentCptsForPredict = edits.cpt ?? draft?.cptCodes ?? [];
+  const currentModsForPredict = edits.modifiers ?? draft?.modifiers ?? [];
+  const dosForPredict = draft?.dateOfService;
+  useEffect(() => {
+    if (!dosForPredict || currentCptsForPredict.length === 0) {
+      setRisk(null);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch("/api/superbills/predict", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            payerId: patient?.primaryPayerId ?? draft?.payerId ?? null,
+            state: patient?.state ?? null,
+            patientId: draft?.patientId,
+            dos: dosForPredict,
+            cptCodes: currentCptsForPredict,
+            modifiers: currentModsForPredict,
+          }),
+        });
+        const data = await r.json();
+        if (data.success && data.data) setRisk(data.data as PredictResult);
+      } catch {
+        /* keep prior */
+      }
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    dosForPredict,
+    currentCptsForPredict.join(","),
+    currentModsForPredict.join(","),
+    patient?.primaryPayerId,
+    patient?.state,
+    draft?.payerId,
+  ]);
+
   async function persist() {
+    // Phase B — pre-submit summary modal. Block-band or high-band lines
+    // require an explicit confirmation so the nurse pauses.
+    if (risk && (risk.blockCount > 0 || risk.highCount > 0)) {
+      const ok = window.confirm(
+        `Predictor flags ${risk.blockCount} likely denial(s), ${risk.highCount} high-risk, ${risk.mediumCount} medium. Save anyway?`,
+      );
+      if (!ok) return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -208,6 +327,9 @@ export default function SuperbillPage({
         <p className="text-slate-600 mt-1 tabular text-sm">
           DOS {draft.dateOfService} · POS {draft.placeOfServiceCode} ·{" "}
           {persistedId ? "saved" : "draft (in-memory)"}
+          {autosaveStatus === "saving" && <span className="ml-2 text-slate-500">· saving…</span>}
+          {autosaveStatus === "saved" && <span className="ml-2 text-emerald-700">· autosaved ✓</span>}
+          {autosaveStatus === "error" && <span className="ml-2 text-red-700">· autosave failed</span>}
         </p>
       </header>
 
@@ -224,6 +346,29 @@ export default function SuperbillPage({
             </ul>
           </CardContent>
         </Card>
+      )}
+
+      {risk && (
+        <div className="mb-4">
+          <RiskSummary
+            worstBand={risk.worstBand}
+            blockCount={risk.blockCount}
+            highCount={risk.highCount}
+            mediumCount={risk.mediumCount}
+          />
+          {risk.perLine.some((p) => p.riskBand !== "low") && (
+            <ul className="mt-2 space-y-1.5 text-xs">
+              {risk.perLine
+                .filter((p) => p.riskBand !== "low")
+                .map((p) => (
+                  <li key={p.code} className="flex items-center gap-2">
+                    <span className="font-mono tabular text-slate-700">{p.code}</span>
+                    <RiskBadge band={p.riskBand} score={p.score} reasons={p.reasons} />
+                  </li>
+                ))}
+            </ul>
+          )}
+        </div>
       )}
 
       <Card className="mb-4">
@@ -243,6 +388,28 @@ export default function SuperbillPage({
             label="Billed"
             value={`$${(draft.billedAmountCents / 100).toFixed(2)}`}
             mono
+          />
+        </CardContent>
+      </Card>
+
+      <Card className="mb-4">
+        <CardHeader>
+          <CardTitle>Time spent</CardTitle>
+          <CardDescription>
+            Code suggestions update as you adjust the minutes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TimeSpentPanel
+            minutes={minutes}
+            onChange={setMinutes}
+            selectedCodes={currentCpts}
+            onUseSuggestion={(code) =>
+              setEdits((e) => ({
+                ...e,
+                cpt: [...(e.cpt ?? draft?.cptCodes ?? []), code],
+              }))
+            }
           />
         </CardContent>
       </Card>

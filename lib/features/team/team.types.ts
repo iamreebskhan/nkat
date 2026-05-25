@@ -31,12 +31,14 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleTemplate, string[]> = {
     "team.view", "team.invite", "team.permissions", "team.deactivate",
     "settings.view", "settings.org", "settings.payers", "settings.integrations",
     "audit.view",
+    "messaging.read", "messaging.send",
   ],
   clinician: [
     "patients.list", "patients.view", "patients.edit",
     "visits.view.own", "visits.create", "visits.edit",
     "careplans.view", "careplans.edit",
     "schedule.view", "schedule.create",
+    "messaging.read", "messaging.send",
   ],
   billing_agent: [
     "patients.list", "patients.view",
@@ -45,6 +47,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleTemplate, string[]> = {
     "billing.superbills.view", "billing.superbills.create", "billing.superbills.edit", "billing.superbills.export",
     "billing.denials.view", "billing.denials.log", "billing.denials.refile", "billing.denials.writeoff",
     "cheatsheets.view", "cheatsheets.download",
+    "messaging.read",
   ],
   consultant: [],
   analyst: [
