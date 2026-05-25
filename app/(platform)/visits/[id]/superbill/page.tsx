@@ -15,6 +15,7 @@ import { use, useEffect, useState } from "react";
 import { CodePicker } from "@/components/billing/code-picker";
 import { RiskBadge, RiskSummary, type RiskBand, type RiskReason } from "@/components/billing/risk-badge";
 import { RuleSidebar } from "@/components/billing/rule-sidebar";
+import { TimeSpentPanel } from "@/components/billing/time-spent-panel";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -78,6 +79,8 @@ export default function SuperbillPage({
     }>;
   }
   const [risk, setRisk] = useState<PredictResult | null>(null);
+  const [minutes, setMinutes] = useState<number>(0);
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   useEffect(() => {
     let abandoned = false;
@@ -136,6 +139,57 @@ export default function SuperbillPage({
       abandoned = true;
     };
   }, [id]);
+
+  // Phase C — autosave: every 5s, if there are unflushed edits and we
+  // already have a persisted superbill, PATCH them quietly.
+  useEffect(() => {
+    if (!persistedId) return;
+    const hasEdits =
+      edits.cpt !== undefined ||
+      edits.icd10 !== undefined ||
+      edits.modifiers !== undefined ||
+      (edits.pendingOverrides && edits.pendingOverrides.length > 0);
+    if (!hasEdits) return;
+    const t = setTimeout(async () => {
+      setAutosaveStatus("saving");
+      try {
+        const r = await fetch(`/api/superbills/${persistedId}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            patch: {
+              ...(edits.cpt && { cptCodes: edits.cpt }),
+              ...(edits.icd10 && { icd10Codes: edits.icd10 }),
+              ...(edits.modifiers && { modifiers: edits.modifiers }),
+            },
+            overrides: edits.pendingOverrides ?? [],
+          }),
+        });
+        const data = await r.json();
+        if (data.success) {
+          setDraft((d) =>
+            d
+              ? {
+                  ...d,
+                  cptCodes: edits.cpt ?? d.cptCodes,
+                  icd10Codes: edits.icd10 ?? d.icd10Codes,
+                  modifiers: edits.modifiers ?? d.modifiers,
+                }
+              : d,
+          );
+          setEdits({});
+          setAutosaveStatus("saved");
+          setTimeout(() => setAutosaveStatus("idle"), 1500);
+        } else {
+          setAutosaveStatus("error");
+        }
+      } catch {
+        setAutosaveStatus("error");
+      }
+    }, 5000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistedId, JSON.stringify(edits)]);
 
   // Phase B — debounced predictor call. Re-runs whenever the codes,
   // modifiers, payer or state change. Preview-only; the persist hook
@@ -265,6 +319,9 @@ export default function SuperbillPage({
         <p className="text-slate-600 mt-1 tabular text-sm">
           DOS {draft.dateOfService} · POS {draft.placeOfServiceCode} ·{" "}
           {persistedId ? "saved" : "draft (in-memory)"}
+          {autosaveStatus === "saving" && <span className="ml-2 text-slate-500">· saving…</span>}
+          {autosaveStatus === "saved" && <span className="ml-2 text-emerald-700">· autosaved ✓</span>}
+          {autosaveStatus === "error" && <span className="ml-2 text-red-700">· autosave failed</span>}
         </p>
       </header>
 
@@ -323,6 +380,28 @@ export default function SuperbillPage({
             label="Billed"
             value={`$${(draft.billedAmountCents / 100).toFixed(2)}`}
             mono
+          />
+        </CardContent>
+      </Card>
+
+      <Card className="mb-4">
+        <CardHeader>
+          <CardTitle>Time spent</CardTitle>
+          <CardDescription>
+            Code suggestions update as you adjust the minutes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TimeSpentPanel
+            minutes={minutes}
+            onChange={setMinutes}
+            selectedCodes={currentCpts}
+            onUseSuggestion={(code) =>
+              setEdits((e) => ({
+                ...e,
+                cpt: [...(e.cpt ?? draft?.cptCodes ?? []), code],
+              }))
+            }
           />
         </CardContent>
       </Card>
