@@ -8,13 +8,29 @@
  * Source schema: db/migrations/0029_phase_pallio_emr.sql.
  */
 import { NotFoundError } from "@/lib/api";
-import { withOrgContext } from "@/lib/db";
+import { prisma, withOrgContext } from "@/lib/db";
 import type {
   CreatePatient,
   PatientStatus,
   PatientView,
   UpdatePatient,
 } from "./patient.types";
+
+/**
+ * Validate that a payer UUID resolves to an existing row in the global
+ * `payer` table. Surfaces a friendly error before the FK-violation 23503
+ * would fire on INSERT. Used by createPatient + updatePatient.
+ */
+async function assertPayerExists(payerId: string): Promise<void> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM payer WHERE id = ${payerId}::uuid LIMIT 1
+  `;
+  if (!rows[0]) {
+    throw new Error(
+      `Unknown payer: ${payerId}. Pick one from /api/billing/payers.`,
+    );
+  }
+}
 
 /**
  * Persist a new patient. Caller must set `orgId` from the session.
@@ -29,6 +45,8 @@ export async function createPatient(args: {
   const d = payload.demographics;
   const i = payload.insurance;
   const c = payload.clinical;
+
+  if (i.primaryPayerId) await assertPayerExists(i.primaryPayerId);
 
   return withOrgContext(orgId, async (tx) => {
     const rows = await tx.$queryRaw<{ id: string }[]>`
@@ -216,6 +234,9 @@ export async function updatePatient(args: {
   // statements rather than building one mega-UPDATE because Prisma's
   // tagged-template approach makes dynamic SET lists awkward, and
   // patient updates are infrequent enough that 2-3 round trips is fine.
+  if (args.payload.insurance?.primaryPayerId) {
+    await assertPayerExists(args.payload.insurance.primaryPayerId);
+  }
   return withOrgContext(args.orgId, async (tx) => {
     // Existence check first — RLS filters out rows owned by another
     // org, so a missing row means "doesn't exist OR not yours". Both
