@@ -241,6 +241,8 @@ export async function updatePatient(args: {
   orgId: string;
   id: string;
   payload: UpdatePatient;
+  /** Caller's user id — required for acuity audit columns. */
+  userId?: string;
 }): Promise<{ updated: boolean }> {
   // Only persist what's provided. We use a series of conditional UPDATE
   // statements rather than building one mega-UPDATE because Prisma's
@@ -295,6 +297,7 @@ export async function updatePatient(args: {
           palliative_referral_reason = COALESCE(${c.palliativeReferralReason ?? null}, palliative_referral_reason),
           acuity = COALESCE(${c.acuity ?? null}, acuity),
           acuity_updated_at = CASE WHEN ${c.acuity ?? null}::text IS NULL THEN acuity_updated_at ELSE now() END,
+          acuity_updated_by_user_id = CASE WHEN ${c.acuity ?? null}::text IS NULL THEN acuity_updated_by_user_id ELSE ${args.userId ?? null}::uuid END,
           updated_at = now()
         WHERE id = ${args.id}::uuid
       `;

@@ -42,7 +42,12 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
 
   const { id } = await ctx.params;
   try {
-    const r = await updatePatient({ orgId: session.orgId, id, payload: body });
+    const r = await updatePatient({
+      orgId: session.orgId,
+      id,
+      payload: body,
+      userId: session.userId,
+    });
     void logPhiAccess({
       orgId: session.orgId,
       userId: session.userId,
