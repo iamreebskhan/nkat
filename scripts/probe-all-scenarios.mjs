@@ -198,6 +198,16 @@ ok("admin gate: POST /api/admin/cheatsheet-templates → 403", adminCtScan.s ===
 const adminCtPub = await req("POST", "/api/admin/cheatsheet-templates/00000000-0000-0000-0000-000000000000/publish", {});
 ok("admin gate: publish endpoint → 403", adminCtPub.s === 403, `status=${adminCtPub.s}`);
 
+// Phase E — Google integration: connecting without config → 503 (or 401 if unauth).
+// We just confirm the routes exist; full OAuth round-trip needs Google creds.
+const gStatus = await req("GET", "/api/integrations/google");
+ok("google status responds (200 or config 503)", gStatus.s === 200 || gStatus.s === 503,
+  `status=${gStatus.s}`);
+const gBusy = await req("POST", "/api/integrations/google/busy", {
+  fromIso: new Date().toISOString(), toIso: new Date(Date.now() + 3600_000).toISOString(),
+});
+ok("google busy route responds (status 422/503/200)", [200, 422, 503].includes(gBusy.s), `status=${gBusy.s}`);
+
 // billing intelligence
 const look = await req("POST", "/api/billing/lookup", { payerId: aetna, state: "OH", cptCode: "99349", attribute: "covered" });
 ok("billing.lookup — cited", look.j?.data?.source === "structured_rule" && !!look.j?.data?.citation);
