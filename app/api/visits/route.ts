@@ -7,6 +7,10 @@ import { z } from "zod";
 import { fail, ok, parseJson, parseSearchParams } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
+  getBusyForClinician,
+  pushVisitToGoogle,
+} from "@/lib/features/calendar/google-calendar.service";
+import {
   listVisits,
   scheduleVisit,
 } from "@/lib/features/visits/visit.service";
@@ -58,8 +62,51 @@ export async function POST(req: NextRequest): Promise<Response> {
   const body = await parseJson(req, ScheduleVisitSchema);
   if (body instanceof Response) return body;
 
+  // Phase E — Google conflict check. Only blocks if the clinician has
+  // Google linked AND there's an overlap AND the caller didn't pass
+  // confirmDoubleBook=true. Best-effort: any Google failure (missing
+  // env, expired token, etc.) is logged and we proceed normally.
+  if (!body.confirmDoubleBook) {
+    try {
+      const startIso = new Date(body.scheduledStart).toISOString();
+      const endIso = body.scheduledEnd
+        ? new Date(body.scheduledEnd).toISOString()
+        : new Date(new Date(body.scheduledStart).getTime() + 60 * 60_000).toISOString();
+      const busy = await getBusyForClinician({
+        orgId: session.orgId,
+        userId: body.clinicianUserId,
+        fromIso: startIso,
+        toIso: endIso,
+      });
+      if (busy.length > 0) {
+        return fail("Conflict with existing Google Calendar events.", {
+          status: 409,
+        });
+      }
+    } catch {
+      /* Google not linked / not configured → continue without conflict check */
+    }
+  }
+
   try {
     const r = await scheduleVisit({ orgId: session.orgId, payload: body });
+    // Fire-and-forget push to Google so the nurse's external calendar
+    // reflects the new visit. Failure here doesn't undo the Pallio row.
+    const startIso = new Date(body.scheduledStart).toISOString();
+    const endIso = body.scheduledEnd
+      ? new Date(body.scheduledEnd).toISOString()
+      : new Date(new Date(body.scheduledStart).getTime() + 60 * 60_000).toISOString();
+    void pushVisitToGoogle({
+      orgId: session.orgId,
+      userId: body.clinicianUserId,
+      visitId: r.id,
+      startIso,
+      endIso,
+      summary: `Pallio visit (${body.visitType})`,
+      description: `Patient ${body.patientId}`,
+    }).catch(() => {
+      /* not linked / config missing — swallow */
+    });
     return ok(r, { status: 201 });
   } catch (err) {
     return fail(err instanceof Error ? err.message : "Schedule failed", {

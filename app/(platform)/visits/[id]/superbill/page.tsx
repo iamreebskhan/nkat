@@ -234,6 +234,14 @@ export default function SuperbillPage({
   ]);
 
   async function persist() {
+    // Phase B — pre-submit summary modal. Block-band or high-band lines
+    // require an explicit confirmation so the nurse pauses.
+    if (risk && (risk.blockCount > 0 || risk.highCount > 0)) {
+      const ok = window.confirm(
+        `Predictor flags ${risk.blockCount} likely denial(s), ${risk.highCount} high-risk, ${risk.mediumCount} medium. Save anyway?`,
+      );
+      if (!ok) return;
+    }
     setSaving(true);
     setError(null);
     try {
