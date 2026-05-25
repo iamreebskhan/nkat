@@ -117,6 +117,21 @@ ok("patients.list contains it", (await req("GET", "/api/patients")).j?.data?.row
 ok("patients.get", (await req("GET", `/api/patients/${patientId}`)).j?.data?.id === patientId);
 ok("patients.patch", (await req("PATCH", `/api/patients/${patientId}`, { clinical: { palliativeReferralReason: "Updated" } })).s === 200);
 
+// Phase D — acuity
+ok(
+  "patients.patch — set acuity=critical",
+  (await req("PATCH", `/api/patients/${patientId}`, { clinical: { acuity: "critical" } })).s === 200,
+);
+const pAcuity = await req("GET", `/api/patients/${patientId}`);
+ok("patient.acuity persisted = critical", pAcuity.j?.data?.acuity === "critical", `acuity=${pAcuity.j?.data?.acuity}`);
+const listSorted = await req("GET", "/api/patients?status=active&limit=20");
+const firstAcuity = listSorted.j?.data?.rows?.[0]?.acuity;
+ok(
+  "patient list sorts critical-first",
+  firstAcuity === "critical" || (listSorted.j?.data?.rows ?? []).length === 1,
+  `first=${firstAcuity ?? "(none)"}`,
+);
+
 // visit + care plan + superbill
 const start = new Date(Date.now() + 86_400_000).toISOString();
 const v = await req("POST", "/api/visits", { patientId, clinicianUserId: me.userId, visitType: "new_patient_home", scheduledStart: start, isTelehealth: false });

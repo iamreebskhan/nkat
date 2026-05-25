@@ -13,7 +13,44 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { TextInput } from "@/components/forms/field";
-import type { PatientStatus, PatientView } from "@/lib/features/patients/patient.types";
+import type {
+  PatientAcuity,
+  PatientStatus,
+  PatientView,
+} from "@/lib/features/patients/patient.types";
+
+const ACUITY_STYLE: Record<PatientAcuity, { cls: string; label: string }> = {
+  critical: {
+    cls: "bg-red-50 text-red-900 ring-red-600/30",
+    label: "Critical",
+  },
+  high: {
+    cls: "bg-orange-50 text-orange-900 ring-orange-600/30",
+    label: "High",
+  },
+  medium: {
+    cls: "bg-amber-50 text-amber-900 ring-amber-600/30",
+    label: "Medium",
+  },
+  low: {
+    cls: "bg-emerald-50 text-emerald-900 ring-emerald-600/20",
+    label: "Low",
+  },
+};
+
+function AcuityChip({ value }: { value: PatientAcuity | null }) {
+  if (!value) {
+    return <span className="text-xs text-slate-400">—</span>;
+  }
+  const s = ACUITY_STYLE[value];
+  return (
+    <span
+      className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset ${s.cls}`}
+    >
+      {s.label}
+    </span>
+  );
+}
 
 type Density = "compact" | "default" | "comfortable";
 
@@ -140,6 +177,7 @@ export default function PatientsPage() {
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
                 <tr>
+                  <th className="text-left font-semibold px-4 py-2.5">Acuity</th>
                   <th className="text-left font-semibold px-4 py-2.5">Name</th>
                   <th className="text-left font-semibold px-4 py-2.5">DOB</th>
                   <th className="text-left font-semibold px-4 py-2.5">State</th>
@@ -151,6 +189,9 @@ export default function PatientsPage() {
               <tbody className="divide-y divide-slate-100">
                 {rows.map((p) => (
                   <tr key={p.id} className="hover:bg-slate-50">
+                    <td className={`px-4 ${DENSITY_PADDING[density]}`}>
+                      <AcuityChip value={p.acuity} />
+                    </td>
                     <td className={`px-4 ${DENSITY_PADDING[density]}`}>
                       <Link
                         href={`/patients/${p.id}`}
