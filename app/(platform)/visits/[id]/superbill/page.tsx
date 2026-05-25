@@ -13,6 +13,7 @@ import Link from "next/link";
 import { use, useEffect, useState } from "react";
 
 import { CodePicker } from "@/components/billing/code-picker";
+import { RiskBadge, RiskSummary, type RiskBand, type RiskReason } from "@/components/billing/risk-badge";
 import { RuleSidebar } from "@/components/billing/rule-sidebar";
 import { Button } from "@/components/ui/button";
 import {
@@ -63,6 +64,20 @@ export default function SuperbillPage({
     modifiers?: string[];
     pendingOverrides?: Array<{ code: string; reason: string }>;
   }>({});
+
+  interface PredictResult {
+    worstBand: RiskBand;
+    blockCount: number;
+    highCount: number;
+    mediumCount: number;
+    perLine: Array<{
+      code: string;
+      score: number;
+      riskBand: RiskBand;
+      reasons: RiskReason[];
+    }>;
+  }
+  const [risk, setRisk] = useState<PredictResult | null>(null);
 
   useEffect(() => {
     let abandoned = false;
@@ -121,6 +136,48 @@ export default function SuperbillPage({
       abandoned = true;
     };
   }, [id]);
+
+  // Phase B — debounced predictor call. Re-runs whenever the codes,
+  // modifiers, payer or state change. Preview-only; the persist hook
+  // captures the same data into superbill.predicted_risk server-side.
+  const currentCptsForPredict = edits.cpt ?? draft?.cptCodes ?? [];
+  const currentModsForPredict = edits.modifiers ?? draft?.modifiers ?? [];
+  const dosForPredict = draft?.dateOfService;
+  useEffect(() => {
+    if (!dosForPredict || currentCptsForPredict.length === 0) {
+      setRisk(null);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch("/api/superbills/predict", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            payerId: patient?.primaryPayerId ?? draft?.payerId ?? null,
+            state: patient?.state ?? null,
+            patientId: draft?.patientId,
+            dos: dosForPredict,
+            cptCodes: currentCptsForPredict,
+            modifiers: currentModsForPredict,
+          }),
+        });
+        const data = await r.json();
+        if (data.success && data.data) setRisk(data.data as PredictResult);
+      } catch {
+        /* keep prior */
+      }
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    dosForPredict,
+    currentCptsForPredict.join(","),
+    currentModsForPredict.join(","),
+    patient?.primaryPayerId,
+    patient?.state,
+    draft?.payerId,
+  ]);
 
   async function persist() {
     setSaving(true);
@@ -224,6 +281,29 @@ export default function SuperbillPage({
             </ul>
           </CardContent>
         </Card>
+      )}
+
+      {risk && (
+        <div className="mb-4">
+          <RiskSummary
+            worstBand={risk.worstBand}
+            blockCount={risk.blockCount}
+            highCount={risk.highCount}
+            mediumCount={risk.mediumCount}
+          />
+          {risk.perLine.some((p) => p.riskBand !== "low") && (
+            <ul className="mt-2 space-y-1.5 text-xs">
+              {risk.perLine
+                .filter((p) => p.riskBand !== "low")
+                .map((p) => (
+                  <li key={p.code} className="flex items-center gap-2">
+                    <span className="font-mono tabular text-slate-700">{p.code}</span>
+                    <RiskBadge band={p.riskBand} score={p.score} reasons={p.reasons} />
+                  </li>
+                ))}
+            </ul>
+          )}
+        </div>
       )}
 
       <Card className="mb-4">

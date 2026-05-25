@@ -23,7 +23,7 @@ on:
         required: false
         type: choice
         default: both
-        options: ["both", "ingest-documents", "payer-rule-alerts"]
+        options: ["both", "ingest-documents", "payer-rule-alerts", "denial-feedback"]
 
 # Disable concurrent runs of the same workflow — if a run is slow,
 # the next scheduled tick should wait, not pile up.
@@ -75,6 +75,30 @@ jobs:
           curl --max-time 120 -sS -o /tmp/r.json -w 'HTTP %{http_code} (%{time_total}s)\n' \
             -X POST -H "x-cron-secret: $SECRET" \
             "$BASE/api/cron/payer-rule-alerts"
+          cat /tmp/r.json | head -c 600; echo
+          code=$(jq -r '.success' /tmp/r.json 2>/dev/null || echo "")
+          if [ "$code" != "true" ]; then
+            echo "::error::cron route did not return success:true"
+            exit 1
+          fi
+
+  denial-feedback:
+    name: denial-feedback (predictor vs actual)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'schedule' || github.event.inputs.job == 'both' || github.event.inputs.job == 'denial-feedback' }}
+    steps:
+      - name: Hit /api/cron/denial-feedback
+        env:
+          BASE: ${{ secrets.PALLIO_BASE_URL }}
+          SECRET: ${{ secrets.PALLIO_CRON_SECRET }}
+        run: |
+          if [ -z "$BASE" ] || [ -z "$SECRET" ]; then
+            echo "::warning::PALLIO_BASE_URL or PALLIO_CRON_SECRET not set — skipping."
+            exit 0
+          fi
+          curl --max-time 240 -sS -o /tmp/r.json -w 'HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "x-cron-secret: $SECRET" \
+            "$BASE/api/cron/denial-feedback"
           cat /tmp/r.json | head -c 600; echo
           code=$(jq -r '.success' /tmp/r.json 2>/dev/null || echo "")
           if [ "$code" != "true" ]; then
