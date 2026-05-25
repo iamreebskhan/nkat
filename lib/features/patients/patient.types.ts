@@ -80,8 +80,12 @@ export const ClinicalSchema = z.object({
   referringPhysicianNpi: Npi.optional(),
   referringPhysicianName: z.string().max(150).optional(),
   palliativeReferralReason: z.string().max(2000).optional(),
+  /** Phase D — palliative-care acuity. */
+  acuity: z.enum(["low", "medium", "high", "critical"]).optional(),
 });
 export type Clinical = z.infer<typeof ClinicalSchema>;
+export const PATIENT_ACUITIES = ["low", "medium", "high", "critical"] as const;
+export type PatientAcuity = (typeof PATIENT_ACUITIES)[number];
 
 /** Step 4 — consents (boolean acknowledgments + signature strings). */
 export const ConsentsSchema = z.object({
@@ -131,6 +135,7 @@ export interface PatientView {
   primaryPayerId: string | null;
   primaryMemberId: string | null;
   primaryDiagnosisIcd10: string | null;
+  acuity: PatientAcuity | null;
   status: PatientStatus;
   createdAt: string;
   updatedAt: string;
