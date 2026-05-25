@@ -154,6 +154,27 @@ const sawOverride = (audit.j?.data?.rows || []).some(
 );
 ok("override appears in audit log", sawOverride, `entries=${audit.j?.data?.rows?.length ?? 0}`);
 
+// Phase B — pre-submission predictor
+const predict = await req("POST", "/api/superbills/predict", {
+  payerId: aetna, state: "OH",
+  dos: new Date().toISOString().slice(0, 10),
+  cptCodes: ["99348", "X9999"],
+});
+ok("predict endpoint responds", predict.s === 200, `worst=${predict.j?.data?.worstBand}`);
+ok(
+  "predict flags the unknown code",
+  (predict.j?.data?.perLine || []).some((p) => p.code === "X9999" && p.riskBand !== "low"),
+  `lines=${JSON.stringify((predict.j?.data?.perLine || []).map((p) => p.code + ":" + p.riskBand))}`,
+);
+const sbReload = await req("GET", `/api/visits/${visitId}/superbill`);
+ok(
+  "superbill carries predicted_risk after persist",
+  !!sbReload.j?.data?.existing?.predictedRisk,
+  `keys=${Object.keys(sbReload.j?.data?.existing?.predictedRisk ?? {}).join(",")}`,
+);
+const fbNoSec = await req("POST", "/api/cron/denial-feedback");
+ok("cron gate: /api/cron/denial-feedback no secret → 401", fbNoSec.s === 401, `status=${fbNoSec.s}`);
+
 // billing intelligence
 const look = await req("POST", "/api/billing/lookup", { payerId: aetna, state: "OH", cptCode: "99349", attribute: "covered" });
 ok("billing.lookup — cited", look.j?.data?.source === "structured_rule" && !!look.j?.data?.citation);

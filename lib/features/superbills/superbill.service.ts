@@ -9,6 +9,7 @@
  *      ready_to_submit → submitted → paid|partially_paid|denied|voided.
  */
 import { withOrgContext } from "@/lib/db";
+import { predictSuperbill } from "@/lib/features/billing/predict-superbill.service";
 import { buildSuperbill, type DraftSuperbill, type ProviderTier } from "./superbill-pure";
 
 export const SUPERBILL_STATUSES = [
@@ -107,6 +108,28 @@ export async function persistDraft(args: {
   draft: DraftSuperbill;
 }): Promise<{ id: string }> {
   const { orgId, draft } = args;
+
+  // Phase B — capture the predictor result at save-time. Best-effort:
+  // if predict fails (e.g. payer rules missing) we persist with NULL
+  // and the nightly feedback cron just skips this row.
+  let predictedRisk: unknown = null;
+  try {
+    predictedRisk = await predictSuperbill({
+      orgId,
+      payerId: draft.payerId,
+      state: null, // patient state isn't on the draft; the picker
+      // path will pass it on update — for first-save we leave null
+      // and the scorer flags coverage_unknown until edits provide it.
+      patientId: draft.patientId,
+      dos: draft.dateOfService,
+      cptCodes: draft.cptCodes,
+      modifiers: draft.modifiers,
+      icd10Codes: draft.icd10Codes,
+    });
+  } catch {
+    /* keep NULL */
+  }
+
   return withOrgContext(orgId, async (tx) => {
     const rows = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO superbill (
@@ -114,20 +137,22 @@ export async function persistDraft(args: {
         member_id_snapshot, date_of_service,
         cpt_codes, icd10_codes, modifiers,
         provider_npi, provider_name, place_of_service_code,
-        billed_amount_cents, status
+        billed_amount_cents, status, predicted_risk
       ) VALUES (
         ${orgId}::uuid, ${draft.visitId}::uuid, ${draft.patientId}::uuid,
         ${draft.payerId ?? null}::uuid,
         ${draft.memberIdSnapshot}, ${draft.dateOfService}::date,
         ${draft.cptCodes}::text[], ${draft.icd10Codes}::text[], ${draft.modifiers}::text[],
         ${draft.providerNpi}, ${draft.providerName}, ${draft.placeOfServiceCode},
-        ${draft.billedAmountCents}, 'draft'
+        ${draft.billedAmountCents}, 'draft',
+        ${predictedRisk ? JSON.stringify(predictedRisk) : null}::jsonb
       )
       ON CONFLICT (visit_id) DO UPDATE SET
         cpt_codes = EXCLUDED.cpt_codes,
         icd10_codes = EXCLUDED.icd10_codes,
         modifiers = EXCLUDED.modifiers,
         billed_amount_cents = EXCLUDED.billed_amount_cents,
+        predicted_risk = COALESCE(EXCLUDED.predicted_risk, superbill.predicted_risk),
         updated_at = now()
       RETURNING id
     `;
@@ -154,6 +179,8 @@ export interface SuperbillView {
   submittedAt: string | null;
   paidAt: string | null;
   generatedPdfPath: string | null;
+  /** Phase B — predictor output captured at save-time. */
+  predictedRisk: unknown | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -177,6 +204,7 @@ interface SuperbillRow {
   submitted_at: Date | null;
   paid_at: Date | null;
   generated_pdf_path: string | null;
+  predicted_risk: unknown | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -201,6 +229,7 @@ function rowToView(r: SuperbillRow): SuperbillView {
     submittedAt: r.submitted_at?.toISOString() ?? null,
     paidAt: r.paid_at?.toISOString() ?? null,
     generatedPdfPath: r.generated_pdf_path,
+    predictedRisk: r.predicted_risk,
     createdAt: r.created_at.toISOString(),
     updatedAt: r.updated_at.toISOString(),
   };
