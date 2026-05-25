@@ -190,6 +190,14 @@ ok(
 const fbNoSec = await req("POST", "/api/cron/denial-feedback");
 ok("cron gate: /api/cron/denial-feedback no secret → 401", fbNoSec.s === 401, `status=${fbNoSec.s}`);
 
+// Phase G — cheat-sheet templates: org cannot reach admin endpoints
+const adminCt = await req("GET", "/api/admin/cheatsheet-templates");
+ok("admin gate: /api/admin/cheatsheet-templates → 403", adminCt.s === 403, `status=${adminCt.s}`);
+const adminCtScan = await req("POST", "/api/admin/cheatsheet-templates");
+ok("admin gate: POST /api/admin/cheatsheet-templates → 403", adminCtScan.s === 403, `status=${adminCtScan.s}`);
+const adminCtPub = await req("POST", "/api/admin/cheatsheet-templates/00000000-0000-0000-0000-000000000000/publish", {});
+ok("admin gate: publish endpoint → 403", adminCtPub.s === 403, `status=${adminCtPub.s}`);
+
 // billing intelligence
 const look = await req("POST", "/api/billing/lookup", { payerId: aetna, state: "OH", cptCode: "99349", attribute: "covered" });
 ok("billing.lookup — cited", look.j?.data?.source === "structured_rule" && !!look.j?.data?.citation);
