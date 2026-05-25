@@ -135,6 +135,25 @@ ok("superbills.persist", (sbSave.s === 200 || sbSave.s === 201) && !!superbillId
 const sbPdf = await req("GET", `/api/superbills/${superbillId}/pdf`);
 ok("superbills.pdf", sbPdf.s === 200 && sbPdf.isPdf && sbPdf.bytes > 5000, `${sbPdf.bytes}B`);
 
+// Phase A — payer-scoped CPT picker:
+// 1. GET /api/billing/allowed-codes returns covered codes for this payer/state
+// 2. PATCH /api/superbills/[id] accepts edits + writes overrides to audit_log
+// 3. Off-allowlist override surfaces in /api/audit/log
+const ac = await req("GET", `/api/billing/allowed-codes?payerId=${aetna}&state=OH`);
+ok("billing.allowed-codes responds", ac.s === 200, `rows=${ac.j?.data?.rows?.length ?? 0}`);
+const sbPatch = await req("PATCH", `/api/superbills/${superbillId}`, {
+  patch: { cptCodes: ["99348", "99349"], modifiers: ["25"] },
+  overrides: [{ code: "X9999", reason: "Phase A probe — synthetic override for audit verification" }],
+});
+ok("superbill PATCH accepts edits + overrides", sbPatch.s === 200, `body=${sbPatch.t.slice(0, 120)}`);
+const audit = await req("GET", "/api/audit?action=superbill_code_override&limit=10");
+const sawOverride = (audit.j?.data?.rows || []).some(
+  (r) =>
+    r.targetId === superbillId ||
+    (r.payload && (r.payload.code === "X9999" || r.payload.code === "x9999")),
+);
+ok("override appears in audit log", sawOverride, `entries=${audit.j?.data?.rows?.length ?? 0}`);
+
 // billing intelligence
 const look = await req("POST", "/api/billing/lookup", { payerId: aetna, state: "OH", cptCode: "99349", attribute: "covered" });
 ok("billing.lookup — cited", look.j?.data?.source === "structured_rule" && !!look.j?.data?.citation);

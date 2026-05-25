@@ -12,6 +12,7 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 
+import { CodePicker } from "@/components/billing/code-picker";
 import { RuleSidebar } from "@/components/billing/rule-sidebar";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,6 +55,14 @@ export default function SuperbillPage({
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Local edits applied to the draft; flushed to the server via
+  // PATCH (after first save) or POST (when saving for the first time).
+  const [edits, setEdits] = useState<{
+    cpt?: string[];
+    icd10?: string[];
+    modifiers?: string[];
+    pendingOverrides?: Array<{ code: string; reason: string }>;
+  }>({});
 
   useEffect(() => {
     let abandoned = false;
@@ -117,20 +126,66 @@ export default function SuperbillPage({
     setSaving(true);
     setError(null);
     try {
-      const r = await fetch(`/api/visits/${id}/superbill`, { method: "POST" });
-      const data = await r.json();
-      if (!data.success) {
-        setError(data.error ?? "Persist failed.");
-        return;
+      // First save: POST creates the row from the visit's persisted
+      // codes. Then we PATCH any edits the nurse made in the picker.
+      let id1 = persistedId;
+      if (!id1) {
+        const r = await fetch(`/api/visits/${id}/superbill`, { method: "POST" });
+        const data = await r.json();
+        if (!data.success) {
+          setError(data.error ?? "Persist failed.");
+          return;
+        }
+        id1 = data.data.id;
+        setPersistedId(id1);
+        if (data.data.draft) setDraft(data.data.draft);
       }
-      setPersistedId(data.data.id);
-      if (data.data.draft) setDraft(data.data.draft);
+
+      const hasEdits =
+        edits.cpt !== undefined ||
+        edits.icd10 !== undefined ||
+        edits.modifiers !== undefined ||
+        (edits.pendingOverrides && edits.pendingOverrides.length > 0);
+      if (hasEdits && id1) {
+        const pr = await fetch(`/api/superbills/${id1}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            patch: {
+              ...(edits.cpt && { cptCodes: edits.cpt }),
+              ...(edits.icd10 && { icd10Codes: edits.icd10 }),
+              ...(edits.modifiers && { modifiers: edits.modifiers }),
+            },
+            overrides: edits.pendingOverrides ?? [],
+          }),
+        });
+        const pdata = await pr.json();
+        if (!pdata.success) {
+          setError(pdata.error ?? "Edits failed to save.");
+          return;
+        }
+        // Reflect the saved state locally and clear pending overrides.
+        setDraft((d) =>
+          d
+            ? {
+                ...d,
+                cptCodes: edits.cpt ?? d.cptCodes,
+                icd10Codes: edits.icd10 ?? d.icd10Codes,
+                modifiers: edits.modifiers ?? d.modifiers,
+              }
+            : d,
+        );
+        setEdits({});
+      }
     } catch {
       setError("Network error.");
     } finally {
       setSaving(false);
     }
   }
+
+  // The picker reads from `cptCodes` on the draft + any local edits.
+  const currentCpts = edits.cpt ?? draft?.cptCodes ?? [];
 
   if (loading) return <div className="px-8 py-8 text-slate-500">Loading…</div>;
   if (error || !draft)
@@ -173,9 +228,9 @@ export default function SuperbillPage({
 
       <Card className="mb-4">
         <CardHeader>
-          <CardTitle>Billing detail</CardTitle>
+          <CardTitle>Patient &amp; provider</CardTitle>
           <CardDescription>
-            Auto-populated from the visit + patient records. Edits in Phase 4.
+            Auto-populated from the visit + patient records.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-slate-700">
@@ -184,18 +239,77 @@ export default function SuperbillPage({
           <Row label="Member ID" value={draft.memberIdSnapshot || "—"} mono />
           <Row label="Provider" value={`${draft.providerName} (NPI ${draft.providerNpi || "—"})`} />
           <Row label="Place of service" value={draft.placeOfServiceCode} mono />
-          <Row label="CPT codes" value={draft.cptCodes.join(", ") || "—"} mono />
-          <Row label="ICD-10 codes" value={draft.icd10Codes.join(", ") || "—"} mono />
-          <Row
-            label="Modifiers"
-            value={draft.modifiers.length > 0 ? draft.modifiers.join(", ") : "—"}
-            mono
-          />
           <Row
             label="Billed"
             value={`$${(draft.billedAmountCents / 100).toFixed(2)}`}
             mono
           />
+        </CardContent>
+      </Card>
+
+      <Card className="mb-4">
+        <CardHeader>
+          <CardTitle>Billable codes</CardTitle>
+          <CardDescription>
+            Pick from codes the patient&rsquo;s payer covers in their state. Off-allowlist
+            picks require a one-line reason and are recorded in the audit log.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CodePicker
+            payerId={patient?.primaryPayerId ?? draft.payerId}
+            state={patient?.state ?? null}
+            selected={currentCpts}
+            onChange={(cpt) => setEdits((e) => ({ ...e, cpt }))}
+            onOverride={(o) =>
+              setEdits((e) => ({
+                ...e,
+                pendingOverrides: [...(e.pendingOverrides ?? []), o],
+              }))
+            }
+          />
+          <hr className="my-4 border-slate-100" />
+          <label className="block text-xs text-slate-500 font-medium">
+            ICD-10 diagnoses (comma-separated)
+            <input
+              type="text"
+              defaultValue={draft.icd10Codes.join(", ")}
+              onBlur={(e) =>
+                setEdits((eds) => ({
+                  ...eds,
+                  icd10: e.target.value
+                    .split(",")
+                    .map((s) => s.trim().toUpperCase())
+                    .filter(Boolean),
+                }))
+              }
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono tabular focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+            />
+          </label>
+          <label className="block mt-3 text-xs text-slate-500 font-medium">
+            Modifiers (comma-separated)
+            <input
+              type="text"
+              defaultValue={draft.modifiers.join(", ")}
+              onBlur={(e) =>
+                setEdits((eds) => ({
+                  ...eds,
+                  modifiers: e.target.value
+                    .split(",")
+                    .map((s) => s.trim().toUpperCase())
+                    .filter(Boolean),
+                }))
+              }
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono tabular focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+            />
+          </label>
+          {edits.pendingOverrides && edits.pendingOverrides.length > 0 && (
+            <p className="mt-3 text-xs text-amber-800">
+              {edits.pendingOverrides.length} off-allowlist override
+              {edits.pendingOverrides.length === 1 ? "" : "s"} queued — will be
+              audit-logged on save.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -211,7 +325,7 @@ export default function SuperbillPage({
           <RuleSidebar
             payerId={patient?.primaryPayerId ?? draft.payerId}
             state={patient?.state}
-            cptCodes={draft.cptCodes}
+            cptCodes={currentCpts}
             attribute="covered"
           />
         </CardContent>
