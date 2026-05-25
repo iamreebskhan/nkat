@@ -235,6 +235,81 @@ export async function listSuperbills(args: {
   });
 }
 
+/**
+ * Edit a draft superbill (Phase A — payer-scoped picker).
+ *
+ * Lets the nurse change the CPT / ICD-10 / modifier sets on a saved
+ * draft before they advance the status. Each call also takes an
+ * `overrides` array — when the nurse picks a code that wasn't on the
+ * payer's allow-list, the UI passes it here so we can write an
+ * `audit_log` row of type `superbill_code_override` for compliance.
+ *
+ * RLS-scoped via withOrgContext; status is intentionally NOT writable
+ * through this path (use markStatus for transitions).
+ */
+export async function updateSuperbill(args: {
+  orgId: string;
+  id: string;
+  userId: string;
+  patch: {
+    cptCodes?: string[];
+    icd10Codes?: string[];
+    modifiers?: string[];
+  };
+  overrides?: Array<{ code: string; reason: string }>;
+}): Promise<{ updated: boolean }> {
+  return withOrgContext(args.orgId, async (tx) => {
+    const exists = await tx.$queryRaw<{ id: string; status: SuperbillStatus }[]>`
+      SELECT id, status FROM superbill WHERE id = ${args.id}::uuid LIMIT 1
+    `;
+    if (!exists[0]) throw new Error("Superbill not found.");
+    if (exists[0].status !== "draft") {
+      throw new Error(
+        `Superbill is ${exists[0].status}; only drafts can be edited.`,
+      );
+    }
+
+    let touched = false;
+    if (args.patch.cptCodes) {
+      await tx.$executeRaw`
+        UPDATE superbill SET cpt_codes = ${args.patch.cptCodes}::text[], updated_at = now()
+        WHERE id = ${args.id}::uuid
+      `;
+      touched = true;
+    }
+    if (args.patch.icd10Codes) {
+      await tx.$executeRaw`
+        UPDATE superbill SET icd10_codes = ${args.patch.icd10Codes}::text[], updated_at = now()
+        WHERE id = ${args.id}::uuid
+      `;
+      touched = true;
+    }
+    if (args.patch.modifiers) {
+      await tx.$executeRaw`
+        UPDATE superbill SET modifiers = ${args.patch.modifiers}::text[], updated_at = now()
+        WHERE id = ${args.id}::uuid
+      `;
+      touched = true;
+    }
+
+    if (args.overrides && args.overrides.length > 0) {
+      for (const o of args.overrides) {
+        await tx.$executeRaw`
+          INSERT INTO audit_log (
+            org_id, user_id, action, target_type, target_id, payload
+          ) VALUES (
+            ${args.orgId}::uuid, ${args.userId}::uuid,
+            'superbill_code_override', 'superbill', ${args.id}::uuid,
+            ${JSON.stringify({ code: o.code, reason: o.reason })}::jsonb
+          )
+        `;
+      }
+    }
+
+    return { updated: touched };
+  });
+}
+
 export async function markStatus(args: {
   orgId: string;
   id: string;
