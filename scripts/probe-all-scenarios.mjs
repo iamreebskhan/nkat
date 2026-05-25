@@ -208,6 +208,16 @@ const gBusy = await req("POST", "/api/integrations/google/busy", {
 });
 ok("google busy route responds (status 422/503/200)", [200, 422, 503].includes(gBusy.s), `status=${gBusy.s}`);
 
+// Phase F — messaging (nurses-only v1)
+const postMsg = await req("POST", `/api/patients/${patientId}/messages`, { body: "Probe: hi team about this patient" });
+ok("post message succeeds", postMsg.s === 201 || postMsg.s === 200, `status=${postMsg.s}`);
+const listMsg = await req("GET", `/api/patients/${patientId}/messages`);
+ok(
+  "list messages returns at least one",
+  listMsg.s === 200 && (listMsg.j?.data?.messages?.length ?? 0) >= 1,
+  `count=${listMsg.j?.data?.messages?.length ?? 0}`,
+);
+
 // billing intelligence
 const look = await req("POST", "/api/billing/lookup", { payerId: aetna, state: "OH", cptCode: "99349", attribute: "covered" });
 ok("billing.lookup — cited", look.j?.data?.source === "structured_rule" && !!look.j?.data?.citation);
