@@ -11,8 +11,8 @@
  *
  * Source of data:
  *   GET /api/billing/allowed-codes?payerId&state&query
- *   GET /api/billing/codes?query  (TODO: fallback "show all" needs this
- *     endpoint; in v1 we simply allow free-text entry for off-allowlist)
+ *   "Show all" toggle adds includeDenied=true to surface not_covered /
+ *   unknown rows so the nurse can pick one (override modal still fires).
  *
  * Empty state: if the payer has zero allowed codes (no rules ingested
  * yet for that payer/state), show a CTA to request analyst attestation
@@ -94,6 +94,7 @@ export function CodePicker({
     setLoading(true);
     const params = new URLSearchParams({ payerId, state });
     if (query.trim().length > 0) params.set("query", query.trim());
+    if (showAll) params.set("includeDenied", "true");
     fetch(`/api/billing/allowed-codes?${params.toString()}`, {
       signal: ctrl.signal,
     })
@@ -113,7 +114,7 @@ export function CodePicker({
       abandoned = true;
       ctrl.abort();
     };
-  }, [payerId, state, query]);
+  }, [payerId, state, query, showAll]);
 
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 

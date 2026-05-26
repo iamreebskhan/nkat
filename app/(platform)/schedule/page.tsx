@@ -198,6 +198,30 @@ function NewVisitComposer({
       body: JSON.stringify(body),
     });
     const data = await res.json();
+    // Phase E — 409 means Google Calendar reports overlap. Offer to
+    // override and resubmit with confirmDoubleBook=true.
+    if (res.status === 409) {
+      const ok = window.confirm(
+        `${data.error ?? "Conflict with existing Google Calendar events."}\n\nSchedule anyway?`,
+      );
+      if (ok) {
+        const res2 = await fetch("/api/visits", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...body, confirmDoubleBook: true }),
+        });
+        const data2 = await res2.json();
+        setSubmitting(false);
+        if (!data2.success) {
+          setError(data2.error ?? "Schedule failed.");
+          return;
+        }
+        onCreated(data2.data.id);
+        return;
+      }
+      setSubmitting(false);
+      return;
+    }
     setSubmitting(false);
     if (!data.success) {
       setError(data.error ?? "Schedule failed.");
