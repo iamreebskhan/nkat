@@ -198,6 +198,15 @@ ok("admin gate: POST /api/admin/cheatsheet-templates → 403", adminCtScan.s ===
 const adminCtPub = await req("POST", "/api/admin/cheatsheet-templates/00000000-0000-0000-0000-000000000000/publish", {});
 ok("admin gate: publish endpoint → 403", adminCtPub.s === 403, `status=${adminCtPub.s}`);
 
+// Phase G — org-side published templates list (may be empty; just verify reachable).
+const orgT = await req("GET", "/api/cheatsheets/templates");
+ok("org cheatsheets/templates responds", orgT.s === 200, `rows=${orgT.j?.data?.rows?.length ?? 0}`);
+
+// Phase A "Show all" — includeDenied flag is honored.
+const acAll = await req("GET", `/api/billing/allowed-codes?payerId=${aetna}&state=OH&includeDenied=true`);
+ok("billing.allowed-codes includeDenied responds", acAll.s === 200,
+  `rows=${acAll.j?.data?.rows?.length ?? 0}`);
+
 // Phase E — Google integration: connecting without config → 503 (or 401 if unauth).
 // We just confirm the routes exist; full OAuth round-trip needs Google creds.
 const gStatus = await req("GET", "/api/integrations/google");

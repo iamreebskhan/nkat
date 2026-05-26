@@ -144,6 +144,68 @@ export default function CheatSheetsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <PublishedTemplates onPick={(payerId, state) => { setPayerId(payerId); setState(state); }} />
     </div>
+  );
+}
+
+interface TemplateRow {
+  id: string;
+  payerId: string;
+  payerName: string;
+  state: string;
+  ruleCountNow: number;
+  publishedAt: string | null;
+}
+
+function PublishedTemplates({ onPick }: { onPick: (payerId: string, state: string) => void }) {
+  const [rows, setRows] = useState<TemplateRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/cheatsheets/templates")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) setRows(d.data.rows ?? []);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return null;
+  if (rows.length === 0) return null;
+
+  return (
+    <Card className="mt-6">
+      <CardContent className="p-6">
+        <h2 className="text-base font-medium text-slate-900">Published cheat sheets</h2>
+        <p className="text-xs text-slate-500 mt-1">
+          Pallio operators publish these once enough rules have been verified for the
+          combination. Click to pre-fill the form above.
+        </p>
+        <ul className="mt-3 divide-y divide-slate-100 text-sm">
+          {rows.map((t) => (
+            <li
+              key={t.id}
+              className="py-2 flex items-center justify-between hover:bg-slate-50 rounded px-2 -mx-2"
+            >
+              <div>
+                <span className="font-medium text-slate-800">{t.payerName}</span>
+                <span className="mx-2 text-slate-300">·</span>
+                <span className="font-mono tabular text-xs">{t.state}</span>
+                <span className="ml-2 text-xs text-slate-500">{t.ruleCountNow} rules</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => onPick(t.payerId, t.state)}
+                className="text-xs text-emerald-700 hover:underline"
+              >
+                Use this →
+              </button>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }

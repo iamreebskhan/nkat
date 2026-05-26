@@ -27,7 +27,7 @@ export interface AllowedCode {
   descriptor: string;
   category: string | null;
   codeSystem: "CPT" | "HCPCS2";
-  coverageStatus: "covered" | "varies";
+  coverageStatus: "covered" | "varies" | "not_covered" | "unknown";
   confidence: number;
   sourceKind: SourceKind;
   /** ISO date — when this rule started being in effect. */
@@ -53,7 +53,7 @@ interface ViewRow {
   descriptor: string;
   category: string | null;
   code_system: "CPT" | "HCPCS2";
-  coverage_status: "covered" | "varies";
+  coverage_status: "covered" | "varies" | "not_covered" | "unknown";
   confidence: string; // numeric(3,2) comes back as string from Prisma raw
   effective_date: Date;
   rule_created_at: Date;
@@ -99,10 +99,19 @@ export async function getAllowedCodesForPayer(args: {
   /** YYYY-MM-DD; defaults to today. Used to filter expired rules. */
   dos?: string;
   productLine?: string;
+  /**
+   * Phase A "show all" mode — also return codes where coverage_status
+   * is 'not_covered' or 'unknown'. By default (false) the picker only
+   * surfaces covered/varies codes so denied codes don't appear in the
+   * autocomplete; the nurse can flip it on to bypass when they need to
+   * add a denied code anyway (which still triggers the override modal).
+   */
+  includeDenied?: boolean;
 }): Promise<AllowedCode[]> {
   const dos = args.dos ?? new Date().toISOString().slice(0, 10);
   const productLine = args.productLine ?? "commercial";
-  const key = cacheKey({ ...args, dos, productLine });
+  const includeDenied = args.includeDenied ?? false;
+  const key = cacheKey({ ...args, dos, productLine }) + (includeDenied ? "|denied" : "");
 
   const cached = CACHE.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.rows;
@@ -110,6 +119,9 @@ export async function getAllowedCodesForPayer(args: {
   // Use the view. The view already filters to active+covered rules,
   // but we still respect `dos` here so a request for a historic date
   // (denial review, audit) returns the right set.
+  const statusFilter = includeDenied
+    ? ["covered", "varies", "not_covered", "unknown"]
+    : ["covered", "varies"];
   const rows = await prisma.$queryRaw<ViewRow[]>`
     SELECT
       payer_id, state, product_line, code,
@@ -124,7 +136,12 @@ export async function getAllowedCodesForPayer(args: {
       AND state    = ${args.state}
       AND product_line = ${productLine}
       AND effective_date <= ${dos}::date
-    ORDER BY COALESCE(category, 'zzz') ASC, code ASC
+      AND coverage_status = ANY(${statusFilter}::text[])
+    ORDER BY
+      CASE coverage_status
+        WHEN 'covered' THEN 0 WHEN 'varies' THEN 1
+        WHEN 'unknown' THEN 2 WHEN 'not_covered' THEN 3 ELSE 4 END,
+      COALESCE(category, 'zzz') ASC, code ASC
   `;
 
   const mapped: AllowedCode[] = rows.map((r) => ({
@@ -165,6 +182,7 @@ export async function searchAllowedCodes(args: {
   dos?: string;
   productLine?: string;
   limit?: number;
+  includeDenied?: boolean;
 }): Promise<AllowedCode[]> {
   const all = await getAllowedCodesForPayer(args);
   const limit = Math.min(50, Math.max(1, args.limit ?? 20));
