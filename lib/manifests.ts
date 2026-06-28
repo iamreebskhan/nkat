@@ -81,6 +81,7 @@ export const MANIFESTS: Record<RoleKey, Manifest> = {
       { label: "Rule lookup", href: "/billing/lookup", icon: "SearchCheck", requires: "billing.lookup.view" },
       { label: "Superbills", href: "/billing/superbills", icon: "Receipt", requires: "billing.superbills.view" },
       { label: "Denials", href: "/billing/denials", icon: "AlertTriangle", requires: "billing.denials.view" },
+      { label: "Rulebook", href: "/settings/rulebook", icon: "ScrollText", requires: "knowledge.view" },
       { label: "Cheat sheets", href: "/cheat-sheets", icon: "BookOpen", requires: "cheatsheets.view" },
     ],
     cards: ["denials_recent", "unbilled"],

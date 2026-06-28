@@ -33,6 +33,34 @@ export function ThreadPanel({ patientId, selfUserId }: Props) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editBody, setEditBody] = useState("");
+
+  // 5-minute edit window (mirrors EDIT_WINDOW_MS server-side).
+  const EDIT_WINDOW_MS = 5 * 60 * 1000;
+  function canEdit(m: Message): boolean {
+    return (
+      m.authorUserId === selfUserId &&
+      Date.now() - new Date(m.createdAt).getTime() < EDIT_WINDOW_MS
+    );
+  }
+
+  async function saveEdit(id: string) {
+    if (editBody.trim().length === 0) return;
+    const r = await fetch(`/api/messages/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: editBody.trim() }),
+    });
+    const data = await r.json();
+    if (data.success) {
+      setEditingId(null);
+      setEditBody("");
+      load();
+    } else {
+      setError(data.error ?? "Edit failed.");
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -90,12 +118,51 @@ export function ThreadPanel({ patientId, selfUserId }: Props) {
               <span>
                 {m.authorUserId === selfUserId ? "You" : m.authorUserId.slice(0, 8)}
               </span>
-              <span>
+              <span className="flex items-center gap-2">
                 {new Date(m.createdAt).toLocaleString()}
-                {m.editedAt && <span className="ml-1 italic">(edited)</span>}
+                {m.editedAt && <span className="italic">(edited)</span>}
+                {editingId !== m.id && canEdit(m) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingId(m.id);
+                      setEditBody(m.body);
+                    }}
+                    className="text-emerald-700 hover:underline"
+                  >
+                    edit
+                  </button>
+                )}
               </span>
             </div>
-            <p className="whitespace-pre-wrap text-slate-800">{m.body}</p>
+            {editingId === m.id ? (
+              <div className="mt-1 space-y-1">
+                <textarea
+                  value={editBody}
+                  onChange={(e) => setEditBody(e.target.value)}
+                  rows={2}
+                  maxLength={5000}
+                  className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                />
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => saveEdit(m.id)} disabled={!editBody.trim()}>
+                    Save
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setEditingId(null);
+                      setEditBody("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <p className="whitespace-pre-wrap text-slate-800">{m.body}</p>
+            )}
           </li>
         ))}
       </ol>

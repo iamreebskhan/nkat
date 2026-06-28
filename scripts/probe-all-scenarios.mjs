@@ -131,6 +131,13 @@ ok(
   firstAcuity === "critical" || (listSorted.j?.data?.rows ?? []).length === 1,
   `first=${firstAcuity ?? "(none)"}`,
 );
+// caseload last/next visit columns surfaced (Mark's ask)
+const sampleRow = listSorted.j?.data?.rows?.[0];
+ok(
+  "patient list carries lastVisitDate + nextVisitDate fields",
+  sampleRow && "lastVisitDate" in sampleRow && "nextVisitDate" in sampleRow,
+  `last=${sampleRow?.lastVisitDate ?? "null"} next=${sampleRow?.nextVisitDate ?? "null"}`,
+);
 
 // visit + care plan + superbill
 const start = new Date(Date.now() + 86_400_000).toISOString();
@@ -226,6 +233,12 @@ ok(
   listMsg.s === 200 && (listMsg.j?.data?.messages?.length ?? 0) >= 1,
   `count=${listMsg.j?.data?.messages?.length ?? 0}`,
 );
+// @mention message → notification inbox readable
+const mentionMsg = await req("POST", `/api/patients/${patientId}/messages`, { body: `Probe @${email} please review` });
+const notif = await req("GET", "/api/notifications");
+ok("notifications endpoint responds with unreadCount", notif.s === 200 && typeof notif.j?.data?.unreadCount === "number",
+  `unread=${notif.j?.data?.unreadCount}`);
+ok("notifications mark-read works", (await req("PATCH", "/api/notifications", {})).s === 200);
 
 // billing intelligence
 const look = await req("POST", "/api/billing/lookup", { payerId: aetna, state: "OH", cptCode: "99349", attribute: "covered" });

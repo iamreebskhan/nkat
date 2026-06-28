@@ -136,6 +136,10 @@ export interface PatientView {
   primaryMemberId: string | null;
   primaryDiagnosisIcd10: string | null;
   acuity: PatientAcuity | null;
+  /** Most recent completed/started visit (ISO date) — caseload column. */
+  lastVisitDate: string | null;
+  /** Next upcoming scheduled visit (ISO date) — caseload column. */
+  nextVisitDate: string | null;
   status: PatientStatus;
   createdAt: string;
   updatedAt: string;

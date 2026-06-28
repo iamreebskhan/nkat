@@ -97,6 +97,8 @@ interface PatientRow {
   primary_member_id: string | null;
   primary_diagnosis_icd10: string | null;
   acuity: PatientView["acuity"];
+  last_visit_date: Date | null;
+  next_visit_date: Date | null;
   status: PatientStatus;
   created_at: Date;
   updated_at: Date;
@@ -118,6 +120,8 @@ function rowToView(row: PatientRow): PatientView {
     primaryMemberId: row.primary_member_id,
     primaryDiagnosisIcd10: row.primary_diagnosis_icd10,
     acuity: row.acuity,
+    lastVisitDate: row.last_visit_date ? row.last_visit_date.toISOString().slice(0, 10) : null,
+    nextVisitDate: row.next_visit_date ? row.next_visit_date.toISOString().slice(0, 10) : null,
     status: row.status,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -133,7 +137,14 @@ export async function getPatient(args: {
       SELECT id, first_name, last_name, date_of_birth,
              sex_assigned_at_birth, address_line_1, city, state, zip, phone,
              primary_payer_id, primary_member_id,
-             primary_diagnosis_icd10, acuity, status, created_at, updated_at
+             primary_diagnosis_icd10, acuity,
+             (SELECT MAX(COALESCE(v.start_time, v.scheduled_start)) FROM visit v
+               WHERE v.patient_id = patient.id
+                 AND COALESCE(v.start_time, v.scheduled_start) <= now()) AS last_visit_date,
+             (SELECT MIN(v.scheduled_start) FROM visit v
+               WHERE v.patient_id = patient.id
+                 AND v.scheduled_start > now()) AS next_visit_date,
+             status, created_at, updated_at
       FROM patient
       WHERE id = ${args.id}::uuid
       LIMIT 1
@@ -172,7 +183,14 @@ export async function listPatients(
           SELECT id, first_name, last_name, date_of_birth,
                  sex_assigned_at_birth, address_line_1, city, state, zip, phone,
                  primary_payer_id, primary_member_id,
-                 primary_diagnosis_icd10, acuity, status, created_at, updated_at
+                 primary_diagnosis_icd10, acuity,
+             (SELECT MAX(COALESCE(v.start_time, v.scheduled_start)) FROM visit v
+               WHERE v.patient_id = patient.id
+                 AND COALESCE(v.start_time, v.scheduled_start) <= now()) AS last_visit_date,
+             (SELECT MIN(v.scheduled_start) FROM visit v
+               WHERE v.patient_id = patient.id
+                 AND v.scheduled_start > now()) AS next_visit_date,
+             status, created_at, updated_at
           FROM patient
           WHERE status = ${status}
             AND (
@@ -190,7 +208,14 @@ export async function listPatients(
           SELECT id, first_name, last_name, date_of_birth,
                  sex_assigned_at_birth, address_line_1, city, state, zip, phone,
                  primary_payer_id, primary_member_id,
-                 primary_diagnosis_icd10, acuity, status, created_at, updated_at
+                 primary_diagnosis_icd10, acuity,
+             (SELECT MAX(COALESCE(v.start_time, v.scheduled_start)) FROM visit v
+               WHERE v.patient_id = patient.id
+                 AND COALESCE(v.start_time, v.scheduled_start) <= now()) AS last_visit_date,
+             (SELECT MIN(v.scheduled_start) FROM visit v
+               WHERE v.patient_id = patient.id
+                 AND v.scheduled_start > now()) AS next_visit_date,
+             status, created_at, updated_at
           FROM patient
           WHERE status = ${status}
           ORDER BY
@@ -222,7 +247,14 @@ export async function searchPatients(args: {
       SELECT id, first_name, last_name, date_of_birth,
              sex_assigned_at_birth, address_line_1, city, state, zip, phone,
              primary_payer_id, primary_member_id,
-             primary_diagnosis_icd10, acuity, status, created_at, updated_at
+             primary_diagnosis_icd10, acuity,
+             (SELECT MAX(COALESCE(v.start_time, v.scheduled_start)) FROM visit v
+               WHERE v.patient_id = patient.id
+                 AND COALESCE(v.start_time, v.scheduled_start) <= now()) AS last_visit_date,
+             (SELECT MIN(v.scheduled_start) FROM visit v
+               WHERE v.patient_id = patient.id
+                 AND v.scheduled_start > now()) AS next_visit_date,
+             status, created_at, updated_at
       FROM patient
       WHERE status = 'active'
         AND (

@@ -312,6 +312,25 @@ export default function NewPatientPage() {
                   }
                 />
               </Field>
+              <Field id="acuity" label="Acuity" optional>
+                <select
+                  id="acuity"
+                  value={data.clinical.acuity ?? ""}
+                  onChange={(e) =>
+                    setClinical(
+                      "acuity",
+                      (e.target.value || undefined) as CreatePatient["clinical"]["acuity"],
+                    )
+                  }
+                  className="h-10 w-full px-3 rounded-md border border-slate-300 bg-white text-sm"
+                >
+                  <option value="">— unassigned —</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </Field>
             </div>
             <Field id="reason" label="Reason for palliative referral" optional>
               <TextArea

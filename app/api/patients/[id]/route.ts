@@ -40,6 +40,14 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
   const body = await parseJson(req, UpdatePatientSchema);
   if (body instanceof Response) return body;
 
+  // Acuity is a clinical judgement — gate it on the finer-grained
+  // patient.acuity.edit permission (clinician + org_admin have it).
+  if (body.clinical?.acuity && !session.permissions.includes("patient.acuity.edit")) {
+    return fail("patient.acuity.edit permission required to change acuity.", {
+      status: 403,
+    });
+  }
+
   const { id } = await ctx.params;
   try {
     const r = await updatePatient({
