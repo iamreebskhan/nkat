@@ -38,6 +38,12 @@ export default function DenialDetailPage({
   const [analyzing, setAnalyzing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [prediction, setPrediction] = useState<{
+    cptCode: string;
+    outcome: string;
+    predictedForCode: { riskBand: string; score: number } | null;
+    worstBand: string | null;
+  } | null>(null);
 
   async function load() {
     try {
@@ -48,6 +54,14 @@ export default function DenialDetailPage({
         return;
       }
       setDenial(data.data);
+      // Phase B.2 — fetch what the pre-submit predictor said for this code.
+      try {
+        const pr = await fetch(`/api/denials/${id}/prediction`);
+        const pd = await pr.json();
+        if (pd.success) setPrediction(pd.data);
+      } catch {
+        /* prediction is best-effort context */
+      }
     } catch {
       setError("Network error.");
     } finally {
@@ -150,6 +164,48 @@ export default function DenialDetailPage({
           )}
         </CardContent>
       </Card>
+
+      {prediction && (
+        <Card
+          className="mb-4"
+          severity={
+            prediction.predictedForCode &&
+            ["high", "block"].includes(prediction.predictedForCode.riskBand)
+              ? "success"
+              : "warn"
+          }
+        >
+          <CardHeader>
+            <CardTitle>Predicted vs. actual</CardTitle>
+            <CardDescription>
+              Did the pre-submission predictor flag this before it was billed?
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-slate-700">
+            {prediction.predictedForCode ? (
+              ["high", "block"].includes(prediction.predictedForCode.riskBand) ? (
+                <p className="text-emerald-800">
+                  ✓ Predictor flagged {prediction.cptCode} as{" "}
+                  <strong>{prediction.predictedForCode.riskBand}</strong> risk (
+                  {(prediction.predictedForCode.score * 100).toFixed(0)}%) before
+                  submission — this denial was foreseeable.
+                </p>
+              ) : (
+                <p className="text-amber-900">
+                  ✗ Predictor rated {prediction.cptCode} only{" "}
+                  <strong>{prediction.predictedForCode.riskBand}</strong> risk (
+                  {(prediction.predictedForCode.score * 100).toFixed(0)}%) — a miss
+                  the feedback loop will learn from.
+                </p>
+              )
+            ) : (
+              <p className="text-slate-500">
+                No pre-submission prediction was captured for this superbill.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card
         className="mb-4"

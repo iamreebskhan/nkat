@@ -38,8 +38,46 @@ function client(): Anthropic {
       "ANTHROPIC_API_KEY is not set. Rule synthesis requires the Anthropic API; SQL-only lookups still work without it.",
     );
   }
-  _client = new Anthropic({ apiKey });
+  // maxRetries covers the SDK's own retryable statuses (429/5xx/connection
+  // errors). withTransientRetry() below adds coverage for mid-stream
+  // "Premature close" / socket resets that surface as a FetchError after
+  // headers — which the SDK does not always retry.
+  _client = new Anthropic({ apiKey, maxRetries: 4 });
   return _client;
+}
+
+/**
+ * Retry a call on transient network failures that the SDK's own retry
+ * doesn't catch — chiefly "Premature close" / ECONNRESET / "socket hang
+ * up" which happen when the connection to api.anthropic.com is cut while
+ * the response body is streaming. These are not deterministic failures;
+ * a short backoff almost always clears them. Non-transient errors (bad
+ * request, auth, zod parse) are re-thrown immediately.
+ */
+async function withTransientRetry<T>(
+  fn: () => Promise<T>,
+  attempts = 4,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      const transient =
+        msg.includes("premature close") ||
+        msg.includes("econnreset") ||
+        msg.includes("socket hang up") ||
+        msg.includes("network") ||
+        msg.includes("fetch failed") ||
+        msg.includes("terminated");
+      if (!transient || i === attempts - 1) throw err;
+      // 250ms, 500ms, 1000ms backoff.
+      await new Promise((r) => setTimeout(r, 250 * 2 ** i));
+    }
+  }
+  throw lastErr;
 }
 
 /** True iff the API is configured. Callers can degrade gracefully. */
@@ -125,12 +163,14 @@ const PARSER_SYSTEM_PROMPT = [
 
 export async function parseRuleQuery(query: string): Promise<ParsedQuery> {
   assertNoPhi(query, "parseRuleQuery");
-  const response = await client().messages.create({
-    model: QUERY_PARSER_MODEL,
-    max_tokens: 400,
-    system: PARSER_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: query }],
-  });
+  const response = await withTransientRetry(() =>
+    client().messages.create({
+      model: QUERY_PARSER_MODEL,
+      max_tokens: 400,
+      system: PARSER_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: query }],
+    }),
+  );
 
   const block = response.content[0];
   if (!block || block.type !== "text") {
@@ -247,17 +287,19 @@ export async function synthesizeRuleAnswer(args: {
     .join("\n\n---\n\n");
 
   assertNoPhi([query, context], "synthesizeRuleAnswer");
-  const response = await client().messages.create({
-    model: RULE_SYNTHESIS_MODEL,
-    max_tokens: 600,
-    system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: `Context:\n${context || "(no context available)"}\n\nQuestion: ${query}`,
-      },
-    ],
-  });
+  const response = await withTransientRetry(() =>
+    client().messages.create({
+      model: RULE_SYNTHESIS_MODEL,
+      max_tokens: 600,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: `Context:\n${context || "(no context available)"}\n\nQuestion: ${query}`,
+        },
+      ],
+    }),
+  );
 
   const block = response.content[0];
   if (!block || block.type !== "text") {

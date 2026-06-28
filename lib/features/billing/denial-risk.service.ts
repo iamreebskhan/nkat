@@ -105,6 +105,12 @@ export interface RiskReason {
   contribution: number;
   /** Cited payer_rule.id so the UI can deep-link. */
   payerRuleId?: string;
+  /**
+   * Historical precision of THIS reason code from the nightly feedback
+   * loop (denial_rule_metrics), 0..100. Attached by the predict service
+   * (the pure scorer never touches the DB). Undefined until we have data.
+   */
+  precisionPct?: number | null;
 }
 
 export interface RiskResult {
