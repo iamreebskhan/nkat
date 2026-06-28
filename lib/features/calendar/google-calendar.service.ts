@@ -19,7 +19,7 @@
  * raises a typed error the route translates into a friendly 503 "set up
  * Google Calendar in env first" message instead of a crash.
  */
-import { withOrgContext } from "@/lib/db";
+import { withBreakglass, withOrgContext } from "@/lib/db";
 
 const GOOGLE_OAUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -307,6 +307,169 @@ export async function disconnect(args: { orgId: string; userId: string }): Promi
       DELETE FROM clinician_calendar_link
        WHERE org_id = ${args.orgId}::uuid AND user_id = ${args.userId}::uuid
     `;
+  });
+}
+
+/**
+ * Inbound pull (Phase E) — fetch the clinician's Google events and cache
+ * each as a read-only busy block (visit_external_event rows with
+ * visit_id NULL, direction='external_origin'). We do NOT create phantom
+ * Pallio visits from arbitrary Google events; the schedule grid renders
+ * these blocks so the clinician sees non-Pallio commitments inline.
+ *
+ * Incremental via sync_token when present; first run does a 30-day
+ * forward window. Returns counts.
+ */
+export async function pullEventsForClinician(args: {
+  orgId: string;
+  userId: string;
+}): Promise<{ upserted: number; cancelled: number }> {
+  const token = await getAccessToken({ orgId: args.orgId, userId: args.userId });
+
+  const link = await withOrgContext(args.orgId, async (tx) =>
+    tx.$queryRaw<{ sync_token: string }[]>`
+      SELECT sync_token FROM clinician_calendar_link
+       WHERE org_id = ${args.orgId}::uuid AND user_id = ${args.userId}::uuid LIMIT 1
+    `,
+  );
+  const syncToken = link[0]?.sync_token || "";
+
+  const params = new URLSearchParams({ singleEvents: "true", showDeleted: "true", maxResults: "250" });
+  if (syncToken) {
+    params.set("syncToken", syncToken);
+  } else {
+    params.set("timeMin", new Date().toISOString());
+    // 30 days forward on first sync.
+    const horizon = new Date();
+    horizon.setUTCDate(horizon.getUTCDate() + 30);
+    params.set("timeMax", horizon.toISOString());
+    params.set("orderBy", "startTime");
+  }
+
+  const r = await fetch(
+    `${GOOGLE_CALENDAR_API}/calendars/primary/events?${params.toString()}`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  if (r.status === 410) {
+    // Sync token expired — clear it so the next run does a full window.
+    await withOrgContext(args.orgId, async (tx) => {
+      await tx.$executeRaw`
+        UPDATE clinician_calendar_link SET sync_token = '' WHERE org_id = ${args.orgId}::uuid AND user_id = ${args.userId}::uuid
+      `;
+    });
+    return { upserted: 0, cancelled: 0 };
+  }
+  if (!r.ok) throw new Error(`Google events.list failed (${r.status})`);
+  const data = (await r.json()) as {
+    items?: Array<{
+      id: string;
+      status?: string;
+      summary?: string;
+      start?: { dateTime?: string; date?: string };
+      end?: { dateTime?: string; date?: string };
+    }>;
+    nextSyncToken?: string;
+  };
+
+  let upserted = 0;
+  let cancelled = 0;
+  await withOrgContext(args.orgId, async (tx) => {
+    for (const ev of data.items ?? []) {
+      // Skip events we ourselves pushed (direction pallio_origin) — those
+      // are already Pallio visits; re-importing would double-count.
+      const mine = await tx.$queryRaw<{ direction: string }[]>`
+        SELECT direction FROM visit_external_event
+         WHERE provider = 'google' AND external_event_id = ${ev.id} LIMIT 1
+      `;
+      if (mine[0]?.direction === "pallio_origin") continue;
+
+      if (ev.status === "cancelled") {
+        const n = await tx.$executeRaw`
+          UPDATE visit_external_event SET cancelled = TRUE
+           WHERE provider = 'google' AND external_event_id = ${ev.id}
+        `;
+        cancelled += n;
+        continue;
+      }
+      const start = ev.start?.dateTime ?? (ev.start?.date ? `${ev.start.date}T00:00:00Z` : null);
+      const end = ev.end?.dateTime ?? (ev.end?.date ? `${ev.end.date}T23:59:59Z` : null);
+      if (!start || !end) continue;
+      await tx.$executeRaw`
+        INSERT INTO visit_external_event (
+          org_id, visit_id, provider, external_event_id, direction,
+          user_id, external_summary, external_start, external_end, cancelled
+        ) VALUES (
+          ${args.orgId}::uuid, NULL, 'google', ${ev.id}, 'external_origin',
+          ${args.userId}::uuid, ${ev.summary ?? "(busy)"},
+          ${start}::timestamptz, ${end}::timestamptz, FALSE
+        )
+        ON CONFLICT (provider, external_event_id) DO UPDATE SET
+          external_summary = EXCLUDED.external_summary,
+          external_start = EXCLUDED.external_start,
+          external_end = EXCLUDED.external_end,
+          cancelled = FALSE,
+          last_seen_at = now()
+      `;
+      upserted += 1;
+    }
+    await tx.$executeRaw`
+      UPDATE clinician_calendar_link
+         SET sync_token = ${data.nextSyncToken ?? syncToken}, last_pull_at = now(), updated_at = now()
+       WHERE org_id = ${args.orgId}::uuid AND user_id = ${args.userId}::uuid
+    `;
+  });
+  return { upserted, cancelled };
+}
+
+/** Pull for every connected clinician (cron entry). */
+export async function pullAllConnected(): Promise<{ clinicians: number; upserted: number }> {
+  const links = await withBreakglass(async (client) => {
+    return client.$queryRaw<{ org_id: string; user_id: string }[]>`
+      SELECT org_id, user_id FROM clinician_calendar_link WHERE status = 'connected'
+    `;
+  }, "pull-calendar: list connected links");
+  let upserted = 0;
+  for (const l of links) {
+    try {
+      const res = await pullEventsForClinician({ orgId: l.org_id, userId: l.user_id });
+      upserted += res.upserted;
+    } catch (e) {
+      console.warn(`pull failed for ${l.user_id}:`, e);
+    }
+  }
+  return { clinicians: links.length, upserted };
+}
+
+/**
+ * Read cached external busy blocks for the schedule grid, in [from,to].
+ */
+export async function getExternalBusyBlocks(args: {
+  orgId: string;
+  userId?: string;
+  fromIso: string;
+  toIso: string;
+}): Promise<Array<{ summary: string; start: string; end: string; userId: string | null }>> {
+  return withOrgContext(args.orgId, async (tx) => {
+    const rows = await tx.$queryRaw<
+      { external_summary: string | null; external_start: Date; external_end: Date; user_id: string | null }[]
+    >`
+      SELECT external_summary, external_start, external_end, user_id
+        FROM visit_external_event
+       WHERE org_id = ${args.orgId}::uuid
+         AND visit_id IS NULL AND cancelled = FALSE
+         AND direction = 'external_origin'
+         AND external_start IS NOT NULL
+         AND external_start < ${args.toIso}::timestamptz
+         AND external_end   > ${args.fromIso}::timestamptz
+         AND (${args.userId ?? null}::uuid IS NULL OR user_id = ${args.userId ?? null}::uuid)
+       ORDER BY external_start ASC
+    `;
+    return rows.map((r) => ({
+      summary: r.external_summary ?? "(busy)",
+      start: r.external_start.toISOString(),
+      end: r.external_end.toISOString(),
+      userId: r.user_id,
+    }));
   });
 }
 
