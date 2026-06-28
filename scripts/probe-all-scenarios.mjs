@@ -264,7 +264,11 @@ ok("billing.lookup — cited", look.j?.data?.source === "structured_rule" && !!l
 const nl = await req("POST", "/api/billing/lookup", { query: "Does Aetna cover 99349 in Ohio?" });
 ok("billing.lookup — natural language", nl.j?.data?.source === "structured_rule");
 const cs = await req("POST", "/api/cheatsheets", { state: "OH", payerId: aetna, cptCodes: ["99348", "99349"], orgName });
-ok("cheatsheets.pdf", cs.s === 200 && cs.isPdf && cs.bytes > 5000, `${cs.bytes}B`);
+// 200 = generated; 403 = Phase G gate (a corpus template exists for this
+// payer/state but isn't published yet). Both are correct outcomes.
+ok("cheatsheets.pdf (or Q7 published-gate 403)",
+  (cs.s === 200 && cs.isPdf && cs.bytes > 5000) || cs.s === 403,
+  cs.s === 403 ? "gated pending review (Q7)" : `${cs.bytes}B`);
 
 // denials
 const denial = await req("POST", "/api/denials", { superbillId, cptCode: "99349", carcCode: "16", denialReason: "test", deniedAmountCents: 12500, deniedAt: new Date().toISOString() });
