@@ -38,26 +38,48 @@ export default function SchedulePage() {
   );
 }
 
+interface ExternalBusy { summary: string; start: string; end: string; userId: string | null }
+interface TimeOffEntry { id: string; clinicianUserId: string; clinicianName: string | null; startDate: string; endDate: string; reason: string | null }
+
 function ScheduleInner() {
   const [visits, setVisits] = useState<VisitView[]>([]);
+  const [externalBusy, setExternalBusy] = useState<ExternalBusy[]>([]);
+  const [timeOff, setTimeOff] = useState<TimeOffEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const [addingPto, setAddingPto] = useState(false);
+  // Monday of the displayed week (local).
+  const [weekStart, setWeekStart] = useState<Date>(() => mondayOf(new Date()));
 
   const router = useRouter();
   const params = useSearchParams();
   const preselectPatientId = params.get("patientId") ?? "";
 
+  const days = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
+    [weekStart],
+  );
+  const weekEnd = useMemo(() => addDays(weekStart, 7), [weekStart]);
+
   async function reload() {
     setLoading(true);
     try {
-      const r = await fetch("/api/visits?status=scheduled&limit=200");
-      const data = await r.json();
-      if (!data.success) {
-        setError(data.error ?? "Failed to load.");
+      const [vr, cr] = await Promise.all([
+        fetch("/api/visits?status=scheduled&limit=200").then((r) => r.json()),
+        fetch(
+          `/api/schedule/context?from=${weekStart.toISOString()}&to=${weekEnd.toISOString()}`,
+        ).then((r) => r.json()),
+      ]);
+      if (!vr.success) {
+        setError(vr.error ?? "Failed to load.");
         return;
       }
-      setVisits(data.data.rows ?? []);
+      setVisits(vr.data.rows ?? []);
+      if (cr.success) {
+        setExternalBusy(cr.data.externalBusy ?? []);
+        setTimeOff(cr.data.timeOff ?? []);
+      }
     } catch {
       setError("Network error.");
     } finally {
@@ -68,20 +90,68 @@ function ScheduleInner() {
   useEffect(() => {
     void reload();
     if (preselectPatientId) setComposing(true);
-  }, [preselectPatientId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preselectPatientId, weekStart]);
 
-  const grouped = useMemo(() => groupByDay(visits), [visits]);
+  async function reschedule(visitId: string, dayIso: string, originalIso: string | null) {
+    // Keep the original time-of-day, move to the dropped day.
+    const orig = originalIso ? new Date(originalIso) : new Date();
+    const target = new Date(`${dayIso}T00:00:00`);
+    target.setHours(orig.getHours(), orig.getMinutes(), 0, 0);
+    const r = await fetch(`/api/visits/${visitId}/reschedule`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scheduledStart: target.toISOString() }),
+    });
+    const d = await r.json();
+    if (!d.success) {
+      alert(d.error ?? "Reschedule failed.");
+      return;
+    }
+    void reload();
+  }
+
+  const byDay = useMemo(() => {
+    const map = new Map<string, VisitView[]>();
+    for (const v of visits) {
+      const ts = v.scheduledStart ?? v.startTime;
+      if (!ts) continue;
+      const day = ts.slice(0, 10);
+      const arr = map.get(day) ?? [];
+      arr.push(v);
+      map.set(day, arr);
+    }
+    return map;
+  }, [visits]);
 
   return (
     <div className="px-8 py-8">
       <header className="flex items-end justify-between mb-6 gap-4">
         <div>
           <h1 className="font-display text-3xl tracking-tight">Schedule</h1>
-          <p className="text-slate-600 mt-1">Upcoming visits across all clinicians.</p>
+          <p className="text-slate-600 mt-1">
+            Week of {weekStart.toLocaleDateString(undefined, { month: "long", day: "numeric" })}.
+            Drag a visit to another day to reschedule.
+          </p>
         </div>
-        <Button onClick={() => setComposing((v) => !v)}>
-          {composing ? "Close" : "New visit"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>← Prev</Button>
+          <Button variant="secondary" onClick={() => setWeekStart(mondayOf(new Date()))}>This week</Button>
+          <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, 7))}>Next →</Button>
+          <Link
+            href={`/schedule/print?date=${isoDay(days[0]!)}`}
+            target="_blank"
+            className="inline-flex"
+          >
+            <Button variant="secondary">Print route</Button>
+          </Link>
+          <Button variant="secondary" onClick={() => setAddingPto((v) => !v)}>
+            {addingPto ? "Close PTO" : "Add PTO"}
+          </Button>
+          <Button onClick={() => setComposing((v) => !v)}>
+            {composing ? "Close" : "New visit"}
+          </Button>
+        </div>
       </header>
 
       {composing && (
@@ -98,53 +168,194 @@ function ScheduleInner() {
         />
       )}
 
-      {loading && <p className="text-slate-500">Loading…</p>}
-      {error && <p role="alert" className="text-red-700">{error}</p>}
-      {!loading && grouped.length === 0 && !composing && (
-        <Card>
-          <CardHeader>
-            <CardTitle>No upcoming visits</CardTitle>
-            <CardDescription>Click "New visit" above to schedule one.</CardDescription>
-          </CardHeader>
-        </Card>
+      {addingPto && (
+        <PtoComposer
+          onCreated={() => {
+            setAddingPto(false);
+            void reload();
+          }}
+          onCancel={() => setAddingPto(false)}
+        />
       )}
 
-      <div className="space-y-4">
-        {grouped.map(({ date, items }) => (
-          <Card key={date}>
-            <CardHeader>
-              <CardTitle className="text-lg tabular">{prettyDate(date)}</CardTitle>
-              <CardDescription>
-                {items.length} visit{items.length === 1 ? "" : "s"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ul className="divide-y divide-slate-100">
-                {items.map((v) => (
-                  <li key={v.id} className="py-2 flex items-center justify-between text-sm">
-                    <div>
-                      <span className="font-medium">{v.visitType.replace(/_/g, " ")}</span>
-                      <span className="text-slate-500 tabular">
-                        {" · "}{timeOf(v.scheduledStart ?? v.startTime)}
-                      </span>
-                      {v.isTelehealth && (
-                        <span className="ml-2 text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700">telehealth</span>
-                      )}
-                    </div>
-                    <Link
-                      href={`/visits/${v.id}/document`}
-                      className="text-xs text-[var(--color-brand-700)] hover:underline"
+      {loading && <p className="text-slate-500">Loading…</p>}
+      {error && <p role="alert" className="text-red-700">{error}</p>}
+
+      <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
+        {days.map((day) => {
+          const dayIso = isoDay(day);
+          const dayVisits = (byDay.get(dayIso) ?? []).sort((a, b) =>
+            (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? ""),
+          );
+          const dayPto = timeOff.filter((t) => dayIso >= t.startDate && dayIso <= t.endDate);
+          const dayBusy = externalBusy.filter((b) => b.start.slice(0, 10) === dayIso);
+          const isToday = dayIso === isoDay(new Date());
+          return (
+            <div
+              key={dayIso}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                const id = e.dataTransfer.getData("text/visit-id");
+                const orig = e.dataTransfer.getData("text/visit-start");
+                if (id) void reschedule(id, dayIso, orig || null);
+              }}
+              className={`rounded-md border min-h-48 flex flex-col ${isToday ? "border-emerald-400 bg-emerald-50/20" : "border-slate-200"}`}
+            >
+              <div className="px-2 py-1.5 border-b border-slate-100 text-xs font-medium text-slate-600 flex items-center justify-between">
+                <span>{day.toLocaleDateString(undefined, { weekday: "short" })}</span>
+                <span className="tabular text-slate-400">{day.getDate()}</span>
+              </div>
+              {/* PTO badges */}
+              {dayPto.map((t) => (
+                <div key={t.id} className="mx-1 mt-1 rounded bg-slate-200/70 text-slate-700 text-[10px] px-1.5 py-0.5">
+                  PTO · {t.clinicianName ?? t.clinicianUserId.slice(0, 6)}
+                </div>
+              ))}
+              <ul className="flex-1 p-1 space-y-1">
+                {dayVisits.map((v) => (
+                  <li key={v.id}>
+                    <div
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/visit-id", v.id);
+                        e.dataTransfer.setData("text/visit-start", v.scheduledStart ?? "");
+                      }}
+                      title={[
+                        v.patientName ?? "Patient",
+                        v.patientCity ? `· ${v.patientCity}` : "",
+                        `· ${v.visitType.replace(/_/g, " ")}`,
+                        v.totalMinutes ? `· ${v.totalMinutes} min` : "",
+                        v.clinicianName ? `· ${v.clinicianName}` : "",
+                      ].filter(Boolean).join(" ")}
+                      className={`rounded px-1.5 py-1 text-[11px] cursor-grab active:cursor-grabbing ring-1 ring-inset ${providerColor(v.clinicianUserId)}`}
                     >
-                      Open →
-                    </Link>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="tabular font-medium">{timeOf(v.scheduledStart ?? v.startTime)}</span>
+                        {v.isTelehealth && <span className="text-[9px]">📹</span>}
+                      </div>
+                      <div className="truncate">{v.patientName ?? v.visitType.replace(/_/g, " ")}</div>
+                      {v.patientCity && <div className="truncate text-[10px] opacity-70">{v.patientCity}</div>}
+                      <Link
+                        href={`/visits/${v.id}/document`}
+                        className="text-[10px] underline opacity-80"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        open
+                      </Link>
+                    </div>
                   </li>
                 ))}
+                {/* External (Google) busy blocks */}
+                {dayBusy.map((b, i) => (
+                  <li key={`busy-${i}`}>
+                    <div
+                      title={`External: ${b.summary}`}
+                      className="rounded px-1.5 py-1 text-[10px] bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-300/50 border-dashed"
+                    >
+                      <span className="tabular">{timeOf(b.start)}</span> · {b.summary}
+                    </div>
+                  </li>
+                ))}
+                {dayVisits.length === 0 && dayBusy.length === 0 && (
+                  <li className="text-[10px] text-slate-300 px-1.5 py-2">—</li>
+                )}
               </ul>
-            </CardContent>
-          </Card>
-        ))}
+            </div>
+          );
+        })}
       </div>
     </div>
+  );
+}
+
+/** Deterministic provider color from the clinician id (no lib). */
+function providerColor(userId: string): string {
+  const palette = [
+    "bg-sky-100 text-sky-900 ring-sky-300/50",
+    "bg-violet-100 text-violet-900 ring-violet-300/50",
+    "bg-amber-100 text-amber-900 ring-amber-300/50",
+    "bg-emerald-100 text-emerald-900 ring-emerald-300/50",
+    "bg-rose-100 text-rose-900 ring-rose-300/50",
+    "bg-teal-100 text-teal-900 ring-teal-300/50",
+    "bg-indigo-100 text-indigo-900 ring-indigo-300/50",
+  ];
+  let h = 0;
+  for (let i = 0; i < userId.length; i++) h = (h * 31 + userId.charCodeAt(i)) >>> 0;
+  return palette[h % palette.length]!;
+}
+
+function mondayOf(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  const dow = (x.getDay() + 6) % 7; // Mon=0
+  x.setDate(x.getDate() - dow);
+  return x;
+}
+function addDays(d: Date, n: number): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+function isoDay(d: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function PtoComposer({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
+  const [members, setMembers] = useState<MemberOption[]>([]);
+  const [form, setForm] = useState({ clinicianUserId: "", startDate: "", endDate: "", reason: "" });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/api/team/members").then((r) => r.json()).then((m) => {
+      if (m.success) setMembers(m.data?.rows ?? []);
+    });
+  }, []);
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    const r = await fetch("/api/time-off", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(form),
+    });
+    const d = await r.json();
+    setSubmitting(false);
+    if (!d.success) { setError(d.error ?? "Failed."); return; }
+    onCreated();
+  }
+  return (
+    <Card className="mb-6 border-slate-300">
+      <CardHeader><CardTitle>Add PTO</CardTitle></CardHeader>
+      <CardContent>
+        <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+          <Field label="Clinician" required>
+            <select required value={form.clinicianUserId}
+              onChange={(e) => setForm({ ...form, clinicianUserId: e.target.value })}
+              className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white">
+              <option value="">Select…</option>
+              {members.map((m) => <option key={m.userId} value={m.userId}>{m.fullName ?? m.email}</option>)}
+            </select>
+          </Field>
+          <Field label="Start" required>
+            <input required type="date" value={form.startDate}
+              onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+              className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+          </Field>
+          <Field label="End" required>
+            <input required type="date" value={form.endDate}
+              onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+              className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+          </Field>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={submitting || !form.clinicianUserId}>Add</Button>
+            <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+          </div>
+          {error && <p className="text-red-700 text-sm md:col-span-4">{error}</p>}
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -351,29 +562,6 @@ function defaultDateTimeLocal(): string {
   d.setHours(d.getHours() + 1);
   const pad = (n: number) => n.toString().padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function groupByDay(visits: VisitView[]): { date: string; items: VisitView[] }[] {
-  const map = new Map<string, VisitView[]>();
-  for (const v of visits) {
-    const ts = v.scheduledStart ?? v.startTime ?? v.createdAt;
-    const day = ts.slice(0, 10);
-    const arr = map.get(day) ?? [];
-    arr.push(v);
-    map.set(day, arr);
-  }
-  return Array.from(map.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, items]) => ({ date, items }));
-}
-
-function prettyDate(iso: string): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  return d.toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
 }
 
 function timeOf(iso: string | null): string {

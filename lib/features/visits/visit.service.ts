@@ -37,6 +37,10 @@ interface VisitRow {
   signed_at: Date | null;
   created_at: Date;
   updated_at: Date;
+  // Optional joined display columns (listVisits only).
+  patient_name?: string | null;
+  patient_city?: string | null;
+  clinician_name?: string | null;
 }
 
 function rowToView(row: VisitRow): VisitView {
@@ -64,6 +68,9 @@ function rowToView(row: VisitRow): VisitView {
     signedAt: row.signed_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+    patientName: row.patient_name ?? null,
+    patientCity: row.patient_city ?? null,
+    clinicianName: row.clinician_name ?? null,
   };
 }
 
@@ -115,6 +122,52 @@ export async function getVisit(args: {
   });
 }
 
+/**
+ * Phase E.2 capacity guard — how many visits the clinician already has on
+ * the calendar day of `dayIso`, vs the org's daily cap.
+ */
+export async function getDailyCapacityStatus(args: {
+  orgId: string;
+  clinicianUserId: string;
+  dayIso: string;
+}): Promise<{ count: number; capacity: number; over: boolean }> {
+  const day = args.dayIso.slice(0, 10);
+  return withOrgContext(args.orgId, async (tx) => {
+    const cap = await tx.$queryRaw<{ daily_visit_capacity: number }[]>`
+      SELECT daily_visit_capacity FROM org WHERE id = ${args.orgId}::uuid LIMIT 1
+    `;
+    const capacity = cap[0]?.daily_visit_capacity ?? 8;
+    const cnt = await tx.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(*)::bigint AS n FROM visit
+       WHERE clinician_user_id = ${args.clinicianUserId}::uuid
+         AND status NOT IN ('cancelled', 'no_show')
+         AND date(COALESCE(scheduled_start, start_time)) = ${day}::date
+    `;
+    const count = Number(cnt[0]?.n ?? 0);
+    return { count, capacity, over: count >= capacity };
+  });
+}
+
+/** Reschedule a visit to a new start (drag-to-reschedule on the grid). */
+export async function rescheduleVisit(args: {
+  orgId: string;
+  id: string;
+  scheduledStart: string;
+  scheduledEnd?: string | null;
+}): Promise<{ updated: boolean }> {
+  return withOrgContext(args.orgId, async (tx) => {
+    const n = await tx.$executeRaw`
+      UPDATE visit
+         SET scheduled_start = ${args.scheduledStart}::timestamptz,
+             scheduled_end = ${args.scheduledEnd ?? null}::timestamptz,
+             updated_at = now()
+       WHERE id = ${args.id}::uuid
+         AND status = 'scheduled'
+    `;
+    return { updated: n > 0 };
+  });
+}
+
 export async function listVisits(args: {
   orgId: string;
   patientId?: string;
@@ -126,18 +179,23 @@ export async function listVisits(args: {
   return withOrgContext(args.orgId, async (tx) => {
     // Filter pattern: parameterize each filter, NULL-out the unused ones.
     const rows = await tx.$queryRaw<VisitRow[]>`
-      SELECT id, patient_id, clinician_user_id, visit_type,
-             scheduled_start, scheduled_end, start_time, stop_time,
-             total_minutes, acp_minutes, prolonged_minutes,
-             is_telehealth, telehealth_modality, telehealth_consent_documented,
-             document_text, cpt_codes_assigned, icd10_codes, modifiers,
-             status, signed_at, created_at, updated_at
-      FROM visit
+      SELECT v.id, v.patient_id, v.clinician_user_id, v.visit_type,
+             v.scheduled_start, v.scheduled_end, v.start_time, v.stop_time,
+             v.total_minutes, v.acp_minutes, v.prolonged_minutes,
+             v.is_telehealth, v.telehealth_modality, v.telehealth_consent_documented,
+             v.document_text, v.cpt_codes_assigned, v.icd10_codes, v.modifiers,
+             v.status, v.signed_at, v.created_at, v.updated_at,
+             (p.first_name || ' ' || p.last_name) AS patient_name,
+             p.city AS patient_city,
+             u.full_name AS clinician_name
+      FROM visit v
+      LEFT JOIN patient p ON p.id = v.patient_id
+      LEFT JOIN app_user u ON u.id = v.clinician_user_id
       WHERE
-        (${args.patientId ?? null}::uuid IS NULL OR patient_id = ${args.patientId ?? null}::uuid)
-        AND (${args.status ?? null}::text IS NULL OR status = ${args.status ?? null})
-        AND (${args.clinicianUserId ?? null}::uuid IS NULL OR clinician_user_id = ${args.clinicianUserId ?? null}::uuid)
-      ORDER BY COALESCE(start_time, scheduled_start, created_at) DESC
+        (${args.patientId ?? null}::uuid IS NULL OR v.patient_id = ${args.patientId ?? null}::uuid)
+        AND (${args.status ?? null}::text IS NULL OR v.status = ${args.status ?? null})
+        AND (${args.clinicianUserId ?? null}::uuid IS NULL OR v.clinician_user_id = ${args.clinicianUserId ?? null}::uuid)
+      ORDER BY COALESCE(v.start_time, v.scheduled_start, v.created_at) DESC
       LIMIT ${limit}
     `;
     return rows.map(rowToView);

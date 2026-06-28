@@ -94,4 +94,8 @@ export interface VisitView {
   signedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Joined display fields (list view only; null on single-visit reads). */
+  patientName?: string | null;
+  patientCity?: string | null;
+  clinicianName?: string | null;
 }

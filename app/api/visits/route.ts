@@ -11,6 +11,7 @@ import {
   pushVisitToGoogle,
 } from "@/lib/features/calendar/google-calendar.service";
 import {
+  getDailyCapacityStatus,
   listVisits,
   scheduleVisit,
 } from "@/lib/features/visits/visit.service";
@@ -85,6 +86,23 @@ export async function POST(req: NextRequest): Promise<Response> {
       }
     } catch {
       /* Google not linked / not configured → continue without conflict check */
+    }
+
+    // Phase E.2 — capacity guard. Same confirmDoubleBook override clears it.
+    try {
+      const cap = await getDailyCapacityStatus({
+        orgId: session.orgId,
+        clinicianUserId: body.clinicianUserId,
+        dayIso: body.scheduledStart,
+      });
+      if (cap.over) {
+        return fail(
+          `This clinician already has ${cap.count} visit(s) that day (cap ${cap.capacity}).`,
+          { status: 409 },
+        );
+      }
+    } catch {
+      /* capacity check best-effort */
     }
   }
 

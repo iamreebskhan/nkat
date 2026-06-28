@@ -163,6 +163,24 @@ ok("superbills.pdf", sbPdf.s === 200 && sbPdf.isPdf && sbPdf.bytes > 5000, `${sb
 // 3. Off-allowlist override surfaces in /api/audit/log
 const ac = await req("GET", `/api/billing/allowed-codes?payerId=${aetna}&state=OH`);
 ok("billing.allowed-codes responds", ac.s === 200, `rows=${ac.j?.data?.rows?.length ?? 0}`);
+// ICD-10 autocomplete (Phase C.1)
+const icd = await req("GET", "/api/billing/icd10?query=Z51");
+ok("billing.icd10 autocomplete responds", icd.s === 200 && Array.isArray(icd.j?.data?.rows), `rows=${icd.j?.data?.rows?.length ?? 0}`);
+// Schedule overlays (Phase E): context + time-off + reschedule
+const now = new Date();
+const wkFrom = now.toISOString();
+const wkTo = new Date(now.getTime() + 7 * 86400_000).toISOString();
+const sctx = await req("GET", `/api/schedule/context?from=${encodeURIComponent(wkFrom)}&to=${encodeURIComponent(wkTo)}`);
+ok("schedule.context responds (externalBusy + timeOff)", sctx.s === 200 && Array.isArray(sctx.j?.data?.timeOff), `keys=${Object.keys(sctx.j?.data ?? {}).join(",")}`);
+const toList = await req("GET", "/api/time-off");
+ok("time-off list responds", toList.s === 200 && Array.isArray(toList.j?.data?.rows), `n=${toList.j?.data?.rows?.length ?? 0}`);
+const resched = await req("PATCH", `/api/visits/${visitId}/reschedule`, { scheduledStart: new Date(now.getTime() + 2 * 86400_000).toISOString() });
+ok("visit reschedule responds", resched.s === 200 || resched.s === 404, `status=${resched.s}`);
+// denial metrics endpoint (Phase B.3)
+const dm = await req("GET", "/api/billing/denial-metrics");
+ok("denial-metrics endpoint responds", dm.s === 200 && typeof dm.j?.data?.metrics === "object", `status=${dm.s}`);
+// pull-calendar cron gate
+ok("cron gate: /api/cron/pull-calendar no secret → 401", (await req("POST", "/api/cron/pull-calendar")).s === 401);
 const sbPatch = await req("PATCH", `/api/superbills/${superbillId}`, {
   patch: { cptCodes: ["99348", "99349"], modifiers: ["25"] },
   overrides: [{ code: "X9999", reason: "Phase A probe — synthetic override for audit verification" }],
