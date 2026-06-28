@@ -13,6 +13,7 @@ import Link from "next/link";
 import { use, useEffect, useState } from "react";
 
 import { CodePicker } from "@/components/billing/code-picker";
+import { Icd10Picker } from "@/components/billing/icd10-picker";
 import { RiskBadge, RiskSummary, type RiskBand, type RiskReason } from "@/components/billing/risk-badge";
 import { RuleSidebar } from "@/components/billing/rule-sidebar";
 import { TimeSpentPanel } from "@/components/billing/time-spent-panel";
@@ -436,23 +437,11 @@ export default function SuperbillPage({
             }
           />
           <hr className="my-4 border-slate-100" />
-          <label className="block text-xs text-slate-500 font-medium">
-            ICD-10 diagnoses (comma-separated)
-            <input
-              type="text"
-              defaultValue={draft.icd10Codes.join(", ")}
-              onBlur={(e) =>
-                setEdits((eds) => ({
-                  ...eds,
-                  icd10: e.target.value
-                    .split(",")
-                    .map((s) => s.trim().toUpperCase())
-                    .filter(Boolean),
-                }))
-              }
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono tabular focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-            />
-          </label>
+          <div className="text-xs text-slate-500 font-medium mb-1">ICD-10 diagnoses</div>
+          <Icd10Picker
+            selected={edits.icd10 ?? draft.icd10Codes}
+            onChange={(icd10) => setEdits((eds) => ({ ...eds, icd10 }))}
+          />
           <label className="block mt-3 text-xs text-slate-500 font-medium">
             Modifiers (comma-separated)
             <input

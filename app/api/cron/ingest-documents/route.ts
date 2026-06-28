@@ -14,6 +14,7 @@
 import { type NextRequest } from "next/server";
 
 import { fail, ok } from "@/lib/api";
+import { scanForCandidates } from "@/lib/features/cheatsheets/template.service";
 import { runIngestionCron } from "@/lib/features/ingestion/sources.service";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,16 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   try {
     const summary = await runIngestionCron();
-    return ok(summary);
+    // After ingesting fresh rules, discover any (payer, state) combos
+    // that now clear the threshold for a cheat-sheet template. New
+    // candidates land in pending_review on the operator Super Panel.
+    let cheatsheetScan: { created: number; scanned: number } | null = null;
+    try {
+      cheatsheetScan = await scanForCandidates();
+    } catch (e) {
+      console.warn("cheatsheet candidate scan failed (non-fatal):", e);
+    }
+    return ok({ ...summary, cheatsheetScan });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Ingestion cron crashed.";
     return fail(message, { status: 500 });

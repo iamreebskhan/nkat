@@ -131,6 +131,13 @@ ok(
   firstAcuity === "critical" || (listSorted.j?.data?.rows ?? []).length === 1,
   `first=${firstAcuity ?? "(none)"}`,
 );
+// caseload last/next visit columns surfaced (Mark's ask)
+const sampleRow = listSorted.j?.data?.rows?.[0];
+ok(
+  "patient list carries lastVisitDate + nextVisitDate fields",
+  sampleRow && "lastVisitDate" in sampleRow && "nextVisitDate" in sampleRow,
+  `last=${sampleRow?.lastVisitDate ?? "null"} next=${sampleRow?.nextVisitDate ?? "null"}`,
+);
 
 // visit + care plan + superbill
 const start = new Date(Date.now() + 86_400_000).toISOString();
@@ -156,6 +163,24 @@ ok("superbills.pdf", sbPdf.s === 200 && sbPdf.isPdf && sbPdf.bytes > 5000, `${sb
 // 3. Off-allowlist override surfaces in /api/audit/log
 const ac = await req("GET", `/api/billing/allowed-codes?payerId=${aetna}&state=OH`);
 ok("billing.allowed-codes responds", ac.s === 200, `rows=${ac.j?.data?.rows?.length ?? 0}`);
+// ICD-10 autocomplete (Phase C.1)
+const icd = await req("GET", "/api/billing/icd10?query=Z51");
+ok("billing.icd10 autocomplete responds", icd.s === 200 && Array.isArray(icd.j?.data?.rows), `rows=${icd.j?.data?.rows?.length ?? 0}`);
+// Schedule overlays (Phase E): context + time-off + reschedule
+const now = new Date();
+const wkFrom = now.toISOString();
+const wkTo = new Date(now.getTime() + 7 * 86400_000).toISOString();
+const sctx = await req("GET", `/api/schedule/context?from=${encodeURIComponent(wkFrom)}&to=${encodeURIComponent(wkTo)}`);
+ok("schedule.context responds (externalBusy + timeOff)", sctx.s === 200 && Array.isArray(sctx.j?.data?.timeOff), `keys=${Object.keys(sctx.j?.data ?? {}).join(",")}`);
+const toList = await req("GET", "/api/time-off");
+ok("time-off list responds", toList.s === 200 && Array.isArray(toList.j?.data?.rows), `n=${toList.j?.data?.rows?.length ?? 0}`);
+const resched = await req("PATCH", `/api/visits/${visitId}/reschedule`, { scheduledStart: new Date(now.getTime() + 2 * 86400_000).toISOString() });
+ok("visit reschedule responds", resched.s === 200 || resched.s === 404, `status=${resched.s}`);
+// denial metrics endpoint (Phase B.3)
+const dm = await req("GET", "/api/billing/denial-metrics");
+ok("denial-metrics endpoint responds", dm.s === 200 && typeof dm.j?.data?.metrics === "object", `status=${dm.s}`);
+// pull-calendar cron gate
+ok("cron gate: /api/cron/pull-calendar no secret → 401", (await req("POST", "/api/cron/pull-calendar")).s === 401);
 const sbPatch = await req("PATCH", `/api/superbills/${superbillId}`, {
   patch: { cptCodes: ["99348", "99349"], modifiers: ["25"] },
   overrides: [{ code: "X9999", reason: "Phase A probe — synthetic override for audit verification" }],
@@ -226,6 +251,12 @@ ok(
   listMsg.s === 200 && (listMsg.j?.data?.messages?.length ?? 0) >= 1,
   `count=${listMsg.j?.data?.messages?.length ?? 0}`,
 );
+// @mention message → notification inbox readable
+const mentionMsg = await req("POST", `/api/patients/${patientId}/messages`, { body: `Probe @${email} please review` });
+const notif = await req("GET", "/api/notifications");
+ok("notifications endpoint responds with unreadCount", notif.s === 200 && typeof notif.j?.data?.unreadCount === "number",
+  `unread=${notif.j?.data?.unreadCount}`);
+ok("notifications mark-read works", (await req("PATCH", "/api/notifications", {})).s === 200);
 
 // billing intelligence
 const look = await req("POST", "/api/billing/lookup", { payerId: aetna, state: "OH", cptCode: "99349", attribute: "covered" });
@@ -233,7 +264,11 @@ ok("billing.lookup — cited", look.j?.data?.source === "structured_rule" && !!l
 const nl = await req("POST", "/api/billing/lookup", { query: "Does Aetna cover 99349 in Ohio?" });
 ok("billing.lookup — natural language", nl.j?.data?.source === "structured_rule");
 const cs = await req("POST", "/api/cheatsheets", { state: "OH", payerId: aetna, cptCodes: ["99348", "99349"], orgName });
-ok("cheatsheets.pdf", cs.s === 200 && cs.isPdf && cs.bytes > 5000, `${cs.bytes}B`);
+// 200 = generated; 403 = Phase G gate (a corpus template exists for this
+// payer/state but isn't published yet). Both are correct outcomes.
+ok("cheatsheets.pdf (or Q7 published-gate 403)",
+  (cs.s === 200 && cs.isPdf && cs.bytes > 5000) || cs.s === 403,
+  cs.s === 403 ? "gated pending review (Q7)" : `${cs.bytes}B`);
 
 // denials
 const denial = await req("POST", "/api/denials", { superbillId, cptCode: "99349", carcCode: "16", denialReason: "test", deniedAmountCents: 12500, deniedAt: new Date().toISOString() });

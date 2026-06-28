@@ -336,6 +336,46 @@ export async function updateSuperbill(args: {
     }
 
     return { updated: touched };
+  }).then(async (result) => {
+    // Phase B — recapture predicted_risk after the nurse's edits so the
+    // stored prediction reflects the codes actually on the bill (the
+    // feedback loop compares THIS against the real denial). Best-effort:
+    // a predictor failure must not fail the edit. Runs after the edit tx
+    // commits so predictSuperbill's own context sees the new codes.
+    if (!result.updated) return result;
+    try {
+      const ctx = await withOrgContext(args.orgId, async (tx) =>
+        tx.$queryRaw<
+          { payer_id: string | null; patient_id: string; dos: Date; state: string | null; cpt: string[]; mods: string[] }[]
+        >`
+          SELECT s.payer_id, s.patient_id, s.date_of_service AS dos,
+                 p.state, s.cpt_codes AS cpt, s.modifiers AS mods
+            FROM superbill s JOIN patient p ON p.id = s.patient_id
+           WHERE s.id = ${args.id}::uuid LIMIT 1
+        `,
+      );
+      const c = ctx[0];
+      if (c) {
+        const risk = await predictSuperbill({
+          orgId: args.orgId,
+          payerId: c.payer_id,
+          state: c.state,
+          patientId: c.patient_id,
+          dos: c.dos.toISOString().slice(0, 10),
+          cptCodes: c.cpt ?? [],
+          modifiers: c.mods ?? [],
+        });
+        await withOrgContext(args.orgId, async (tx) => {
+          await tx.$executeRaw`
+            UPDATE superbill SET predicted_risk = ${JSON.stringify(risk)}::jsonb, updated_at = now()
+             WHERE id = ${args.id}::uuid
+          `;
+        });
+      }
+    } catch (e) {
+      console.warn("predicted_risk recapture failed (non-fatal):", e);
+    }
+    return result;
   });
 }
 

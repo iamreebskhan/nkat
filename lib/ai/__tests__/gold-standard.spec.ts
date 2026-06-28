@@ -43,10 +43,33 @@ describe("Gold-standard rule-lookup eval (50 questions)", () => {
   // Parser-only batch — fast, no DB required, just a haiku call per Q.
   evalIt(
     "haiku parser extracts expected structured params",
-    async () => {
+    async (ctx) => {
       const failures: string[] = [];
       for (const q of GOLD_STANDARD) {
-        const parsed = await parseRuleQuery(q.query);
+        let parsed;
+        try {
+          parsed = await parseRuleQuery(q.query);
+        } catch (err) {
+          // The client already retries transient errors 4x. If we STILL
+          // can't reach api.anthropic.com (sustained network/proxy outage
+          // in CI — e.g. "Premature close" mid-stream), the eval is
+          // inconclusive, NOT a quality regression. Skip rather than red
+          // the build; the ≥90% accuracy gate below still runs whenever
+          // the API is reachable.
+          const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+          const unreachable =
+            msg.includes("premature close") ||
+            msg.includes("econnreset") ||
+            msg.includes("socket hang up") ||
+            msg.includes("fetch failed") ||
+            msg.includes("terminated") ||
+            msg.includes("network");
+          if (unreachable) {
+            ctx.skip(`Anthropic API unreachable after retries (${msg}); eval inconclusive.`);
+            return;
+          }
+          throw err;
+        }
         const checks: Array<keyof typeof q.expectedParse> = [
           "payer",
           "state",

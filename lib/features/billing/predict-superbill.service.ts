@@ -16,6 +16,7 @@
  */
 import { withOrgContext } from "@/lib/db";
 
+import { getDenialRuleMetrics } from "./denial-feedback.service";
 import {
   scoreSuperbill,
   type CodeRuleSet,
@@ -154,6 +155,17 @@ export async function predictSuperbill(args: PredictInput): Promise<PredictedRis
   }
 
   const result = scoreSuperbill({ lines, context, rulesByCode });
+  // Enrich each reason with its historical precision from the nightly
+  // feedback loop so the UI can show "this rule has X% precision". Best
+  // effort — if metrics aren't available yet, reasons keep precisionPct
+  // undefined and the badge just omits it.
+  let metrics: Awaited<ReturnType<typeof getDenialRuleMetrics>> = {};
+  try {
+    metrics = await getDenialRuleMetrics();
+  } catch {
+    /* no metrics yet */
+  }
+
   return {
     worstBand: result.worstBand,
     blockCount: result.blockCount,
@@ -163,7 +175,10 @@ export async function predictSuperbill(args: PredictInput): Promise<PredictedRis
       code: p.code,
       score: p.score,
       riskBand: p.riskBand,
-      reasons: p.reasons,
+      reasons: p.reasons.map((r) => ({
+        ...r,
+        precisionPct: metrics[r.code]?.precisionPct ?? null,
+      })),
     })),
     ranAt: new Date().toISOString(),
   };

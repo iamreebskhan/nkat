@@ -5,6 +5,7 @@ import { z } from "zod";
 import { fail, parseJson } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { generateCheatSheet } from "@/lib/features/cheatsheets/cheatsheet.service";
+import { isCheatsheetAllowedForOrg } from "@/lib/features/cheatsheets/template.service";
 import { getBranding } from "@/lib/features/branding/branding.service";
 
 const Body = z.object({
@@ -21,6 +22,17 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (body instanceof Response) return body;
 
   try {
+    // Phase G / Mark Q7 — a (payer, state) cheat sheet derived from the
+    // corpus must be operator-approved (published) before any org can
+    // generate it. Org-own combos (no template) and master sheets pass.
+    const gate = await isCheatsheetAllowedForOrg({
+      payerId: body.payerId ?? null,
+      state: body.state ?? null,
+    });
+    if (!gate.allowed) {
+      return fail(gate.reason, { status: 403 });
+    }
+
     const branding = await getBranding(session.orgId);
     const result = await generateCheatSheet({
       orgId: session.orgId,

@@ -164,8 +164,38 @@ export default function PatientDetailPage({
             <CardHeader>
               <CardTitle>Clinical</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-1 text-sm text-slate-700">
+            <CardContent className="space-y-2 text-sm text-slate-700">
               <Row label="Primary diagnosis (ICD-10)" value={patient.primaryDiagnosisIcd10 ?? "—"} mono />
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-500">Acuity</span>
+                <select
+                  value={patient.acuity ?? ""}
+                  aria-label="Patient acuity"
+                  className="h-8 px-2 rounded-md border border-slate-300 bg-white text-sm"
+                  onChange={async (e) => {
+                    const next = e.target.value;
+                    if (!next) return; // acuity can't be cleared back to unassigned
+                    const prev = patient.acuity;
+                    setPatient({ ...patient, acuity: next as PatientView["acuity"] });
+                    const r = await fetch(`/api/patients/${id}`, {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ clinical: { acuity: next } }),
+                    });
+                    const d = await r.json();
+                    if (!d.success) {
+                      setPatient({ ...patient, acuity: prev });
+                      alert(d.error ?? "Failed to update acuity.");
+                    }
+                  }}
+                >
+                  <option value="">— unassigned —</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
             </CardContent>
           </Card>
         </div>

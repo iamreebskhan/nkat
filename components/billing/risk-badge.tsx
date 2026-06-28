@@ -23,6 +23,8 @@ export interface RiskReason {
   message: string;
   contribution: number;
   payerRuleId?: string;
+  /** Historical precision of this reason (0..100) from the feedback loop. */
+  precisionPct?: number | null;
 }
 
 const BAND_STYLE: Record<RiskBand, { cls: string; label: string; Icon: typeof CheckCircle2 }> = {
@@ -86,7 +88,14 @@ export function RiskBadge({ band, score, reasons }: Props) {
               <li key={i} className="flex items-start gap-2">
                 <span className="mt-0.5 inline-block h-1.5 w-1.5 rounded-full bg-slate-400" aria-hidden />
                 <div className="flex-1">
-                  <p className="text-slate-700">{r.message}</p>
+                  <p className="text-slate-700">
+                    {r.message}
+                    {typeof r.precisionPct === "number" && (
+                      <span className="ml-1 text-slate-500">
+                        ({r.precisionPct.toFixed(0)}% precision)
+                      </span>
+                    )}
+                  </p>
                   {r.payerRuleId && (
                     <a
                       className="text-emerald-700 hover:underline"

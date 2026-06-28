@@ -181,6 +181,8 @@ export default function PatientsPage() {
                   <th className="text-left font-semibold px-4 py-2.5">Name</th>
                   <th className="text-left font-semibold px-4 py-2.5">DOB</th>
                   <th className="text-left font-semibold px-4 py-2.5">State</th>
+                  <th className="text-left font-semibold px-4 py-2.5">Last visit</th>
+                  <th className="text-left font-semibold px-4 py-2.5">Next visit</th>
                   <th className="text-left font-semibold px-4 py-2.5">Status</th>
                   <th className="text-left font-semibold px-4 py-2.5">Diagnosis</th>
                   <th className="font-semibold px-4 py-2.5" />
@@ -205,6 +207,12 @@ export default function PatientsPage() {
                     </td>
                     <td className={`px-4 ${DENSITY_PADDING[density]} text-slate-700`}>
                       {p.state ?? "—"}
+                    </td>
+                    <td className={`px-4 ${DENSITY_PADDING[density]} tabular text-slate-600`}>
+                      {p.lastVisitDate ?? "—"}
+                    </td>
+                    <td className={`px-4 ${DENSITY_PADDING[density]} tabular text-slate-600`}>
+                      {p.nextVisitDate ?? "—"}
                     </td>
                     <td className={`px-4 ${DENSITY_PADDING[density]} text-slate-700 capitalize`}>
                       {p.status}

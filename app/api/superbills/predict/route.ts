@@ -36,7 +36,7 @@ const Schema = z.object({
 });
 
 export async function POST(req: NextRequest): Promise<Response> {
-  const session = await requireAuth(["billing.superbills.create"]);
+  const session = await requireAuth(["superbill.predict"]);
   if (session instanceof Response) return session;
 
   const body = await parseJson(req, Schema);

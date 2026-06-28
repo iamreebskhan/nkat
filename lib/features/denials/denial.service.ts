@@ -128,6 +128,46 @@ export async function getDenial(args: {
   });
 }
 
+/**
+ * Predicted-vs-actual for a denial (Phase B.2). Pulls the pre-submission
+ * predictor output captured on the denied superbill and the line entry
+ * matching this denial's CPT, so the UI can show "we predicted this" or
+ * "we missed this". Returns null if no prediction was captured.
+ */
+export async function getDenialPrediction(args: {
+  orgId: string;
+  id: string;
+}): Promise<{
+  cptCode: string;
+  outcome: DenialOutcome;
+  predictedForCode: { riskBand: string; score: number } | null;
+  worstBand: string | null;
+} | null> {
+  return withOrgContext(args.orgId, async (tx) => {
+    const rows = await tx.$queryRaw<
+      { cpt_code: string; outcome: DenialOutcome; predicted_risk: unknown }[]
+    >`
+      SELECT d.cpt_code, d.outcome, s.predicted_risk
+        FROM superbill_denial d
+        JOIN superbill s ON s.id = d.superbill_id
+       WHERE d.id = ${args.id}::uuid
+       LIMIT 1
+    `;
+    const r = rows[0];
+    if (!r) return null;
+    const pr = r.predicted_risk as
+      | { worstBand?: string; perLine?: Array<{ code: string; riskBand: string; score: number }> }
+      | null;
+    const line = pr?.perLine?.find((l) => l.code === r.cpt_code) ?? null;
+    return {
+      cptCode: r.cpt_code,
+      outcome: r.outcome,
+      predictedForCode: line ? { riskBand: line.riskBand, score: line.score } : null,
+      worstBand: pr?.worstBand ?? null,
+    };
+  });
+}
+
 export async function listDenials(args: {
   orgId: string;
   decision?: DenialDecision;

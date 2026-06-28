@@ -168,3 +168,39 @@ export async function withdrawTemplate(args: {
 export async function listPublishedForOrg(): Promise<CheatsheetTemplateView[]> {
   return listTemplates({ status: "published" });
 }
+
+/**
+ * Phase G / Mark Q7 enforcement — can an org generate a cheat sheet for
+ * this (payer, state) combo right now?
+ *
+ * Rule:
+ *   - If a corpus template row EXISTS for the combo and it is NOT
+ *     'published' (pending_review / withdrawn), the combo is gated:
+ *     the operator hasn't approved it for org-side use yet → block.
+ *   - If no template row exists, the combo is the org's own rulebook
+ *     data (not a corpus-derived sheet under review) → allow.
+ *   - If published → allow.
+ *
+ * Combos with NULL payer or NULL state (master/multi sheets) are not
+ * gated here — a master sheet spans many combos and is the operator's
+ * own export path.
+ */
+export async function isCheatsheetAllowedForOrg(args: {
+  payerId: string | null;
+  state: string | null;
+}): Promise<{ allowed: boolean; reason: string }> {
+  if (!args.payerId || !args.state) return { allowed: true, reason: "ungated (master/multi)" };
+  return withBreakglass(async (client) => {
+    const rows = await client.$queryRaw<{ status: CheatsheetTemplateStatus }[]>`
+      SELECT status FROM cheat_sheet_template
+       WHERE payer_id = ${args.payerId}::uuid AND state = ${args.state}
+       LIMIT 1
+    `;
+    if (rows.length === 0) return { allowed: true, reason: "no template (org-own data)" };
+    if (rows[0]!.status === "published") return { allowed: true, reason: "published" };
+    return {
+      allowed: false,
+      reason: `Cheat sheet for this payer/state is ${rows[0]!.status} — pending operator review.`,
+    };
+  }, "cheatsheet org-visibility gate check");
+}

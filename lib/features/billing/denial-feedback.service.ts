@@ -40,6 +40,33 @@ export interface FeedbackResult {
 }
 
 /**
+ * Read the per-reason precision/recall the nightly aggregator produced.
+ * Returns a map reason_code -> {precisionPct, recallPct, sampleSize}.
+ * Used to enrich live predictor reasons + the metrics endpoint. Global
+ * platform metadata (not PHI), read under breakglass.
+ */
+export async function getDenialRuleMetrics(): Promise<
+  Record<string, { precisionPct: number | null; recallPct: number | null; sampleSize: number }>
+> {
+  return withBreakglass(async (client) => {
+    const rows = await client.$queryRaw<
+      { reason_code: string; precision_pct: string | null; recall_pct: string | null; sample_size: number }[]
+    >`
+      SELECT reason_code, precision_pct, recall_pct, sample_size FROM denial_rule_metrics
+    `;
+    const out: Record<string, { precisionPct: number | null; recallPct: number | null; sampleSize: number }> = {};
+    for (const r of rows) {
+      out[r.reason_code] = {
+        precisionPct: r.precision_pct === null ? null : Number(r.precision_pct),
+        recallPct: r.recall_pct === null ? null : Number(r.recall_pct),
+        sampleSize: Number(r.sample_size),
+      };
+    }
+    return out;
+  }, "read denial_rule_metrics");
+}
+
+/**
  * Run the aggregator. Default window: only look at superbills created
  * more than `windowDays` ago — by then a denial would have come back
  * (or we trust the silence).
