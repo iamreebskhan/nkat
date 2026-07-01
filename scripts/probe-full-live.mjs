@@ -20,13 +20,17 @@ const CRON = process.env.CRON_SECRET || "";
 const s = Date.now();
 
 // ---- session cookies (primary org A, secondary org B for RLS) -------------
-const jars = { A: "", B: "", none: "" };
+const jars = { A: "", B: "", L: "", none: "" };
 const results = [];
 const HIT = new Set(); // `${METHOD} ${template}`
+let LAST = { method: "", path: "", status: 0 }; // last request, for auto-diagnostics
 
 const ok = (n, c, d = "") => {
   results.push({ n, c });
-  console.log(`${c ? "✅" : "❌"} ${n}${d ? "  — " + d : ""}`);
+  // On failure with no explicit detail, surface the last request's status
+  // so a scrolled-off failure block is still diagnosable.
+  const detail = d || (c ? "" : `last: ${LAST.method} ${LAST.path} → ${LAST.status}`);
+  console.log(`${c ? "✅" : "❌"} ${n}${detail ? "  — " + detail : ""}`);
 };
 
 // Full route inventory (kept in sync with `find app/api -name route.ts`).
@@ -188,6 +192,7 @@ async function req(method, path, body, opts = {}) {
   }
   record(method, path);
   const r = await fetch(BASE + path, { method, headers: h, body: payload, redirect: "manual" });
+  LAST = { method, path, status: r.status };
   for (const c of r.headers.getSetCookie?.() || []) {
     const x = c.match(/^pallio_session=([^;]*)/);
     if (x && who !== "none") jars[who] = `pallio_session=${x[1]}`;
@@ -216,7 +221,8 @@ const email = `full-${s}@pallio-smoke.test`;
 const pwd = `Fp-${s}!x`;
 const orgName = `Full ${s}`;
 ok("POST /auth/signup", (await req("POST", "/api/auth/signup", { email, password: pwd, fullName: "Full Probe", orgName, baaAccepted: true })).s === 201);
-ok("POST /auth/login (same creds)", (await req("POST", "/api/auth/login", { email, password: pwd })).s === 200);
+// Isolated jar so re-issuing a session can't disturb the primary run.
+ok("POST /auth/login (same creds)", (await req("POST", "/api/auth/login", { email, password: pwd }, { who: "L" })).s === 200);
 const me = await req("GET", "/api/auth/me");
 ok("GET /auth/me — org_admin", me.j?.data?.role === "org_admin", `perms=${me.j?.data?.permissions?.length}`);
 ok("PATCH /auth/me (profile)", [200, 400, 422].includes((await req("PATCH", "/api/auth/me", { fullName: "Full Probe II" })).s));
@@ -358,9 +364,9 @@ ok("GET /team/members", Array.isArray((await req("GET", "/api/team/members")).j?
 ok("GET /team/invites", (await req("GET", "/api/team/invites")).s === 200);
 const inv = await req("POST", "/api/team/invites", { email: `invitee-${s}@pallio-smoke.test`, roleTemplate: "clinician", permissions: [] });
 ok("POST /team/invites (seat-limit 402 or 201)", [201, 200, 402].includes(inv.s), `status=${inv.s}`);
-// No-op: re-set the caller's OWN current permissions so we exercise the
-// route without locking the probe session out of later checks.
-ok("PUT /team/members/[userId] (no-op self perms)", [200, 400, 403, 404, 422].includes((await req("PUT", `/api/team/members/${me.j?.data?.userId}`, { permissions: me.j?.data?.permissions ?? [] })).s));
+// Target a NON-existent member so we exercise the route without ever
+// mutating the caller's own permission set (which could disturb the run).
+ok("PUT /team/members/[userId]", [200, 400, 403, 404, 422].includes((await req("PUT", `/api/team/members/00000000-0000-0000-0000-000000000000`, { permissions: ["patients.view"] })).s));
 
 // ════════════════════════════════════════════════════════════════════
 // 8. ATTESTATIONS (analyst bridge)
