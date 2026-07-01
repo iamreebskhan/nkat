@@ -21,6 +21,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 
+import { withTransientRetry } from "@/lib/ai/anthropic.client";
 import { assertNoPhi } from "@/lib/ai/phi-guard";
 import { fetchPayerRule } from "@/lib/features/billing/payer-rule.repository";
 import { describeDenialHeuristic, lookupCarc } from "@/lib/features/denials/denial-pure";
@@ -38,7 +39,7 @@ function client(): Anthropic {
       "ANTHROPIC_API_KEY is not set. Denial AI analysis requires Anthropic.",
     );
   }
-  _client = new Anthropic({ apiKey });
+  _client = new Anthropic({ apiKey, maxRetries: 4 });
   return _client;
 }
 
@@ -145,12 +146,14 @@ export async function analyzeDenial(
   let response: Anthropic.Messages.Message;
   try {
     assertNoPhi(userMsg, "denialAnalyst");
-    response = await client().messages.create({
-      model: MODEL,
-      max_tokens: 600,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userMsg }],
-    });
+    response = await withTransientRetry(() =>
+      client().messages.create({
+        model: MODEL,
+        max_tokens: 600,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: userMsg }],
+      }),
+    );
   } catch {
     // Network / API error — fall back so the workflow doesn't block.
     return {

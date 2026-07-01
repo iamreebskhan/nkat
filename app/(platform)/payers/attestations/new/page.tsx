@@ -49,6 +49,18 @@ function NewAttestationInner() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Claim the request the moment the analyst opens it from the queue, so it
+  // transitions open → in_progress and surfaces on their inbox as "being
+  // worked on" (best-effort — a duplicate/expired claim is harmless).
+  useEffect(() => {
+    if (!requestId) return;
+    fetch(`/api/attestations/requests/${requestId}/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    }).catch(() => undefined);
+  }, [requestId]);
+
   useEffect(() => {
     fetch("/api/billing/payers")
       .then((r) => r.json())

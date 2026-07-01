@@ -94,15 +94,23 @@ export async function withBreakglass<T>(
   if (!reason || reason.length < 10) {
     throw new Error("withBreakglass requires a reason of at least 10 chars.");
   }
-  // Production hardening TODO: insert an audit_log row tagged
-  // 'breakglass' with the reason + caller context. For now the reason
-  // string is the gate.
-  if (process.env.NODE_ENV === "production" && process.env.ADMIN_DATABASE_URL) {
-    // We have a separate admin role; route through prismaAdmin.
-    return fn(prismaAdmin);
+  // Route through the admin (RLS-bypass) client in production; fall back to
+  // the app client in dev/staging without a separate admin URL. In
+  // production this fallback MUST NOT be taken — a missing ADMIN_DATABASE_URL
+  // means RLS isn't enforced.
+  const target =
+    process.env.NODE_ENV === "production" && process.env.ADMIN_DATABASE_URL
+      ? prismaAdmin
+      : prisma;
+
+  // Breakglass audit trail (migration 0052). Skip the routine pre-tenant
+  // login/signup lookups (high-frequency, not security-relevant); record
+  // every genuine cross-tenant/admin bypass. Fire-and-forget so a logging
+  // failure never blocks the operation.
+  if (!/^(login|signup)/i.test(reason)) {
+    void target
+      .$executeRaw`INSERT INTO breakglass_log (reason, node_env) VALUES (${reason}, ${process.env.NODE_ENV ?? null})`
+      .catch(() => {});
   }
-  // Dev / staging without a separate admin URL — fall back to the
-  // main prisma client. In production this branch must NOT be taken;
-  // a missing ADMIN_DATABASE_URL means RLS isn't enforced.
-  return fn(prisma);
+  return fn(target);
 }

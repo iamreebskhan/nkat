@@ -2,7 +2,7 @@
 //
 // This file is HAND-WRITTEN for Phase 1 to keep typechecking clean.
 // In Phase 2 we will run `prisma db pull` against the live Postgres
-// instance to introspect the full schema (29 migrations as of writing)
+// instance to introspect the full schema (51 migrations as of writing)
 // — at which point this file becomes the union of introspected tables
 // + any hand-modeled additions we want to surface differently.
 //
@@ -25,11 +25,13 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model Org {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  slug      String   @unique
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                 String    @id @default(uuid()) @db.Uuid
+  name               String
+  slug               String    @unique
+  deletedAt          DateTime? @map("deleted_at") // 0040 soft-delete
+  dailyVisitCapacity Int       @default(8) @map("daily_visit_capacity") // 0051 capacity guard
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
   patients Patient[]
   visits   Visit[]
@@ -47,9 +49,10 @@ model AppUser {
   passwordHash  String?   @map("password_hash")
   mfaSecret     String?   @map("mfa_secret")
   mfaEnrolledAt DateTime? @map("mfa_enrolled_at")
-  status        String    @default("active")
-  lastLoginAt   DateTime? @map("last_login_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
+  status          String    @default("active")
+  isPlatformAdmin Boolean   @default(false) @map("is_platform_admin") // 0039
+  lastLoginAt     DateTime? @map("last_login_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
 
   visitsAsClinician Visit[] @relation("ClinicianVisits")
 
@@ -84,6 +87,9 @@ model Patient {
   referringPhysicianNpi    String?  @map("referring_physician_npi")
   referringPhysicianName   String?  @map("referring_physician_name")
   palliativeReferralReason String?  @map("palliative_referral_reason")
+  acuity                   String?  // 0043 low|medium|high|critical
+  acuityUpdatedAt          DateTime? @map("acuity_updated_at")
+  acuityUpdatedByUserId    String?  @map("acuity_updated_by_user_id") @db.Uuid
   status                   String   @default("active")
   dischargedAt             DateTime? @map("discharged_at")
   archivedAt               DateTime? @map("archived_at")

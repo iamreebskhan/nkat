@@ -54,7 +54,7 @@ function client(): Anthropic {
  * a short backoff almost always clears them. Non-transient errors (bad
  * request, auth, zod parse) are re-thrown immediately.
  */
-async function withTransientRetry<T>(
+export async function withTransientRetry<T>(
   fn: () => Promise<T>,
   attempts = 4,
 ): Promise<T> {
