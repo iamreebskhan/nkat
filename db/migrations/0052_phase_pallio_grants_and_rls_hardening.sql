@@ -24,14 +24,16 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO analyst;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app;
 
--- Re-assert default privileges for BOTH roles that create tables in
--- deploys (postgres for `psql -f`, app for app-owned migrations), so
--- future tables never hit the 42501 "permission denied" class again.
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+-- Re-assert default privileges for the role that runs migrations (the
+-- deploy superuser — `postgres` on prod, `admin` in CI). Using the
+-- no-FOR-ROLE form targets CURRENT_USER, so future tables that superuser
+-- creates never hit the 42501 "permission denied" class again — and it
+-- works regardless of the superuser's name.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT ON TABLES TO analyst;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT USAGE, SELECT ON SEQUENCES TO app;
 
 -- 2. WITH CHECK on the three policies that only had USING.
