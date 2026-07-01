@@ -229,7 +229,7 @@ export async function pushVisitToGoogle(args: {
   if (existing[0]) {
     const externalId = existing[0].external_event_id;
     // PATCH it (start/end might have moved).
-    await fetch(
+    const patch = await fetch(
       `${GOOGLE_CALENDAR_API}/calendars/primary/events/${encodeURIComponent(externalId)}`,
       {
         method: "PATCH",
@@ -246,6 +246,7 @@ export async function pushVisitToGoogle(args: {
         }),
       },
     );
+    if (!patch.ok) throw new Error(`Google event update failed (${patch.status})`);
     return { externalId, created: false };
   }
 
@@ -426,6 +427,8 @@ export async function pullEventsForClinician(args: {
 
 /** Pull for every connected clinician (cron entry). */
 export async function pullAllConnected(): Promise<{ clinicians: number; upserted: number }> {
+  // Surface a config problem instead of silently "succeeding" with 0 events.
+  try { requireConfig(); } catch { return { clinicians: 0, upserted: 0 }; }
   const links = await withBreakglass(async (client) => {
     return client.$queryRaw<{ org_id: string; user_id: string }[]>`
       SELECT org_id, user_id FROM clinician_calendar_link WHERE status = 'connected'

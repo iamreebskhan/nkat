@@ -43,6 +43,20 @@ const Schema = z.object({
   // Stripe
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_PRICE_SOLO: z.string().optional(),
+  STRIPE_PRICE_TEAM: z.string().optional(),
+  STRIPE_PRICE_ORG: z.string().optional(),
+  STRIPE_PRICE_ENT: z.string().optional(),
+
+  // Google Calendar (Phase E). All four required for the integration to
+  // work; when unset the calendar routes 503 cleanly.
+  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_OAUTH_REDIRECT_URI: z.string().optional(),
+  PALLIO_TOKEN_KEY: z.string().optional(), // pgcrypto key for refresh-token encryption
+
+  // Scheduled-cron shared secret (x-cron-secret header).
+  CRON_SECRET: z.string().optional(),
 
   // Storage
   UPLOAD_DIR: z.string().default("./var/uploads"),

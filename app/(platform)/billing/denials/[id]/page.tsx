@@ -112,6 +112,47 @@ export default function DenialDetailPage({
     }
   }
 
+  async function markRefiled() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/denials/${id}/refile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json();
+      if (!data.success) setError(data.error ?? "Refile failed.");
+      await load();
+    } catch {
+      setError("Network error.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function recordOutcome(outcome: string, amountCents?: number) {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/denials/${id}/outcome`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          outcome,
+          ...(amountCents !== undefined ? { outcomeAmountCents: amountCents } : {}),
+        }),
+      });
+      const data = await r.json();
+      if (!data.success) setError(data.error ?? "Record outcome failed.");
+      await load();
+    } catch {
+      setError("Network error.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   if (loading) return <div className="px-8 py-8 text-slate-500">Loading…</div>;
   if (error && !denial)
     return (
@@ -314,6 +355,36 @@ export default function DenialDetailPage({
               {denial.decisionNotes && (
                 <p className="text-slate-600 text-xs italic">{denial.decisionNotes}</p>
               )}
+            </div>
+          )}
+
+          {/* Decision made, not yet resolved → let the agent progress the
+              workflow: mark refiled + record the eventual outcome. */}
+          {denial.decision !== "pending" && denial.outcome === "pending" && (
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              {denial.decision === "refile" && !denial.refiledAt && (
+                <div className="mb-3">
+                  <Button size="sm" variant="secondary" onClick={markRefiled} loading={submitting}>
+                    Mark as refiled
+                  </Button>
+                  <span className="ml-2 text-xs text-slate-500">once you&rsquo;ve resubmitted the claim</span>
+                </div>
+              )}
+              <p className="text-xs font-medium text-slate-600 mb-1">Record final outcome</p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="secondary" onClick={() => recordOutcome("paid", denial.deniedAmountCents)} loading={submitting}>
+                  Paid in full
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => recordOutcome("partially_paid")} loading={submitting}>
+                  Partially paid
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => recordOutcome("secondary_denial")} loading={submitting}>
+                  Denied again
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => recordOutcome("written_off")} loading={submitting}>
+                  Written off
+                </Button>
+              </div>
             </div>
           )}
 

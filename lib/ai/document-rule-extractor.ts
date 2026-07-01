@@ -12,6 +12,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
+import { withTransientRetry } from "./anthropic.client";
 import { assertNoPhi } from "./phi-guard";
 import { env } from "@/lib/env";
 
@@ -21,8 +22,12 @@ let _client: Anthropic | null = null;
 function client(): Anthropic {
   if (_client) return _client;
   const apiKey = env().ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
-  _client = new Anthropic({ apiKey });
+  if (!apiKey) {
+    throw new Error(
+      "ANTHROPIC_API_KEY not set. Document rule extraction requires the Anthropic API.",
+    );
+  }
+  _client = new Anthropic({ apiKey, maxRetries: 4 });
   return _client;
 }
 
@@ -112,13 +117,15 @@ export async function extractRulesFromDocument(
   }
   userBlocks.push({ type: "text", text: prompt });
 
-  const resp = await client().messages.create({
-    model: EXTRACTION_MODEL,
-    max_tokens: 8192,
-    system:
-      "You are a payer-policy parser. Output strict JSON. Cite verbatim quotes for every rule.",
-    messages: [{ role: "user", content: userBlocks }],
-  });
+  const resp = await withTransientRetry(() =>
+    client().messages.create({
+      model: EXTRACTION_MODEL,
+      max_tokens: 8192,
+      system:
+        "You are a payer-policy parser. Output strict JSON. Cite verbatim quotes for every rule.",
+      messages: [{ role: "user", content: userBlocks }],
+    }),
+  );
 
   const block = resp.content[0];
   if (!block || block.type !== "text") {
@@ -148,6 +155,19 @@ export async function extractRulesFromDocument(
           .map((i) => `${i.path.join(".")}: ${i.message}`)
           .join("; "),
     );
+  }
+  // Anti-hallucination guard: when we have the source TEXT, keep only rules
+  // whose sourceQuote actually appears (case/space-insensitive) in the
+  // document. Claude is instructed to quote verbatim; this enforces it so a
+  // fabricated quote can never reach the corpus. (PDF path: Claude sees the
+  // PDF natively and we don't have the text, so we can't cross-check there.)
+  if (input.textContent) {
+    const hay = input.textContent.toLowerCase().replace(/\s+/g, " ");
+    const grounded = parsed.data.rules.filter((r) => {
+      const q = (r.sourceQuote || "").toLowerCase().replace(/\s+/g, " ").trim();
+      return q.length >= 8 && hay.includes(q);
+    });
+    return grounded;
   }
   return parsed.data.rules;
 }

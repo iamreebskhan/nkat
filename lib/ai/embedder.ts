@@ -27,7 +27,7 @@ function client(): OpenAI {
       "OPENAI_API_KEY is not set. Vector search requires the OpenAI embeddings API.",
     );
   }
-  _client = new OpenAI({ apiKey });
+  _client = new OpenAI({ apiKey, maxRetries: 4 });
   return _client;
 }
 
