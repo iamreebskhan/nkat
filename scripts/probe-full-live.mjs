@@ -256,7 +256,7 @@ ok("GET /visits/[id]", (await req("GET", `/api/visits/${visitId}`)).s === 200);
 ok("PATCH /visits/[id]/document", (await req("PATCH", `/api/visits/${visitId}/document`, { totalMinutes: 45, documentText: "Home visit note.", cptCodesAssigned: ["99349"], icd10Codes: ["Z515"] })).s === 200);
 ok("PATCH /visits/[id]/reschedule", [200, 404].includes((await req("PATCH", `/api/visits/${visitId}/reschedule`, { scheduledStart: new Date(Date.now() + 2 * 86400_000).toISOString() })).s));
 ok("POST /visits/[id]/transition", [200, 400, 409, 422].includes((await req("POST", `/api/visits/${visitId}/transition`, { status: "pending_billing" })).s));
-ok("PUT /care-plans/[patientId]", [200, 201].includes((await req("PUT", `/api/care-plans/${patientId}`, { goalsOfCareSummary: "Comfort-focused care.", primarySymptoms: ["pain"], activeMedications: ["morphine"] })).s));
+ok("PUT /care-plans/[patientId]", [200, 201].includes((await req("PUT", `/api/care-plans/${patientId}`, { document: { type: "doc", content: [] }, goalsOfCareSummary: "Comfort-focused care.", primarySymptoms: ["pain"], activeMedications: ["morphine"] })).s));
 ok("GET /care-plans/[patientId]", (await req("GET", `/api/care-plans/${patientId}`)).s === 200);
 
 // ════════════════════════════════════════════════════════════════════
@@ -296,7 +296,7 @@ ok("POST /denials (log)", !!denialId);
 ok("GET /denials (list)", Array.isArray((await req("GET", "/api/denials")).j?.data?.rows));
 ok("GET /denials/[id]", (await req("GET", `/api/denials/${denialId}`)).s === 200);
 const analyze = await req("POST", `/api/denials/${denialId}/analyze`);
-ok("POST /denials/[id]/analyze — Claude analysis", analyze.s === 200 && (!!analyze.j?.data?.aiRecommendation || !!analyze.j?.data?.aiAnalysisText), `rec=${analyze.j?.data?.aiRecommendation}`);
+ok("POST /denials/[id]/analyze — Claude analysis", analyze.s === 200 && (!!analyze.j?.data?.recommendation || !!analyze.j?.data?.text), `status=${analyze.s} rec=${analyze.j?.data?.recommendation ?? "?"}`);
 ok("GET /denials/[id]/prediction (predicted vs actual)", (await req("GET", `/api/denials/${denialId}/prediction`)).s === 200);
 ok("POST /denials/[id]/decide", [200, 409, 422].includes((await req("POST", `/api/denials/${denialId}/decide`, { decision: "refile" })).s));
 ok("POST /denials/[id]/refile", [200, 409, 422].includes((await req("POST", `/api/denials/${denialId}/refile`, {})).s));
@@ -309,11 +309,15 @@ console.log("\n── rulebook + cheatsheets ──");
 ok("POST /rulebook/generate", [200, 201].includes((await req("POST", "/api/rulebook/generate", {})).s));
 const rb = await req("GET", "/api/rulebook");
 ok("GET /rulebook — rows + provenance", (rb.j?.data?.rulebook?.rows?.length ?? 0) > 0, `rows=${rb.j?.data?.rulebook?.rows?.length}`);
-const csv = "payer,state,cpt,attribute,value\nAetna,OH,99349,covered,covered\n";
-const up = await req("POST", "/api/rulebook/upload", { csv, filename: "t.csv" });
-ok("POST /rulebook/upload", [200, 400, 422].includes(up.s), `status=${up.s}`);
-const uploadId = up.j?.data?.uploadId ?? up.j?.data?.id ?? "00000000-0000-0000-0000-000000000000";
-ok("GET /rulebook/comparison", [200, 400, 404].includes((await req("GET", `/api/rulebook/comparison?uploadId=${uploadId}`)).s));
+// Path-B upload is multipart/form-data with a CSV file (not JSON).
+const csv = "payer,state,cpt,attribute,value\nAetna,OH,99349,covered,covered\nAetna,OH,99348,covered,covered\n";
+const fd = new FormData();
+fd.set("file", new Blob([csv], { type: "text/csv" }), "rulebook.csv");
+fd.set("kind", "rulebook");
+const up = await req("POST", "/api/rulebook/upload", fd, { form: true });
+ok("POST /rulebook/upload (multipart)", [200, 201, 422].includes(up.s), `status=${up.s}`);
+const uploadId = up.j?.data?.id ?? up.j?.data?.uploadId ?? "00000000-0000-0000-0000-000000000000";
+ok("GET /rulebook/comparison", [200, 400, 404].includes((await req("GET", `/api/rulebook/comparison?uploadId=${uploadId}`)).s), `uploadId=${uploadId?.slice(0, 8)}`);
 ok("POST /rulebook/merge", [200, 400, 404, 422].includes((await req("POST", "/api/rulebook/merge", { rows: [] })).s));
 ok("POST /rulebook/save", [200, 400, 422].includes((await req("POST", "/api/rulebook/save", { edits: [] })).s));
 const cs = await req("POST", "/api/cheatsheets", { state: "OH", payerId: aetna, cptCodes: ["99348", "99349"], orgName });
@@ -373,7 +377,7 @@ const areqId = areq.j?.data?.id;
 ok("POST /attestations/requests", [200, 201].includes(areq.s));
 ok("POST /attestations/requests/[id]/claim", areqId ? [200, 409, 404].includes((await req("POST", `/api/attestations/requests/${areqId}/claim`, {})).s) : false);
 ok("POST /attestations/requests/[id]/resolve", areqId ? [200, 409, 404, 422].includes((await req("POST", `/api/attestations/requests/${areqId}/resolve`, { resolution: "confirmed" })).s) : false);
-ok("DELETE /attestations/[id] (void)", attId ? [200, 404, 422].includes((await req("DELETE", `/api/attestations/${attId}`)).s) : false);
+ok("DELETE /attestations/[id] (void)", attId ? [200, 404, 422].includes((await req("DELETE", `/api/attestations/${attId}`, { reason: "probe void" })).s) : false);
 
 // ════════════════════════════════════════════════════════════════════
 // 9. INTEGRATIONS (Google) + MFA + PASSWORD RESET + INVITES
