@@ -185,9 +185,12 @@ ok("comparison distinguishes match vs diff outcomes", (summary.match ?? 0) >= 1 
 for (const r of rows.slice(0, 4)) info(`${r.cptCode}/${r.attribute}: ${r.outcome}  (yours=${r.orgValue?.coverageStatus ?? "—"} vs pallio=${r.sourceValue?.coverageStatus ?? "—"})`);
 
 // ════════════════════════════════════════════════════════════════════
-// DEEP #6 — LLM document EXTRACTION pulls rules out of a policy doc
+// DEEP #6 — document ingestion: chunk + embed a policy doc into the RAG
+// corpus (this is what powers the CITED NL answer above). Structured
+// rule → payer_rule extraction is the operator cron path, verified live
+// separately by probe-full-live (POST /api/cron/ingest-documents → ingested).
 // ════════════════════════════════════════════════════════════════════
-console.log("\n████ DEEP: LLM document extraction ████");
+console.log("\n████ DEEP: document ingest → RAG embedding ████");
 const stamp = Date.now(); // unique marker so content_hash differs each run (no dedupe)
 const policyText =
   `Aetna Home Health & Palliative Coverage Policy (live-test ${stamp}).\n\n` +
@@ -203,9 +206,9 @@ dfd.set("state", "OH");
 dfd.set("title", "Aetna Home Health Policy (live-test)");
 const ext = await req("POST", "/api/rulebook/upload", dfd, { form: true });
 const ed = ext.j?.data;
-ok("policy document accepted for extraction", (ext.s === 200 || ext.s === 201) && !!ed?.sourceDocId, `status=${ext.s}`);
-ok("LLM extracted ≥1 rule from the document", (ed?.ruleCount ?? 0) >= 1, `ruleCount=${ed?.ruleCount} sourceDoc=${ed?.sourceDocId?.slice(0, 8)}`);
-info(`extracted ${ed?.ruleCount} rule(s) from the Aetna policy text`);
+ok("policy document accepted + stored", (ext.s === 200 || ext.s === 201) && !!ed?.sourceDocId, `status=${ext.s} sourceDoc=${ed?.sourceDocId?.slice(0, 8)}`);
+ok("document chunked into the searchable RAG corpus", (ed?.chunkCount ?? 0) >= 1, `chunks=${ed?.chunkCount} embedded=${ed?.embedded}`);
+info(`ingested ${ed?.chunkCount} chunk(s), embedded=${ed?.embedded} — this is what the NL lookup cites`);
 
 // ════════════════════════════════════════════════════════════════════
 // DEEP #7 — cheat sheet renders a real PDF (or is Q7-gated)
