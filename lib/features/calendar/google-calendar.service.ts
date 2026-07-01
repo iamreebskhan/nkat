@@ -282,11 +282,14 @@ export async function pushVisitToGoogle(args: {
   return { externalId: ev.id, created: true };
 }
 
-/** Disconnect — revoke + remove the row. */
+/** Disconnect — revoke (best-effort) + remove the row. Works even when
+ * Google isn't configured: we always drop the local link, and only
+ * attempt the remote revoke if the config + token are available. */
 export async function disconnect(args: { orgId: string; userId: string }): Promise<void> {
-  const cfg = requireConfig();
-  // Best-effort revoke; even if it fails, we drop the row.
+  // Best-effort remote revoke — needs the pgcrypto key. If Google isn't
+  // configured, skip revoke and just remove the local row (below).
   try {
+    const cfg = requireConfig();
     const rows = await withOrgContext(args.orgId, async (tx) =>
       tx.$queryRaw<{ refresh: string }[]>`
         SELECT pgp_sym_decrypt(refresh_token_encrypted, ${cfg.key}) AS refresh
@@ -300,7 +303,7 @@ export async function disconnect(args: { orgId: string; userId: string }): Promi
       });
     }
   } catch {
-    /* best effort */
+    /* not configured / revoke failed — still drop the local link */
   }
   await withOrgContext(args.orgId, async (tx) => {
     await tx.$executeRaw`

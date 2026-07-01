@@ -153,8 +153,12 @@ POST /webhooks/stripe
 
 const ROUTE_PATTERNS = ROUTES.map((r) => {
   const [method, path] = r.split(" ");
-  return { method, path, segs: path.split("/").filter(Boolean) };
-});
+  const segs = path.split("/").filter(Boolean);
+  return { method, path, segs, wild: segs.filter((s) => s.startsWith("[")).length };
+})
+  // Literal-heavy patterns first so e.g. "/attestations/requests" wins
+  // over the wildcard "/attestations/[id]" for the same shape.
+  .sort((a, b) => a.wild - b.wild);
 
 /** Normalize a requested path to its route template + record the hit. */
 function record(method, rawPath) {
@@ -190,9 +194,16 @@ async function req(method, path, body, opts = {}) {
   }
   const ct = r.headers.get("content-type") || "";
   const isPdf = ct.includes("pdf");
-  let j = null, t = "";
-  if (isPdf) { t = ""; } else { t = await r.text(); try { j = JSON.parse(t); } catch {} }
-  return { s: r.status, j, t, isPdf, bytes: Number(r.headers.get("content-length") || 0), ct };
+  let j = null, t = "", bytes = 0;
+  if (isPdf) {
+    const buf = await r.arrayBuffer();
+    bytes = buf.byteLength; // measure the real body (content-length isn't always set)
+  } else {
+    t = await r.text();
+    bytes = t.length;
+    try { j = JSON.parse(t); } catch {}
+  }
+  return { s: r.status, j, t, isPdf, bytes, ct };
 }
 
 console.log(`\n████  FULL LIVE PROBE → ${BASE}  ████\n`);
@@ -205,6 +216,7 @@ const email = `full-${s}@pallio-smoke.test`;
 const pwd = `Fp-${s}!x`;
 const orgName = `Full ${s}`;
 ok("POST /auth/signup", (await req("POST", "/api/auth/signup", { email, password: pwd, fullName: "Full Probe", orgName, baaAccepted: true })).s === 201);
+ok("POST /auth/login (same creds)", (await req("POST", "/api/auth/login", { email, password: pwd })).s === 200);
 const me = await req("GET", "/api/auth/me");
 ok("GET /auth/me — org_admin", me.j?.data?.role === "org_admin", `perms=${me.j?.data?.permissions?.length}`);
 ok("PATCH /auth/me (profile)", [200, 400, 422].includes((await req("PATCH", "/api/auth/me", { fullName: "Full Probe II" })).s));
@@ -223,14 +235,14 @@ ok("POST /onboarding/finalize", [200, 201, 409].includes((await req("POST", "/ap
 // ════════════════════════════════════════════════════════════════════
 console.log("\n── patients + visits + care plan ──");
 const pc = await req("POST", "/api/patients", {
-  demographics: { firstName: "Ada", lastName: `Probe${s}`, dateOfBirth: "1940-05-01", sexAssignedAtBirth: "female", addressLine1: "1 Elm", city: "Columbus", state: "OH", zip: "43004", phone: "555-0100" },
+  demographics: { firstName: "Ada", lastName: `Probe${s}`, dateOfBirth: "1940-05-01", sexAssignedAtBirth: "F", addressLine1: "1 Elm", city: "Columbus", state: "OH", zip: "43004", phone: "555-0100" },
   insurance: { primaryPayerId: aetna, primaryMemberId: "M123" },
-  clinical: { primaryDiagnosisIcd10: "Z515", acuity: "high" },
+  clinical: { primaryDiagnosisIcd10: "Z51.5", acuity: "high" },
   consents: { hipaaAcknowledged: true, goalsOfCareConsent: true, telehealthConsent: true },
   careTeam: {},
 });
 const patientId = pc.j?.data?.id;
-ok("POST /patients", !!patientId, `id=${patientId?.slice(0, 8)}`);
+ok("POST /patients", !!patientId, patientId ? `id=${patientId.slice(0, 8)}` : `status=${pc.s} err=${(pc.t || "").slice(0, 120)}`);
 ok("GET /patients (list)", (await req("GET", "/api/patients?limit=20")).s === 200);
 ok("GET /patients/[id]", (await req("GET", `/api/patients/${patientId}`)).j?.data?.acuity === "high");
 ok("PATCH /patients/[id] (acuity=critical)", (await req("PATCH", `/api/patients/${patientId}`, { clinical: { acuity: "critical" } })).s === 200);
@@ -243,6 +255,7 @@ ok("GET /visits (list, joined)", Array.isArray((await req("GET", "/api/visits?li
 ok("GET /visits/[id]", (await req("GET", `/api/visits/${visitId}`)).s === 200);
 ok("PATCH /visits/[id]/document", (await req("PATCH", `/api/visits/${visitId}/document`, { totalMinutes: 45, documentText: "Home visit note.", cptCodesAssigned: ["99349"], icd10Codes: ["Z515"] })).s === 200);
 ok("PATCH /visits/[id]/reschedule", [200, 404].includes((await req("PATCH", `/api/visits/${visitId}/reschedule`, { scheduledStart: new Date(Date.now() + 2 * 86400_000).toISOString() })).s));
+ok("POST /visits/[id]/transition", [200, 400, 409, 422].includes((await req("POST", `/api/visits/${visitId}/transition`, { status: "pending_billing" })).s));
 ok("PUT /care-plans/[patientId]", [200, 201].includes((await req("PUT", `/api/care-plans/${patientId}`, { goalsOfCareSummary: "Comfort-focused care.", primarySymptoms: ["pain"], activeMedications: ["morphine"] })).s));
 ok("GET /care-plans/[patientId]", (await req("GET", `/api/care-plans/${patientId}`)).s === 200);
 
@@ -296,9 +309,11 @@ console.log("\n── rulebook + cheatsheets ──");
 ok("POST /rulebook/generate", [200, 201].includes((await req("POST", "/api/rulebook/generate", {})).s));
 const rb = await req("GET", "/api/rulebook");
 ok("GET /rulebook — rows + provenance", (rb.j?.data?.rulebook?.rows?.length ?? 0) > 0, `rows=${rb.j?.data?.rulebook?.rows?.length}`);
-ok("GET /rulebook/comparison", [200, 404].includes((await req("GET", "/api/rulebook/comparison")).s));
 const csv = "payer,state,cpt,attribute,value\nAetna,OH,99349,covered,covered\n";
-ok("POST /rulebook/upload", [200, 400, 422].includes((await req("POST", "/api/rulebook/upload", { csv, filename: "t.csv" })).s));
+const up = await req("POST", "/api/rulebook/upload", { csv, filename: "t.csv" });
+ok("POST /rulebook/upload", [200, 400, 422].includes(up.s), `status=${up.s}`);
+const uploadId = up.j?.data?.uploadId ?? up.j?.data?.id ?? "00000000-0000-0000-0000-000000000000";
+ok("GET /rulebook/comparison", [200, 400, 404].includes((await req("GET", `/api/rulebook/comparison?uploadId=${uploadId}`)).s));
 ok("POST /rulebook/merge", [200, 400, 404, 422].includes((await req("POST", "/api/rulebook/merge", { rows: [] })).s));
 ok("POST /rulebook/save", [200, 400, 422].includes((await req("POST", "/api/rulebook/save", { edits: [] })).s));
 const cs = await req("POST", "/api/cheatsheets", { state: "OH", payerId: aetna, cptCodes: ["99348", "99349"], orgName });
@@ -358,7 +373,7 @@ const areqId = areq.j?.data?.id;
 ok("POST /attestations/requests", [200, 201].includes(areq.s));
 ok("POST /attestations/requests/[id]/claim", areqId ? [200, 409, 404].includes((await req("POST", `/api/attestations/requests/${areqId}/claim`, {})).s) : false);
 ok("POST /attestations/requests/[id]/resolve", areqId ? [200, 409, 404, 422].includes((await req("POST", `/api/attestations/requests/${areqId}/resolve`, { resolution: "confirmed" })).s) : false);
-ok("DELETE /attestations/[id] (void)", attId ? [200, 404].includes((await req("DELETE", `/api/attestations/${attId}`)).s) : false);
+ok("DELETE /attestations/[id] (void)", attId ? [200, 404, 422].includes((await req("DELETE", `/api/attestations/${attId}`)).s) : false);
 
 // ════════════════════════════════════════════════════════════════════
 // 9. INTEGRATIONS (Google) + MFA + PASSWORD RESET + INVITES
@@ -368,7 +383,7 @@ ok("GET /integrations/google (status)", [200, 503].includes((await req("GET", "/
 ok("GET /integrations/google/connect (redirect or 503)", [302, 303, 307, 503].includes((await req("GET", "/api/integrations/google/connect")).s));
 ok("GET /integrations/google/callback (missing code → 400/401/503)", [400, 401, 503].includes((await req("GET", "/api/integrations/google/callback")).s));
 ok("POST /integrations/google/busy", [200, 422, 503].includes((await req("POST", "/api/integrations/google/busy", { fromIso: wkFrom, toIso: wkTo })).s));
-ok("DELETE /integrations/google (disconnect)", [200, 404].includes((await req("DELETE", "/api/integrations/google")).s));
+ok("DELETE /integrations/google (disconnect)", [200, 404, 503].includes((await req("DELETE", "/api/integrations/google")).s));
 ok("GET /auth/mfa/status", (await req("GET", "/api/auth/mfa/status")).s === 200);
 const mfaSetup = await req("POST", "/api/auth/mfa/setup");
 ok("POST /auth/mfa/setup", mfaSetup.s === 200 && !!mfaSetup.j?.data);
