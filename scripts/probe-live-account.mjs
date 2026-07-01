@@ -21,9 +21,13 @@
  * reused by name so the account stays clean.
  */
 
+// Fixed, known demo credentials so this is fully turnkey — no env setup.
+// Override with TEST_EMAIL / TEST_PASSWORD if you want your own. This is a
+// throwaway DEMO login on your own platform; rotate/remove it before real
+// production use.
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
-const EMAIL = process.env.TEST_EMAIL || `livetest-${Date.now()}@pallio.test`;
-const PASSWORD = process.env.TEST_PASSWORD || `Live-${Date.now()}-Aa9!`;
+const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
+const PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
 const ORG_NAME = process.env.TEST_ORG || "Pallio Live Demo";
 
 let cookie = "";
