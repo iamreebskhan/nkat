@@ -192,6 +192,32 @@ async function shot(page, name) {
       return "AI analysis shown";
     });
 
+    // ── NEW (#74): denial refile + record-outcome buttons work FE→BE ────
+    await step("denial workflow: decide → refile → outcome (new buttons)", async () => {
+      // We're on a denial detail page. Drive it to a recorded outcome by
+      // clicking the real buttons, whatever state it starts in.
+      let t = await body();
+      const clickByName = async (re) => {
+        const b = page.getByRole("button", { name: re }).first();
+        if (await b.count()) { await b.click().catch(() => {}); await page.waitForTimeout(1500); return true; }
+        return false;
+      };
+      const trail = [];
+      if (/Outcome:/i.test(t)) return "already resolved — outcome shown";
+      // If no decision yet, decide "Refile" so the refile/outcome UI appears.
+      if (/Refile[\s\S]*Appeal[\s\S]*Write off/i.test(t) && !/Record final outcome/i.test(t)) {
+        if (await clickByName(/^refile$/i)) trail.push("decided:refile");
+        t = await body();
+      }
+      // Mark as refiled (the /refile endpoint the new button calls).
+      if (await clickByName(/mark as refiled/i)) trail.push("refiled");
+      // Record the outcome (the /outcome endpoint the new button calls).
+      if (await clickByName(/paid in full/i)) trail.push("outcome:paid");
+      t = await body();
+      if (!/Outcome:/i.test(t)) throw new Error(`outcome not recorded (trail=${trail.join(",") || "none"})`);
+      return `clicked [${trail.join(",")}] → Outcome shown`;
+    });
+
     // ── rulebook + comparison ──────────────────────────────────────────
     await step("rulebook (generated + comparison controls)", async () => {
       await page.goto(`${BASE}/settings/rulebook`);
