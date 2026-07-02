@@ -80,6 +80,10 @@ export interface IngestionResult {
   embedded: boolean;
   contentHash: string;
   alreadyIngested: boolean;
+  /** Rules extracted but rejected on insert (e.g. a CHECK violation) and
+   *  skipped so the rest of the document still lands. Should be 0 in normal
+   *  operation; a non-zero value points at a data-shape edge case in logs. */
+  skipped: number;
 }
 
 export interface IngestionInput {
@@ -131,6 +135,7 @@ export async function ingestDocumentFromUrl(
       embedded: false,
       contentHash,
       alreadyIngested: true,
+      skipped: 0,
     };
   }
 
@@ -190,50 +195,70 @@ export async function ingestDocumentFromUrl(
     answer: string;
     sourceQuote: string;
   }> = [];
+  const skipped: string[] = [];
   if (extracted.length > 0 && args.payerId && args.state) {
     await withBreakglass(async (tx) => {
       for (const r of extracted) {
         const dbAttr =
           ATTRIBUTE_DB_MAP[r.attribute as keyof typeof ATTRIBUTE_DB_MAP] ??
           r.attribute;
-        // Expire any prior active rule for the same key.
-        await tx.$executeRaw`
-          UPDATE payer_rule SET expiration_date = CURRENT_DATE
-           WHERE payer_id = ${args.payerId}::uuid
-             AND state = ${args.state}
-             AND code = ${r.cptCode}
-             AND attribute = ${dbAttr}
-             AND expiration_date IS NULL
-        `;
-        const ins = await tx.$queryRaw<{ id: string }[]>`
-          INSERT INTO payer_rule (
-            payer_id, state, product_line, code, attribute,
-            value, coverage_status, confidence,
-            effective_date, expiration_date,
-            source_doc_id, source_quote,
-            created_by
-          ) VALUES (
-            ${args.payerId}::uuid, ${args.state}, 'commercial',
-            ${r.cptCode}, ${dbAttr},
-            ${JSON.stringify({ answer: r.answer })}::jsonb,
-            ${r.coverageStatus}, ${confidence},
-            CURRENT_DATE, NULL,
-            ${docId}::uuid, ${r.sourceQuote},
-            ${"crawler:" + args.documentType}
-          )
-          RETURNING id
-        `;
-        newPayerRuleIds.push({
-          ruleId: ins[0]!.id,
-          cptCode: r.cptCode,
-          dbAttribute: dbAttr,
-          coverageStatus: r.coverageStatus,
-          answer: r.answer,
-          sourceQuote: r.sourceQuote,
-        });
-        ruleCount++;
+        // Isolate each rule in a SAVEPOINT so one bad row (e.g. a value that
+        // trips a CHECK constraint) is rolled back + logged rather than
+        // aborting the whole document's insert. Essential for large, varied
+        // docs (the 1,216-page final rule) where a stray row is inevitable.
+        try {
+          await tx.$executeRawUnsafe("SAVEPOINT rule_sp");
+          // Expire any prior active rule for the same key.
+          await tx.$executeRaw`
+            UPDATE payer_rule SET expiration_date = CURRENT_DATE
+             WHERE payer_id = ${args.payerId}::uuid
+               AND state = ${args.state}
+               AND code = ${r.cptCode}
+               AND attribute = ${dbAttr}
+               AND expiration_date IS NULL
+          `;
+          const ins = await tx.$queryRaw<{ id: string }[]>`
+            INSERT INTO payer_rule (
+              payer_id, state, product_line, code, attribute,
+              value, coverage_status, confidence,
+              effective_date, expiration_date,
+              source_doc_id, source_quote,
+              created_by
+            ) VALUES (
+              ${args.payerId}::uuid, ${args.state}, 'commercial',
+              ${r.cptCode}, ${dbAttr},
+              ${JSON.stringify({ answer: r.answer })}::jsonb,
+              ${r.coverageStatus}, ${confidence},
+              CURRENT_DATE, NULL,
+              ${docId}::uuid, ${r.sourceQuote},
+              ${"crawler:" + args.documentType}
+            )
+            RETURNING id
+          `;
+          await tx.$executeRawUnsafe("RELEASE SAVEPOINT rule_sp");
+          newPayerRuleIds.push({
+            ruleId: ins[0]!.id,
+            cptCode: r.cptCode,
+            dbAttribute: dbAttr,
+            coverageStatus: r.coverageStatus,
+            answer: r.answer,
+            sourceQuote: r.sourceQuote,
+          });
+          ruleCount++;
+        } catch (e) {
+          await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT rule_sp");
+          const msg = e instanceof Error ? e.message : String(e);
+          skipped.push(`${r.cptCode}/${dbAttr}`);
+          console.warn(
+            `ingest: skipped rule code=${r.cptCode} attr=${dbAttr} ` +
+              `coverage=${r.coverageStatus} conf=${confidence} — ${msg.replace(/\s+/g, " ").slice(0, 200)}`,
+          );
+        }
       }
     }, "ingestion: write payer_rule rows");
+    if (skipped.length) {
+      console.warn(`ingest: ${skipped.length}/${extracted.length} rule(s) skipped: ${skipped.slice(0, 15).join(", ")}`);
+    }
 
     // Refresh org rulebooks for each inserted rule (cross-org).
     // Done outside the breakglass loop because refresh uses its own
@@ -303,6 +328,7 @@ export async function ingestDocumentFromUrl(
     embedded,
     contentHash,
     alreadyIngested: false,
+    skipped: skipped.length,
   };
 }
 
