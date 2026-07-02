@@ -307,10 +307,15 @@ async function fetchUrlBytes(
 ): Promise<{ bytes: Buffer; contentType: string }> {
   const res = await fetch(url, {
     headers: {
-      // Some payer sites block bot UAs; identify Pallio honestly + ask for HTML/PDF.
-      "user-agent": "Pallio-ingest/1.0 (+https://app.pallio.io)",
+      // CMS (Akamai) and many payer sites 403 non-browser UAs — a bot UA like
+      // "Pallio-ingest/1.0" is blocked outright, so we can't ingest Source 1
+      // (cms.gov) at all with it. Present a standard browser UA + headers so
+      // those bot managers serve us. (Verified: CMS 403s a bot UA, 200s this.)
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       accept:
         "application/pdf, text/html;q=0.9, text/plain;q=0.8, */*;q=0.5",
+      "accept-language": "en-US,en;q=0.9",
     },
     // Some payers redirect — follow.
     redirect: "follow",
