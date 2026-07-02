@@ -84,6 +84,10 @@ export interface IngestionResult {
    *  skipped so the rest of the document still lands. Should be 0 in normal
    *  operation; a non-zero value points at a data-shape edge case in logs. */
   skipped: number;
+  /** If the extraction call itself errored (credit exhausted, model access,
+   *  rate limit), the message — so a caller can distinguish an API failure
+   *  from a genuinely rule-free document. null on success. */
+  extractError: string | null;
 }
 
 export interface IngestionInput {
@@ -136,6 +140,7 @@ export async function ingestDocumentFromUrl(
       contentHash,
       alreadyIngested: true,
       skipped: 0,
+      extractError: null,
     };
   }
 
@@ -169,6 +174,7 @@ export async function ingestDocumentFromUrl(
 
   // 5. Extract rules with Claude.
   let extracted: ExtractedRule[] = [];
+  let extractError: string | null = null;
   try {
     extracted = await extractRulesFromDocument({
       ...extractInput,
@@ -176,11 +182,14 @@ export async function ingestDocumentFromUrl(
       documentTitle: args.title,
     });
   } catch (e) {
-    // Don't blow up the whole ingest — we still have the document
-    // chunked + embedded for the RAG fallback. Log + continue.
+    // Don't blow up the whole ingest — we still have the document stored
+    // (and chunked/embedded for text docs). But SURFACE the reason so a
+    // caller can tell "0 rules extracted" (empty doc) apart from "extraction
+    // errored" (e.g. Anthropic credit exhausted, model access, rate limit).
+    extractError = e instanceof Error ? e.message : String(e);
     console.warn(
       "ingestDocumentFromUrl: extraction failed; doc stored, no rules written.",
-      e,
+      extractError,
     );
   }
 
@@ -329,6 +338,7 @@ export async function ingestDocumentFromUrl(
     contentHash,
     alreadyIngested: false,
     skipped: skipped.length,
+    extractError,
   };
 }
 
