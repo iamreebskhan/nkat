@@ -91,6 +91,11 @@ export interface IngestionInput {
   /** Operator-supplied inline content; skips fetch. Use when scraping
    *  the URL would be blocked or for ad-hoc paste-from-clipboard ingest. */
   inlineText?: string;
+  /** Base64-encoded PDF bytes; skips fetch. Used to feed a chunk of a large
+   *  rule (split client-side) straight into extraction — bypasses the 32 MB
+   *  fetch cap and the native-PDF page limit by processing one chunk at a
+   *  time. `url` still carries the citation target (e.g. the full-rule URL). */
+  inlinePdfBase64?: string;
 }
 
 /**
@@ -102,9 +107,11 @@ export async function ingestDocumentFromUrl(
   args: IngestionInput,
 ): Promise<IngestionResult> {
   // 1. Acquire content.
-  const fetched = args.inlineText
-    ? { bytes: Buffer.from(args.inlineText, "utf8"), contentType: "text/plain" }
-    : await fetchUrlBytes(args.url);
+  const fetched = args.inlinePdfBase64
+    ? { bytes: Buffer.from(args.inlinePdfBase64, "base64"), contentType: "application/pdf" }
+    : args.inlineText
+      ? { bytes: Buffer.from(args.inlineText, "utf8"), contentType: "text/plain" }
+      : await fetchUrlBytes(args.url);
 
   const contentHash =
     "sha256:" + createHash("sha256").update(fetched.bytes).digest("hex");
@@ -129,6 +136,7 @@ export async function ingestDocumentFromUrl(
 
   // 3. Prepare for Claude extraction.
   const isPdf =
+    !!args.inlinePdfBase64 ||
     fetched.contentType.includes("application/pdf") ||
     args.url.toLowerCase().endsWith(".pdf");
   const extractInput = isPdf
