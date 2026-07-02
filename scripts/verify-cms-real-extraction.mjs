@@ -113,24 +113,29 @@ if (CRON) {
 //    Threshold, not per-code assertion (real docs vary).
 // ════════════════════════════════════════════════════════════════════
 console.log("\n████ B. Real CMS codes extracted into the corpus ████");
-const CODES = [
-  { cpt: "99347", label: "home visit 15 min" },
-  { cpt: "99348", label: "home visit 25 min" },
-  { cpt: "99349", label: "home visit 40 min" },
-  { cpt: "99350", label: "home visit 60 min" },
-  { cpt: "99497", label: "advance care planning" },
-  { cpt: "99498", label: "ACP add-on" },
-  { cpt: "99457", label: "RPM management" },
-  { cpt: "99458", label: "RPM management +20" },
+// Probe each code under the attribute CMS actually files it. The E/M + final-
+// rule docs put home visits under `bundled_with` (G2211 add-on), telehealth
+// under `telehealth`, freq changes under `frequency_limit` — not a blanket
+// `covered`. Enum names map to DB attrs via ATTRIBUTE_DB_MAP:
+// addon_compatible→bundled_with, telehealth→telehealth_allowed, etc.
+const PROBES = [
+  { cpt: "99497", attr: "covered", label: "advance care planning" },
+  { cpt: "99498", attr: "covered", label: "ACP add-on" },
+  { cpt: "G0552", attr: "covered", label: "new CY2026 digital-MH code" },
+  { cpt: "G0553", attr: "covered", label: "new CY2026 code" },
+  { cpt: "99349", attr: "addon_compatible", label: "home visit 40 min (bundled w/ G2211)" },
+  { cpt: "99350", attr: "addon_compatible", label: "home visit 60 min (bundled)" },
+  { cpt: "92622", attr: "telehealth", label: "telehealth service" },
+  { cpt: "99233", attr: "frequency_limit", label: "telehealth freq-limit removed" },
 ];
 let hits = 0;
-for (const c of CODES) {
-  const d = (await req("POST", "/api/billing/lookup", { payerId, state: "OH", cptCode: c.cpt, attribute: "covered", dos: DOS })).j?.data;
+for (const c of PROBES) {
+  const d = (await req("POST", "/api/billing/lookup", { payerId, state: "OH", cptCode: c.cpt, attribute: c.attr, dos: DOS })).j?.data;
   const structured = d?.status === "ok" && d?.source === "structured_rule";
-  console.log(`${structured ? "✓ " : "· "} ${c.cpt} (${c.label}) → source=${d?.source} coverage=${d?.coverageStatus}`);
+  console.log(`${structured ? "✓ " : "· "} ${c.cpt}/${c.attr} (${c.label}) → source=${d?.source} coverage=${d?.coverageStatus}`);
   if (structured) hits++;
 }
-ok(`≥ ${MIN_HITS} real CMS codes extracted to structured rules`, hits >= MIN_HITS, `${hits}/${CODES.length} resolved from corpus`);
+ok(`≥ ${MIN_HITS} real CMS codes extracted to structured rules`, hits >= MIN_HITS, `${hits}/${PROBES.length} resolved from corpus`);
 
 // ════════════════════════════════════════════════════════════════════
 // D. Comparison (Path B) — org rulebook vs the real extracted CMS rules.
@@ -164,20 +169,29 @@ ok("NEW_FROM_PALLIO surfaced (real CMS codes the org omitted)", (sum.new_from_pa
 // E. Green MATCH round-trip using a real extracted value.
 // ════════════════════════════════════════════════════════════════════
 console.log("\n████ D. Green MATCH round-trip (real extracted value) ████");
-const donor = rows.find((r) =>
-  r.outcome === "new_from_pallio" && r.attribute === "covered" &&
-  r.sourceValue?.coverageStatus === "covered" && r.sourceValue?.ruleValue?.answer);
+// Find a code with a `covered` extracted rule, read its exact value, then echo
+// it back → identical coverage + value ⇒ green match. Probe candidates that
+// really do carry a `covered` attribute in the corpus.
+const CANDIDATES = ["99498", "G0552", "G0553", "G0136", "99497"];
+let donor = null;
+for (const cpt of CANDIDATES) {
+  const pu = await uploadCsv(`payer,state,cpt,attribute,coverage,value\nMedicare,OH,${cpt},covered,covered,probe`, "cms-match-probe.csv");
+  const pc = await req("GET", `/api/rulebook/comparison?uploadId=${pu.j?.data?.uploadId}`);
+  const row = (pc.j?.data?.rows || []).find((r) =>
+    r.cptCode === cpt && r.attribute === "covered" &&
+    r.sourceValue?.coverageStatus === "covered" && r.sourceValue?.ruleValue?.answer);
+  if (row) { donor = { cpt, answer: row.sourceValue.ruleValue.answer }; break; }
+}
 if (!donor) {
-  ok("found a covered extracted rule to match against", false, "no covered new_from_pallio row — extraction likely didn't run");
+  ok("found a covered extracted rule to match against", false, "no covered rule among candidates — extraction likely didn't run");
 } else {
-  const answer = donor.sourceValue.ruleValue.answer;
-  info(`using ${donor.cptCode} covered → "${String(answer).slice(0, 60)}${String(answer).length > 60 ? "…" : ""}"`);
+  info(`using ${donor.cpt} covered → "${String(donor.answer).slice(0, 60)}${String(donor.answer).length > 60 ? "…" : ""}"`);
   const matchCsv = ["payer,state,cpt,attribute,coverage,value",
-    ["Medicare", "OH", donor.cptCode, "covered", "covered", csvEsc(answer)].join(",")].join("\n");
+    ["Medicare", "OH", donor.cpt, "covered", "covered", csvEsc(donor.answer)].join(",")].join("\n");
   const mu = await uploadCsv(matchCsv, "cms-match-demo.csv");
   const mcmp = await req("GET", `/api/rulebook/comparison?uploadId=${mu.j?.data?.uploadId}`);
-  const mrow = (mcmp.j?.data?.rows || []).find((r) => r.cptCode === donor.cptCode && r.attribute === "covered");
-  ok(`MATCH: ${donor.cptCode} covered (identical value ⇒ green)`, mrow?.outcome === "match", `outcome=${mrow?.outcome}`);
+  const mrow = (mcmp.j?.data?.rows || []).find((r) => r.cptCode === donor.cpt && r.attribute === "covered");
+  ok(`MATCH: ${donor.cpt} covered (identical value ⇒ green)`, mrow?.outcome === "match", `outcome=${mrow?.outcome}`);
 }
 
 // ════════════════════════════════════════════════════════════════════

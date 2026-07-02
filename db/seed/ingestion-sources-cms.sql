@@ -44,16 +44,12 @@ VALUES
     'cms_coverage_api',
     'monthly',
     'Seed #19: national telehealth-eligible code list. Public-domain CMS government work.'
-  ),
-  -- Medicare Coverage Database (LCD/NCD home). Broad coverage policy
-  -- index; the engine extracts what coverage statements it can find.
-  (
-    'CMS — Medicare Coverage Database (LCD/NCD index)',
-    'https://www.cms.gov/medicare/coverage/medicare-coverage-database',
-    (SELECT id FROM medicare),
-    NULL,
-    'ncd',
-    'monthly',
-    'Seed #19: Medicare Coverage Database index. Public-domain CMS government work.'
   )
 ON CONFLICT (url) DO NOTHING;
+
+-- The old "Medicare Coverage Database (LCD/NCD index)" URL now 404s (CMS moved
+-- the page), so it errored every cron run. Retire it — deactivate any existing
+-- row (idempotent; the INSERT above no longer seeds it).
+UPDATE ingestion_source
+   SET active = FALSE, last_error = 'retired: URL 404s (CMS moved the page)', updated_at = now()
+ WHERE url = 'https://www.cms.gov/medicare/coverage/medicare-coverage-database';
