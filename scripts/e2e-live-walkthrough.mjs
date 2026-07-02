@@ -204,14 +204,13 @@ async function shot(page, name) {
       };
       const trail = [];
       if (/Outcome:/i.test(t)) return "already resolved — outcome shown";
-      // If no decision yet, decide "Refile" so the refile/outcome UI appears.
-      if (/Refile[\s\S]*Appeal[\s\S]*Write off/i.test(t) && !/Record final outcome/i.test(t)) {
-        if (await clickByName(/^refile$/i)) trail.push("decided:refile");
-        t = await body();
-      }
-      // Mark as refiled (the /refile endpoint the new button calls).
+      // Drive the workflow by clicking the real buttons in order; each
+      // click is a no-op if that button isn't on the page in this state.
+      // 1) decide "Refile" (only shown when decision is pending)
+      if (await clickByName(/^refile$/i)) trail.push("decided:refile");
+      // 2) "Mark as refiled" (/refile) — appears once decision=refile
       if (await clickByName(/mark as refiled/i)) trail.push("refiled");
-      // Record the outcome (the /outcome endpoint the new button calls).
+      // 3) "Paid in full" (/outcome) — appears once a decision is made
       if (await clickByName(/paid in full/i)) trail.push("outcome:paid");
       t = await body();
       if (!/Outcome:/i.test(t)) throw new Error(`outcome not recorded (trail=${trail.join(",") || "none"})`);
