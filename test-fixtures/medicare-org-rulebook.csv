@@ -1,0 +1,5 @@
+payer,state,cpt,attribute,coverage,value
+Medicare,OH,99350,covered,not_covered,Internal policy: we were denying 60-minute home visits
+Medicare,OH,99453,covered,covered,Internal policy: we assumed RPM set-up is covered
+Medicare,OH,99251,covered,covered,Internal policy: we billed inpatient consults as covered
+Medicare,OH,99406,covered,covered,Internal note: smoking-cessation counseling (not in the CMS rule)
