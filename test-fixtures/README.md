@@ -130,3 +130,63 @@ comparison.
 Real CMS text is less deterministic than the synthetic fixture, so the
 verifier checks a **threshold** (≥ 3 codes extracted), not exact per-code
 coverage.
+
+---
+
+# Full final rule — chunked ingestion (going global)
+
+The **entire** CY2026 PFS final rule (Federal Register 2025-19787) is **1,216
+pages / 211 MB** — 2× the 600-page limit and 6.6× the 32 MB size limit, and
+~3–4M tokens (several times the 1M context window). **No model can ingest it
+whole** — the limit is identical for Sonnet 4.6, Sonnet 5, and Opus 4.8 (all
+1M-context). So we **chunk** it: split into ≤40-page pieces and extract each.
+
+Extraction now runs on **Opus 4.8** (`lib/ai/document-rule-extractor.ts`) for
+best quality on dense regulatory prose.
+
+## How it works
+
+```
+full rule PDF (211MB/1216pp)
+  → qpdf --split-pages=40 → ~31 chunks (≤40pp, ≤~9MB each)
+    → POST each chunk to /api/cron/extract-pdf (x-cron-secret)
+      → ingestDocumentFromUrl({inlinePdfBase64}) → Opus 4.8 → payer_rule
+```
+
+Rules from every chunk merge into the global corpus and go live for all org
+users. `/api/cron/extract-pdf` is secret-gated (same trust boundary as the
+ingest cron); the chunk POSTs go to `localhost:3020` to bypass the gateway
+timeout (Opus extraction on a dense chunk is slow).
+
+## Run it (VPS)
+
+```bash
+# one-time: tools + Medicare payer + a rebuilt app (extract-pdf route + Opus 4.8)
+sudo apt-get install -y qpdf curl
+sudo -u postgres psql pallio -f db/seed/payer-medicare.sql
+# git pull && npm run build && pm2 restart pallio   (server code changed)
+
+CRON_SECRET=your-secret node scripts/ingest-full-rule-chunked.mjs
+```
+
+Tunables (env): `RULE_URL`, `CHUNK_PAGES` (default 40), `STATE` (default OH),
+`DOCTYPE` (default cms_pfs), `CRON_URL` (default `http://localhost:3020`),
+`PAYER_ID` (skip the demo-login payer resolve).
+
+Verify what landed:
+
+```bash
+sudo -u postgres psql pallio -c \
+ "SELECT count(*) FROM payer_rule WHERE created_by='crawler:cms_pfs' AND expiration_date IS NULL;"
+```
+
+## Cost / notes
+
+- ~31 chunks × one Opus 4.8 call each per full ingest. Much of the rule is
+  comment/preamble, so per-page rule yield is lower than the curated MLN docs —
+  budget accordingly.
+- Idempotent: each chunk dedupes on content hash, so re-running skips unchanged
+  chunks. To force a clean re-extract, delete the rule's `source_document` rows
+  first.
+- Citations point at `RULE_URL` (the real Federal Register rule); the chunk
+  page-range is recorded in the source-document title.

@@ -16,7 +16,11 @@ import { withTransientRetry } from "./anthropic.client";
 import { assertNoPhi } from "./phi-guard";
 import { env } from "@/lib/env";
 
-const EXTRACTION_MODEL = "claude-sonnet-4-6";
+// Opus 4.8 — most capable extraction, best on dense regulatory prose (the
+// CY2026 PFS final rule). The native-PDF size limit (600 pages / 32 MB) is the
+// same across all 1M-context models, so chunking — not the model — is what
+// lets us ingest large rules; the model choice governs extraction quality.
+const EXTRACTION_MODEL = "claude-opus-4-8";
 
 let _client: Anthropic | null = null;
 function client(): Anthropic {
@@ -120,9 +124,13 @@ export async function extractRulesFromDocument(
   const resp = await withTransientRetry(() =>
     client().messages.create({
       model: EXTRACTION_MODEL,
-      max_tokens: 8192,
+      // Headroom for dense chunks (a 40-page rule section can yield many
+      // rules). Non-streaming is fine at this size.
+      max_tokens: 16384,
       system:
-        "You are a payer-policy parser. Output strict JSON. Cite verbatim quotes for every rule.",
+        "You are a payer-policy parser. Cite verbatim quotes for every rule. " +
+        "Respond with ONLY the JSON object — no preamble, no reasoning, no " +
+        "explanation, no markdown fences. Your entire response must be valid JSON.",
       messages: [{ role: "user", content: userBlocks }],
     }),
   );
