@@ -2,34 +2,38 @@
  * Verify the platform extracts + compares against the REAL CMS ruling PDFs,
  * front-to-back, live.
  *
+ * Sources point DIRECTLY at cms.gov; the ingest engine sends a browser UA so
+ * CMS serves the server-side fetch (no self-hosting / public/ serving needed).
+ *
  * Prereqs (operator, one-time — the script can't do these itself):
- *   1. Fetch + self-host the real CMS PDFs:
- *        node scripts/fetch-cms-real-pdfs.mjs
- *      (rebuild/restart if your Next build doesn't serve public/ live)
- *   2. Register them as ingestion sources (Medicare + OH):
+ *   1. Seed the Medicare payer (else sources bind to NULL, extract nothing):
+ *        sudo -u postgres psql pallio -f db/seed/payer-medicare.sql
+ *   2. Register the CMS ingestion sources (Medicare + OH):
  *        sudo -u postgres psql pallio -f db/seed/ingestion-source-cms-real.sql
  *
  * Then run this (triggers extraction if CRON_SECRET is set, else assumes the
  * operator already fired the cron). It will:
- *   A. Confirm the 4 self-hosted CMS PDFs are actually served
- *   B. Trigger POST /api/cron/ingest-documents (extracts from the real PDFs)
- *   C. Look up real CMS codes and confirm the corpus now answers from
+ *   A. Trigger POST /api/cron/ingest-documents (extracts from the real CMS PDFs)
+ *   B. Look up real CMS codes and confirm the corpus now answers from
  *      structured rules → proves EXTRACTION from the real documents
- *   D. Upload test-fixtures/cms-org-rulebook.csv and confirm the comparison
+ *   C. Upload test-fixtures/cms-org-rulebook.csv and confirm the comparison
  *      surfaces diff / unverified / new_from_pallio
- *   E. Round-trip a real extracted value back to prove a green `match`
+ *   D. Round-trip a real extracted value back to prove a green `match`
  *
  * Real CMS docs are less deterministic than a synthetic fixture, so the
  * extraction check is a THRESHOLD (≥ MIN_HITS codes resolved), not a
  * per-code assertion.
  *
- * Run on the VPS:
- *   BASE_URL=https://app.pallio.io CRON_SECRET=… node scripts/verify-cms-real-extraction.mjs
+ * Run on the VPS (use your REAL cron secret, not the literal "…"):
+ *   BASE_URL=https://app.pallio.io CRON_SECRET=your-secret node scripts/verify-cms-real-extraction.mjs
  */
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
 const PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
-const CRON = process.env.CRON_SECRET || "";
+// Reject a placeholder / non-ASCII secret (e.g. a pasted "…") — it would crash
+// fetch() with a ByteString error rather than a clear message.
+const CRON_RAW = (process.env.CRON_SECRET || "").trim();
+const CRON = /^[\x20-\x7E]+$/.test(CRON_RAW) && CRON_RAW !== "…" ? CRON_RAW : "";
 const DOS = "2026-07-02";
 const MIN_HITS = 3; // ≥ this many real CMS codes must resolve to structured_rule
 
@@ -72,33 +76,13 @@ const medicare = payers.find((p) => /medicare/i.test(p.name));
 ok("Medicare payer resolved", !!medicare?.id, medicare?.name);
 const payerId = medicare?.id;
 
-// ── A. self-hosted CMS PDFs must be served ───────────────────────────
-console.log("\n████ A. Self-hosted CMS PDFs are served ████");
-const PDFS = [
-  "mm14315-pfs-final-rule-summary-cy2026.pdf",
-  "mln901705-telehealth-rpm.pdf",
-  "mln006764-evaluation-management.pdf",
-  "mln909289-advance-care-planning.pdf",
-];
-let served = 0;
-for (const f of PDFS) {
-  const u = `${BASE}/test-fixtures/cms/${f}`;
-  let good = false, note = "";
-  try {
-    const r = await fetch(u);
-    const ab = await r.arrayBuffer();
-    good = r.ok && ab.byteLength > 1000 && Buffer.from(ab).subarray(0, 5).toString() === "%PDF-";
-    note = `HTTP ${r.status}, ${(ab.byteLength / 1024).toFixed(0)} KB`;
-  } catch (e) { note = String(e); }
-  ok(`served: ${f}`, good, note);
-  if (good) served++;
-}
-if (served < PDFS.length) info("→ run: node scripts/fetch-cms-real-pdfs.mjs  then rebuild/restart so Next serves public/");
-
 // ════════════════════════════════════════════════════════════════════
-// B. Trigger extraction (synchronous — awaits Claude on each PDF).
+// A. Trigger extraction (synchronous — awaits Claude on each CMS PDF).
+//    Sources point directly at cms.gov; the ingest engine now sends a
+//    browser UA so CMS serves the server-side fetch.
 // ════════════════════════════════════════════════════════════════════
-console.log("\n████ B. Extraction (POST /api/cron/ingest-documents) ████");
+console.log("\n████ A. Extraction (POST /api/cron/ingest-documents) ████");
+if (CRON_RAW && !CRON) info("⚠ CRON_SECRET looks like a placeholder — paste the REAL secret, not the '…' from the docs.");
 if (CRON) {
   const r = await fetch(BASE + "/api/cron/ingest-documents", { method: "POST", headers: { "x-cron-secret": CRON } });
   const j = await r.json().catch(() => null);
@@ -113,7 +97,7 @@ if (CRON) {
 // C. Extraction check — real CMS codes should now answer from the corpus.
 //    Threshold, not per-code assertion (real docs vary).
 // ════════════════════════════════════════════════════════════════════
-console.log("\n████ C. Real CMS codes extracted into the corpus ████");
+console.log("\n████ B. Real CMS codes extracted into the corpus ████");
 const CODES = [
   { cpt: "99347", label: "home visit 15 min" },
   { cpt: "99348", label: "home visit 25 min" },
@@ -136,7 +120,7 @@ ok(`≥ ${MIN_HITS} real CMS codes extracted to structured rules`, hits >= MIN_H
 // ════════════════════════════════════════════════════════════════════
 // D. Comparison (Path B) — org rulebook vs the real extracted CMS rules.
 // ════════════════════════════════════════════════════════════════════
-console.log("\n████ D. Comparison — org rulebook vs real CMS-extracted rules ████");
+console.log("\n████ C. Comparison — org rulebook vs real CMS-extracted rules ████");
 const orgCsv = [
   "payer,state,cpt,attribute,coverage,value",
   "Medicare,OH,99349,covered,not_covered,Internal policy: we were denying 40-minute home visits",
@@ -164,7 +148,7 @@ ok("NEW_FROM_PALLIO surfaced (real CMS codes the org omitted)", (sum.new_from_pa
 // ════════════════════════════════════════════════════════════════════
 // E. Green MATCH round-trip using a real extracted value.
 // ════════════════════════════════════════════════════════════════════
-console.log("\n████ E. Green MATCH round-trip (real extracted value) ████");
+console.log("\n████ D. Green MATCH round-trip (real extracted value) ████");
 const donor = rows.find((r) =>
   r.outcome === "new_from_pallio" && r.attribute === "covered" &&
   r.sourceValue?.coverageStatus === "covered" && r.sourceValue?.ruleValue?.answer);

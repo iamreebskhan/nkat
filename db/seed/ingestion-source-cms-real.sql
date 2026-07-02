@@ -2,35 +2,34 @@
 -- Register the REAL, current CMS ruling PDFs as ingestion sources so the
 -- platform extracts coverage/billing rules from genuine CMS documents.
 --
--- IMPORTANT — these point at SELF-HOSTED copies, not cms.gov:
---   CMS's bot manager 403s the ingest cron's server-side fetch (UA
---   "Pallio-ingest/1.0"). So we fetch the PDFs with a browser UA and serve
---   them from the app itself. Prereq (run FIRST, on the VPS):
---     node scripts/fetch-cms-real-pdfs.mjs
---   → writes public/test-fixtures/cms/*.pdf, served at
---     https://app.pallio.io/test-fixtures/cms/<file>.pdf
---   (rebuild/restart if your Next build doesn't serve public/ live).
+-- Points DIRECTLY at cms.gov. The ingest engine now sends a browser User-Agent
+-- (document-ingestion.service.ts fetchUrlBytes) so CMS's bot manager serves the
+-- server-side fetch — no self-hosting or public/ serving needed. (Earlier a bot
+-- UA got 403'd; the browser UA is verified to 200.)
 --
--- Bound to Medicare + OH so extractRulesFromDocument persists payer_rule rows
--- (it only writes rules when BOTH payer_id and state are set).
+-- Prereq: seed the Medicare payer FIRST, or these bind to NULL and extract
+-- nothing (extractRulesFromDocument needs both payer_id and state):
+--   sudo -u postgres psql pallio -f db/seed/payer-medicare.sql
 --
--- These are genuine U.S. Government works (CMS MLN / final-rule summary),
--- small enough to extract natively (< 600 pages / < 32 MB — Claude's native
--- PDF ceiling on a 1M-context model). The full Federal Register final rule
--- (~1,000+ pages, > 32 MB) is deliberately NOT used: it exceeds the native
--- PDF limits and would extract zero rules.
+-- These CMS docs are short + rule-dense, within Claude's native-PDF ceiling
+-- (< 600 pages / < 32 MB on a 1M-context model). The full Federal Register
+-- final rule (~1,000+ pages, > 32 MB) is deliberately NOT used — it exceeds
+-- the limit and would extract zero rules.
 --
--- Idempotent: ON CONFLICT (url) DO UPDATE re-points metadata AND resets fetch
--- bookkeeping so the next cron tick re-fetches + re-extracts.
+-- Idempotent. Also removes the earlier SELF-HOSTED test rows (which 404'd
+-- because the deploy doesn't serve public/ live).
 --
--- Apply on the VPS (after the downloader):
+-- Apply on the VPS (AFTER payer-medicare.sql):
 --   sudo -u postgres psql pallio -f db/seed/ingestion-source-cms-real.sql
 -- Then fire the cron once (extracts):
 --   curl -X POST -H "x-cron-secret: $CRON_SECRET" https://app.pallio.io/api/cron/ingest-documents
--- Verify the sources ran clean + rules landed:
---   sudo -u postgres psql pallio -c "SELECT name,last_check_at,last_ingested_at,last_error FROM ingestion_source WHERE url LIKE '%/test-fixtures/cms/%';"
+-- Verify sources ran clean + rules landed:
+--   sudo -u postgres psql pallio -c "SELECT name,last_check_at,last_ingested_at,last_error FROM ingestion_source WHERE document_type IN ('cms_pfs','mln_article') AND url LIKE '%cms.gov%';"
 --   sudo -u postgres psql pallio -c "SELECT code,attribute,coverage_status,confidence FROM payer_rule WHERE created_by LIKE 'crawler:%' AND expiration_date IS NULL ORDER BY code LIMIT 50;"
 -- ============================================================================
+
+-- Drop the earlier self-hosted test rows (404'd; NULL payer). Safe: test data.
+DELETE FROM ingestion_source WHERE url LIKE '%/test-fixtures/cms/%';
 
 WITH medicare AS (
   SELECT id FROM payer
@@ -42,25 +41,25 @@ INSERT INTO ingestion_source (name, url, payer_id, state, document_type, schedul
 VALUES
   (
     'CMS — CY2026 Physician Fee Schedule Final Rule Summary (CMS-1832-F)',
-    'https://app.pallio.io/test-fixtures/cms/mm14315-pfs-final-rule-summary-cy2026.pdf',
+    'https://www.cms.gov/files/document/mm14315-medicare-physician-fee-schedule-final-rule-summary-cy-2026.pdf',
     (SELECT id FROM medicare), 'OH', 'cms_pfs', 'monthly',
-    'REAL CMS final-rule summary (MM14315). Self-hosted copy — CMS bot-blocks server fetches. New CY2026 codes: G0552-G0554, G2211, home visits 99347-99350.'
+    'REAL CMS final-rule summary (MM14315). New CY2026 codes: G0552-G0554, G2211, home visits 99347-99350.'
   ),
   (
     'CMS — Telehealth & Remote Patient Monitoring (MLN901705)',
-    'https://app.pallio.io/test-fixtures/cms/mln901705-telehealth-rpm.pdf',
+    'https://www.cms.gov/files/document/mln901705-telehealth-remote-patient-monitoring.pdf',
     (SELECT id FROM medicare), 'OH', 'mln_article', 'monthly',
-    'REAL CMS MLN901705. Telehealth (G0320-G0322), RPM/RTM (99457/99458, 98980/98981), audio-video parity.'
+    'REAL CMS MLN901705. Telehealth (G0320-G0322), RPM/RTM (99457/99458, 98980/98981).'
   ),
   (
     'CMS — Evaluation & Management Services (MLN006764)',
-    'https://app.pallio.io/test-fixtures/cms/mln006764-evaluation-management.pdf',
+    'https://www.cms.gov/files/document/mln006764-evaluation-management-services.pdf',
     (SELECT id FROM medicare), 'OH', 'mln_article', 'monthly',
-    'REAL CMS MLN006764. Home-visit E/M (99341-99350), nursing-facility E/M (99304-99318), prolonged services.'
+    'REAL CMS MLN006764. Home-visit E/M (99341-99350), nursing-facility E/M, prolonged services.'
   ),
   (
     'CMS — Advance Care Planning (MLN909289)',
-    'https://app.pallio.io/test-fixtures/cms/mln909289-advance-care-planning.pdf',
+    'https://www.cms.gov/files/document/mln-advanced-care-planning.pdf',
     (SELECT id FROM medicare), 'OH', 'mln_article', 'monthly',
     'REAL CMS MLN909289. Advance care planning (99497/99498), documentation requirements.'
   )
@@ -77,9 +76,9 @@ ON CONFLICT (url) DO UPDATE SET
   active            = TRUE,
   updated_at        = now();
 
--- Confirm what we registered (and that Medicare resolved).
+-- Confirm what we registered (payer must be Medicare, NOT blank).
 SELECT s.name, p.name AS payer, s.state, s.document_type, s.active
   FROM ingestion_source s
   LEFT JOIN payer p ON p.id = s.payer_id
- WHERE s.url LIKE '%/test-fixtures/cms/%'
+ WHERE s.url LIKE '%cms.gov%' AND s.document_type IN ('cms_pfs', 'mln_article')
  ORDER BY s.name;

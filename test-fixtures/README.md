@@ -74,48 +74,49 @@ differences that matter:
 Same flow as above, but against **genuine, current CMS documents** instead of
 the synthetic PDF — for testing extraction on Hamda's operator account.
 
-## Why self-hosted (not a direct cms.gov URL)
+## How it fetches CMS (browser UA, direct)
 
-CMS's bot manager **403s server-side fetchers** — the ingest cron sends
-`User-Agent: Pallio-ingest/1.0`, which CMS blocks (a browser UA is served
-fine). So we download the PDFs with a browser UA and serve them from the app
-itself; the cron then fetches from `app.pallio.io`, never from CMS.
+CMS's bot manager **403s non-browser User-Agents** — the ingest engine used to
+send `Pallio-ingest/1.0`, so it couldn't fetch cms.gov (Source 1) at all. The
+engine now sends a standard browser UA (`fetchUrlBytes`), which CMS serves — so
+the ingestion sources point **directly at cms.gov**. No self-hosting, no
+`public/` serving, no rebuild.
 
 The **full** Federal Register final rule (~1,000+ pages, > 32 MB) is
 deliberately **not** used — it exceeds Claude's native-PDF ceiling
 (600 pages / 32 MB on a 1M-context model) and would extract **zero** rules.
 Instead we use CMS's own short, rule-dense documents:
 
-| File (self-hosted) | Real CMS doc | Pages | Codes it covers |
-|---|---|---|---|
-| `cms/mm14315-pfs-final-rule-summary-cy2026.pdf` | CY2026 PFS **Final Rule Summary** (CMS-1832-F, MM14315) | 6 | new G0552–G0554, G2211, home visits 99347–99350 |
-| `cms/mln901705-telehealth-rpm.pdf` | Telehealth & RPM (MLN901705) | 14 | telehealth G0320–G0322, RPM 99457/99458, RTM 98980/98981 |
-| `cms/mln006764-evaluation-management.pdf` | E/M Services (MLN006764) | 29 | home-visit E/M 99341–99350, nursing-facility E/M |
-| `cms/mln909289-advance-care-planning.pdf` | Advance Care Planning (MLN909289) | 5 | ACP 99497/99498 |
-
-These are U.S. Government works. The binaries are **git-ignored**
-(`public/test-fixtures/cms/`) — they embed AMA CPT descriptors, so they're
-fetched fresh on the VPS rather than committed.
+| Real CMS doc | Pages | Codes it covers |
+|---|---|---|
+| CY2026 PFS **Final Rule Summary** (CMS-1832-F, MM14315) | 6 | new G0552–G0554, G2211, home visits 99347–99350 |
+| Telehealth & RPM (MLN901705) | 14 | telehealth G0320–G0322, RPM 99457/99458, RTM 98980/98981 |
+| E/M Services (MLN006764) | 29 | home-visit E/M 99341–99350, nursing-facility E/M |
+| Advance Care Planning (MLN909289) | 5 | ACP 99497/99498 |
 
 ## Run it
 
 ```bash
-# 1. Download + self-host the real CMS PDFs (browser UA → works around bot-block)
-node scripts/fetch-cms-real-pdfs.mjs
-#    → public/test-fixtures/cms/*.pdf, served at /test-fixtures/cms/<file>.pdf
-#    rebuild/restart if your Next build doesn't serve public/ live
+# 1. Seed the Medicare payer (there's no Medicare row in the base seed — without
+#    it, CMS sources bind to NULL and extract nothing)
+sudo -u postgres psql pallio -f db/seed/payer-medicare.sql
 
-# 2. Register them as ingestion sources (Medicare + OH)
+# 2. Register the CMS ingestion sources (direct cms.gov URLs, Medicare + OH)
 sudo -u postgres psql pallio -f db/seed/ingestion-source-cms-real.sql
 
-# 3. Extract + verify (triggers the cron itself when CRON_SECRET is set)
-BASE_URL=https://app.pallio.io CRON_SECRET=… \
+# 3. Extract + verify (triggers the cron itself — use your REAL cron secret)
+BASE_URL=https://app.pallio.io CRON_SECRET=your-secret \
   node scripts/verify-cms-real-extraction.mjs
 ```
 
 Or by hand: fire `POST /api/cron/ingest-documents`, then upload
 `cms-org-rulebook.csv` under **Knowledge → upload rulebook** and open the
 comparison.
+
+> **Optional offline fallback** — `scripts/fetch-cms-real-pdfs.mjs` downloads
+> the PDFs into `public/test-fixtures/cms/` (git-ignored — they embed AMA CPT
+> descriptors) if you ever need to self-host instead of fetching cms.gov live.
+> Only useful if your deploy serves `public/` at runtime.
 
 ## Expected outcomes (`cms-org-rulebook.csv`)
 
