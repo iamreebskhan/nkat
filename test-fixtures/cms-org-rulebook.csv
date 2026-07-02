@@ -1,0 +1,5 @@
+payer,state,cpt,attribute,coverage,value
+Medicare,OH,99349,covered,not_covered,Internal policy: we were denying 40-minute home visits
+Medicare,OH,99350,covered,not_covered,Internal policy: we were denying 60-minute home visits
+Medicare,OH,99497,covered,not_covered,Internal policy: we thought advance care planning wasn't separately payable
+Medicare,OH,99406,covered,covered,Internal note: smoking-cessation counseling (not addressed in these CMS docs)
