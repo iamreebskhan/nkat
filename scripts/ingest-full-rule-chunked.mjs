@@ -112,7 +112,17 @@ for (let i = 0; i < chunks.length; i++) {
     if (r.ok && j?.data) {
       done++;
       if (j.data.alreadyIngested) { dup++; console.log(`  · ${tag} → already ingested`); }
-      else {
+      else if (j.data.extractError) {
+        // The extraction CALL failed (credit exhausted, model access, rate
+        // limit) — the engine stored the doc but wrote no rules. Systematic:
+        // every chunk will fail the same way, so abort now.
+        errors++;
+        console.log(`  ✗ ${tag} → extraction error: ${String(j.data.extractError).replace(/\s+/g, " ").slice(0, 140)}`);
+        console.error(`\n❌ Aborting — extraction is failing (NOT a database issue). Usual causes:\n` +
+          `   • Anthropic credit balance too low  → console.anthropic.com → Plans & Billing\n` +
+          `   • API key lacks Opus 4.8 access\n   Fix that, then re-run (nothing was billed for a failed call).`);
+        break;
+      } else {
         totalRules += j.data.ruleCount || 0; totalSkipped += j.data.skipped || 0;
         console.log(`  ✓ ${tag} → ${j.data.ruleCount} rules${j.data.skipped ? ` (${j.data.skipped} skipped)` : ""}`);
       }
