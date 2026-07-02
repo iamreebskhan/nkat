@@ -44,6 +44,10 @@ const pdfHeader = (p) => { const fd = openSync(p, "r"); const b = Buffer.alloc(5
 
 // ── preflight ─────────────────────────────────────────────────────────
 if (!CRON) die("Set CRON_SECRET to your REAL cron secret (not the '…' placeholder).");
+if (/^(your[-_]?(real[-_]?)?(cron[-_]?)?secret|<[^>]+>|secret|changeme|placeholder|xxx+)$/i.test(CRON)) {
+  die(`CRON_SECRET is a placeholder ("${CRON}") — pass your REAL secret. Resolve it into the env, don't type it:\n` +
+      `   export CRON_SECRET=$(grep -hE '^CRON_SECRET=' .env .env.local .env.production 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'\\''')`);
+}
 if (!has("qpdf")) die("qpdf not found. Install it:  sudo apt-get install -y qpdf");
 if (!has("curl")) die("curl not found. Install it:  sudo apt-get install -y curl");
 
@@ -109,6 +113,13 @@ for (let i = 0; i < chunks.length; i++) {
       done++;
       if (j.data.alreadyIngested) { dup++; console.log(`  · ${tag} → already ingested`); }
       else { totalRules += j.data.ruleCount || 0; console.log(`  ✓ ${tag} → ${j.data.ruleCount} rules`); }
+    } else if (r.status === 401 || r.status === 503) {
+      // Wrong/absent secret — abort now rather than hammer all 31 chunks.
+      errors++;
+      console.log(`  ✗ ${tag} → ${r.status} ${JSON.stringify(j?.error || j)?.slice(0, 80)}`);
+      console.error(`\n❌ Aborting — the extract endpoint rejected the cron secret (${r.status}). ` +
+        `Use your REAL CRON_SECRET (not a placeholder), then re-run. The earlier cron runs used the right one.`);
+      break;
     } else {
       errors++;
       console.log(`  ✗ ${tag} → ${r.status} ${JSON.stringify(j?.error || j)?.slice(0, 140)}`);
