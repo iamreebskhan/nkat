@@ -28,6 +28,12 @@
  *   BASE_URL=https://app.pallio.io CRON_SECRET=your-secret node scripts/verify-cms-real-extraction.mjs
  */
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
+// Fire the ingest cron at the app DIRECTLY (localhost), bypassing the public
+// gateway — extracting 4 real PDFs takes longer than Cloudflare/nginx will hold
+// the connection, so the public URL returns 504 while extraction is still
+// running. localhost has no such timeout. Override with CRON_URL if the app
+// listens elsewhere (find the port: `ss -ltnp | grep node`).
+const CRON_URL = process.env.CRON_URL || "http://localhost:3020";
 const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
 const PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
 // Reject a placeholder / non-ASCII secret (e.g. a pasted "…") — it would crash
@@ -81,14 +87,23 @@ const payerId = medicare?.id;
 //    Sources point directly at cms.gov; the ingest engine now sends a
 //    browser UA so CMS serves the server-side fetch.
 // ════════════════════════════════════════════════════════════════════
-console.log("\n████ A. Extraction (POST /api/cron/ingest-documents) ████");
+console.log(`\n████ A. Extraction (POST ${CRON_URL}/api/cron/ingest-documents) ████`);
 if (CRON_RAW && !CRON) info("⚠ CRON_SECRET looks like a placeholder — paste the REAL secret, not the '…' from the docs.");
 if (CRON) {
-  const r = await fetch(BASE + "/api/cron/ingest-documents", { method: "POST", headers: { "x-cron-secret": CRON } });
-  const j = await r.json().catch(() => null);
-  ok("ingest cron accepted", r.ok, `status=${r.status}`);
-  if (j?.data) info(`cron: checked=${j.data.checked} ingested=${j.data.ingested} unchanged=${j.data.unchanged} errors=${j.data.errors}`);
-  if (j?.data?.errors > 0) info("⚠ some sources errored — check ingestion_source.last_error (CMS 403? PDF not served?)");
+  info("extracting 4 real CMS PDFs — this blocks ~1-3 min while Claude reads them…");
+  let r, j = null;
+  try {
+    r = await fetch(CRON_URL + "/api/cron/ingest-documents", { method: "POST", headers: { "x-cron-secret": CRON } });
+    j = await r.json().catch(() => null);
+  } catch (e) {
+    ok("ingest cron accepted", false, `${e.code || e.message} — is the app on ${CRON_URL}? try CRON_URL=http://localhost:<port>`);
+  }
+  if (r) {
+    ok("ingest cron accepted", r.ok, `status=${r.status}`);
+    if (j?.data) info(`cron: checked=${j.data.checked} ingested=${j.data.ingested} unchanged=${j.data.unchanged} errors=${j.data.errors}`);
+    if (j?.data?.checked === 0) info("↳ 0 sources due — already extracted (monthly cadence). Reset to re-extract: UPDATE ingestion_source SET last_check_at=NULL WHERE url LIKE '%cms.gov%';");
+    if (j?.data?.errors > 0) info("⚠ some sources errored — check ingestion_source.last_error (CMS 403 → rebuild not live?)");
+  }
 } else {
   info("CRON_SECRET not set — assuming the operator already fired the cron.");
 }
