@@ -94,7 +94,7 @@ const chunks = readdirSync(chunkDir).filter((f) => f.toLowerCase().endsWith(".pd
 console.log(`  ${chunks.length} chunks\n`);
 
 // ── POST each chunk to the extract endpoint ────────────────────────────
-let totalRules = 0, dup = 0, done = 0, errors = 0;
+let totalRules = 0, totalSkipped = 0, dup = 0, done = 0, errors = 0;
 for (let i = 0; i < chunks.length; i++) {
   const f = chunks[i];
   const bytes = readFileSync(join(chunkDir, f));
@@ -112,7 +112,10 @@ for (let i = 0; i < chunks.length; i++) {
     if (r.ok && j?.data) {
       done++;
       if (j.data.alreadyIngested) { dup++; console.log(`  · ${tag} → already ingested`); }
-      else { totalRules += j.data.ruleCount || 0; console.log(`  ✓ ${tag} → ${j.data.ruleCount} rules`); }
+      else {
+        totalRules += j.data.ruleCount || 0; totalSkipped += j.data.skipped || 0;
+        console.log(`  ✓ ${tag} → ${j.data.ruleCount} rules${j.data.skipped ? ` (${j.data.skipped} skipped)` : ""}`);
+      }
     } else if (r.status === 401 || r.status === 503) {
       // Wrong/absent secret — abort now rather than hammer all 31 chunks.
       errors++;
@@ -132,6 +135,6 @@ for (let i = 0; i < chunks.length; i++) {
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n████  DONE  ████`);
-console.log(`${totalRules} rules extracted from ${done}/${chunks.length} chunks (${dup} already-ingested, ${errors} errors)`);
+console.log(`${totalRules} rules extracted from ${done}/${chunks.length} chunks (${totalSkipped} skipped, ${dup} already-ingested, ${errors} errors)`);
 console.log(`Verify:  sudo -u postgres psql pallio -c "SELECT count(*) FROM payer_rule WHERE created_by='crawler:${DOCTYPE}' AND expiration_date IS NULL;"`);
 process.exit(errors && !totalRules ? 1 : 0);
