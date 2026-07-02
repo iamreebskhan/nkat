@@ -80,3 +80,6 @@ next-env.d.ts
 
 # --- legacy backup files from initial scaffold ---
 *.bak
+
+# Real CMS PDFs fetched at test time (U.S. Govt works w/ AMA CPT descriptors) — not committed
+public/test-fixtures/cms/
