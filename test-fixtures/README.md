@@ -190,3 +190,31 @@ sudo -u postgres psql pallio -c \
   first.
 - Citations point at `RULE_URL` (the real Federal Register rule); the chunk
   page-range is recorded in the source-document title.
+
+## Pre-extracted CY2026 full-rule seed (zero API cost)
+
+**`db/seed/payer-rules-cy2026-full-rule.sql`** contains the complete CY2026
+final rule already extracted — apply it with plain SQL, no Anthropic API calls:
+
+```bash
+sudo -u postgres psql pallio -f db/seed/payer-medicare.sql               # payer (if not already)
+sudo -u postgres psql pallio -f db/seed/payer-rules-cy2026-full-rule.sql # the full rule
+```
+
+How it was produced: the full Federal Register text (90 FR 49266–50481, all
+1,216 pages / 4.6 MB of text) was split into 44 overlapping slices and
+extracted by 44 parallel Claude agents using the **same contract** as
+`lib/ai/document-rule-extractor.ts` (attribute enum, coverage enum, code
+regex, verbatim quotes). Every one of the 649 raw extractions passed
+programmatic grounding (its quote appears verbatim in the source text — zero
+hallucinations dropped); deduped to **563 unique (code × attribute) rules**,
+seeded for OH/NC/SC (1,689 rows) at confidence 0.95, cited to the Federal
+Register document.
+
+Attribute spread: 356 covered · 69 units_per_period_max · 48 bundled_with ·
+29 telehealth_allowed · 21 documentation_required · 17 frequency_limit ·
+17 provider_taxonomy_allowed · 6 modifier_required.
+
+The seed supersedes older active rules for the same (code, attribute) keys
+and is idempotent (re-running replaces its own rows). For CY2027+ rules, use
+the API pipeline above.
