@@ -17,7 +17,11 @@
 --   sudo -u postgres psql pallio -f db/seed/retire-cms-short-docs.sql
 -- ============================================================================
 
+BEGIN;
+
 -- The 4 short docs (plus the temporary self-hosted copies from testing).
+-- (ON COMMIT DROP requires the surrounding transaction — without BEGIN the
+-- temp table would drop at the implicit commit of the CREATE itself.)
 CREATE TEMP TABLE _retired_urls (url TEXT) ON COMMIT DROP;
 INSERT INTO _retired_urls (url) VALUES
   ('https://www.cms.gov/files/document/mm14315-medicare-physician-fee-schedule-final-rule-summary-cy-2026.pdf'),
@@ -39,6 +43,8 @@ UPDATE payer_rule pr
       WHERE url IN (SELECT url FROM _retired_urls)
          OR url LIKE '%/test-fixtures/cms/%'
    );
+
+COMMIT;
 
 -- Verify: no active rules remain from the short docs; the full rule stands.
 SELECT 'short-doc active rules remaining' AS check, count(*) AS n
