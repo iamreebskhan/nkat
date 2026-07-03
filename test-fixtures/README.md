@@ -69,63 +69,20 @@ differences that matter:
 
 ---
 
-# Real CMS ruling documents (extraction + comparison)
+# Short CMS docs — RETIRED (superseded by the full-rule seed)
 
-Same flow as above, but against **genuine, current CMS documents** instead of
-the synthetic PDF — for testing extraction on Hamda's operator account.
-
-## How it fetches CMS (browser UA, direct)
-
-CMS's bot manager **403s non-browser User-Agents** — the ingest engine used to
-send `Pallio-ingest/1.0`, so it couldn't fetch cms.gov (Source 1) at all. The
-engine now sends a standard browser UA (`fetchUrlBytes`), which CMS serves — so
-the ingestion sources point **directly at cms.gov**. No self-hosting, no
-`public/` serving, no rebuild.
-
-The **full** Federal Register final rule (~1,000+ pages, > 32 MB) is
-deliberately **not** used — it exceeds Claude's native-PDF ceiling
-(600 pages / 32 MB on a 1M-context model) and would extract **zero** rules.
-Instead we use CMS's own short, rule-dense documents:
-
-| Real CMS doc | Pages | Codes it covers |
-|---|---|---|
-| CY2026 PFS **Final Rule Summary** (CMS-1832-F, MM14315) | 6 | new G0552–G0554, G2211, home visits 99347–99350 |
-| Telehealth & RPM (MLN901705) | 14 | telehealth G0320–G0322, RPM 99457/99458, RTM 98980/98981 |
-| E/M Services (MLN006764) | 29 | home-visit E/M 99341–99350, nursing-facility E/M |
-| Advance Care Planning (MLN909289) | 5 | ACP 99497/99498 |
-
-## Run it
+The interim setup (4 short CMS docs: the MM14315 final-rule summary + 3 MLN
+articles, ingested from cms.gov with a browser UA) is **retired** — the
+complete final rule seed below covers everything they did (ACP, home visits,
+telehealth, RPM, G2211, G0552–G0554, …) and much more, with Federal Register
+citations. To remove the short-doc sources and retire their rules on a live DB:
 
 ```bash
-# 1. Seed the Medicare payer (there's no Medicare row in the base seed — without
-#    it, CMS sources bind to NULL and extract nothing)
-sudo -u postgres psql pallio -f db/seed/payer-medicare.sql
-
-# 2. Register the CMS ingestion sources (direct cms.gov URLs, Medicare + OH)
-sudo -u postgres psql pallio -f db/seed/ingestion-source-cms-real.sql
-
-# 3. Extract + verify (triggers the cron itself — use your REAL cron secret)
-BASE_URL=https://app.pallio.io CRON_SECRET=your-secret \
-  node scripts/verify-cms-real-extraction.mjs
+sudo -u postgres psql pallio -f db/seed/retire-cms-short-docs.sql
 ```
 
-Or by hand: fire `POST /api/cron/ingest-documents`, then upload
-`cms-org-rulebook.csv` under **Knowledge → upload rulebook** and open the
-comparison.
-
-> **Optional offline fallback** — `scripts/fetch-cms-real-pdfs.mjs` downloads
-> the PDFs into `public/test-fixtures/cms/` (git-ignored — they embed AMA CPT
-> descriptors) if you ever need to self-host instead of fetching cms.gov live.
-> Only useful if your deploy serves `public/` at runtime.
-
-## Expected outcomes (`cms-org-rulebook.csv`)
-
-- **diff** — `99349`, `99350`, `99497` (org marked them *not_covered*; CMS
-  pays them) — the "you were denying payable services" catches.
-- **unverified** — `99406` (org-only; not in these CMS docs).
-- **new_from_pallio** — every real CMS code the org omitted (telehealth,
-  RPM, ACP add-on, the new CY2026 G-codes…).
-- **match** — the verifier echoes a real extracted value back for a green row.
+(Their pipeline files were deleted from the repo; the browser-UA fix in
+`fetchUrlBytes` remains — it benefits all URL ingestion.)
 
 Real CMS text is less deterministic than the synthetic fixture, so the
 verifier checks a **threshold** (≥ 3 codes extracted), not exact per-code
@@ -199,6 +156,15 @@ final rule already extracted — apply it with plain SQL, no Anthropic API calls
 ```bash
 sudo -u postgres psql pallio -f db/seed/payer-medicare.sql               # payer (if not already)
 sudo -u postgres psql pallio -f db/seed/payer-rules-cy2026-full-rule.sql # the full rule
+sudo -u postgres psql pallio -f db/seed/retire-cms-short-docs.sql        # retire the 4 short docs
+```
+
+Then verify everything live from the demo-account seat (extraction reads with
+Federal Register citations, comparison outcomes, match round-trip — pure SQL,
+no API credits needed):
+
+```bash
+BASE_URL=https://app.pallio.io node scripts/verify-demo-user-medicare.mjs
 ```
 
 How it was produced: the full Federal Register text (90 FR 49266–50481, all
