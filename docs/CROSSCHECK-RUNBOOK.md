@@ -22,9 +22,12 @@ API surface. Expected: **123/123** (119 without CRON_SECRET — 4 cron checks ga
 # gating half (no operator creds needed): regular users are locked out
 BASE_URL=https://app.pallio.io node scripts/verify-master-ui.mjs
 
-# + function half: operator sees real data (use Hamda's platform_admin creds)
-BASE_URL=https://app.pallio.io OPERATOR_EMAIL=… OPERATOR_PASSWORD=… \
-  node scripts/verify-master-ui.mjs
+# + function half: operator sees real data (use Hamda's platform_admin creds).
+# read -rs keeps the password off-screen, out of history, and unmangled
+# (a literal ! or # in the password is safe this way — never paste it into a command).
+read -rs -p 'operator password: ' OPERATOR_PASSWORD; export OPERATOR_PASSWORD; echo
+export OPERATOR_EMAIL='hamda@theaura.agency'
+BASE_URL=https://app.pallio.io node scripts/verify-master-ui.mjs
 ```
 Part A: every `/api/admin/*` returns **403** to the demo (org_admin) user, and
 the operator pages don't render for them. Part B (with `OPERATOR_*`): the same
