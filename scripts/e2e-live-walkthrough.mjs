@@ -193,27 +193,51 @@ async function shot(page, name) {
     });
 
     // ── NEW (#74): denial refile + record-outcome buttons work FE→BE ────
+    // Deterministic: create a FRESH pending denial through the authenticated
+    // browser session, open ITS detail page (known state), then drive the real
+    // buttons in order, waiting for each next button to appear. Prior runs
+    // leave the shared denials list in assorted states, and the detail page
+    // hydrates its buttons client-side — so opening a random row and reading
+    // immediately was racy. This exercises the exact FE→BE button path.
     await step("denial workflow: decide → refile → outcome (new buttons)", async () => {
-      // We're on a denial detail page. Drive it to a recorded outcome by
-      // clicking the real buttons, whatever state it starts in.
-      let t = await body();
-      const clickByName = async (re) => {
-        const b = page.getByRole("button", { name: re }).first();
-        if (await b.count()) { await b.click().catch(() => {}); await page.waitForTimeout(1500); return true; }
-        return false;
+      // page.request shares the logged-in context cookies → authenticated.
+      const api = async (m, p, data) => {
+        const r = await page.request.fetch(`${BASE}${p}`, { method: m, ...(data ? { data } : {}) });
+        return (await r.json().catch(() => null))?.data;
       };
+      const me = await api("GET", "/api/auth/me");
+      const payers = (await api("GET", "/api/billing/payers"))?.payers || [];
+      const payerId = (payers.find((p) => /aetna/i.test(p.name)) || payers[0])?.id;
+      const list = (await api("GET", "/api/patients?limit=200"))?.rows || [];
+      const patientId = list.find((p) => p.firstName === "Ada" && p.lastName === "Lovelace")?.id
+        || (await api("POST", "/api/patients", {
+          demographics: { firstName: "Ada", lastName: "Lovelace", dateOfBirth: "1942-03-08", sexAssignedAtBirth: "F", state: "OH", city: "Dublin" },
+          insurance: { primaryPayerId: payerId, primaryMemberId: "W1" },
+          clinical: { acuity: "critical" }, consents: { hipaaAcknowledged: true, goalsOfCareConsent: true, telehealthConsent: true }, careTeam: {},
+        }))?.id;
+      const visitId = (await api("POST", "/api/visits", { patientId, clinicianUserId: me.userId, visitType: "established_patient_home", scheduledStart: new Date(Date.now() + 86400000).toISOString(), isTelehealth: false }))?.id;
+      await api("PATCH", `/api/visits/${visitId}/document`, { totalMinutes: 45, documentText: "note", cptCodesAssigned: ["99349"], icd10Codes: ["Z51.5"] });
+      const superbillId = (await api("POST", `/api/visits/${visitId}/superbill`))?.id;
+      const denialId = (await api("POST", "/api/denials", { superbillId, cptCode: "99349", carcCode: "16", denialReason: "lacks info", deniedAmountCents: 15000, deniedAt: new Date().toISOString() }))?.id;
+      if (!denialId) throw new Error("could not create a fresh pending denial to drive");
+
+      await page.goto(`${BASE}/billing/denials/${denialId}`);
+      await page.waitForLoadState("networkidle").catch(() => {});
       const trail = [];
-      if (/Outcome:/i.test(t)) return "already resolved — outcome shown";
-      // Drive the workflow by clicking the real buttons in order; each
-      // click is a no-op if that button isn't on the page in this state.
-      // 1) decide "Refile" (only shown when decision is pending)
-      if (await clickByName(/^refile$/i)) trail.push("decided:refile");
-      // 2) "Mark as refiled" (/refile) — appears once decision=refile
-      if (await clickByName(/mark as refiled/i)) trail.push("refiled");
-      // 3) "Paid in full" (/outcome) — appears once a decision is made
-      if (await clickByName(/paid in full/i)) trail.push("outcome:paid");
-      t = await body();
-      if (!/Outcome:/i.test(t)) throw new Error(`outcome not recorded (trail=${trail.join(",") || "none"})`);
+      const clickWhenReady = async (re, label) => {
+        const b = page.getByRole("button", { name: re }).first();
+        try { await b.waitFor({ state: "visible", timeout: 8000 }); } catch { return false; }
+        await b.click().catch(() => {});
+        await page.waitForTimeout(1200);
+        trail.push(label);
+        return true;
+      };
+      // pending → refile → refiledAt → outcome, each button revealed by the last
+      await clickWhenReady(/^refile$/i, "decided:refile");
+      await clickWhenReady(/mark as refiled/i, "refiled");
+      await clickWhenReady(/paid in full/i, "outcome:paid");
+      await page.getByText(/Outcome:/i).first().waitFor({ state: "visible", timeout: 8000 })
+        .catch(() => { throw new Error(`outcome not recorded (trail=${trail.join(",") || "none"})`); });
       return `clicked [${trail.join(",")}] → Outcome shown`;
     });
 
