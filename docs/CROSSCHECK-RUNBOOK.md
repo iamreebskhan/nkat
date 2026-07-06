@@ -31,6 +31,21 @@ the operator pages don't render for them. Part B (with `OPERATOR_*`): the same
 endpoints return **200 + data** and the `/admin/*` pages render for the
 platform_admin. Proves the master UI is both **locked** and **functional**.
 
+**If Part B fails at "operator login" (401):** the script now prints *why*.
+Confirm the operator account exists, is flagged `platform_admin`, and whether
+it has 2FA — one query:
+
+```bash
+sudo -u postgres psql pallio -c \
+ "SELECT email, is_platform_admin, (mfa_enrolled_at IS NOT NULL) AS mfa_on FROM app_user WHERE email ILIKE 'hamda%';"
+```
+
+- `is_platform_admin = f` → promote it: `UPDATE app_user SET is_platform_admin = TRUE WHERE email = 'hamda@theaura.agency';`
+- `mfa_on = t` → the 401 is "MFA code required"; re-run with `OPERATOR_MFA=<current 6-digit code>`.
+- No row → the account doesn't exist under that email; create/verify it first.
+- Row exists, no MFA, flagged admin, still 401 → the password is wrong or was
+  paste-mangled (single-quote any password containing `!` or `#`).
+
 ## 3. User UI — headless click-through
 
 ```bash

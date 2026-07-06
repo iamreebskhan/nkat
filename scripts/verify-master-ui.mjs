@@ -27,6 +27,7 @@ const USER_EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
 const USER_PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
 const OP_EMAIL = process.env.OPERATOR_EMAIL || "";
 const OP_PASSWORD = process.env.OPERATOR_PASSWORD || "";
+const OP_MFA = process.env.OPERATOR_MFA || ""; // TOTP code, if the operator account has 2FA
 
 const results = [];
 const ok = (n, c, d = "") => { results.push({ n, c }); console.log(`${c ? "✅" : "❌"} ${n}${d ? "  — " + d : ""}`); };
@@ -102,8 +103,15 @@ if (!OP_EMAIL || !OP_PASSWORD) {
   info("  OPERATOR_EMAIL=… OPERATOR_PASSWORD=… BASE_URL=… node scripts/verify-master-ui.mjs");
 } else {
   const op = mkClient();
-  const lg = await op.req("POST", "/api/auth/login", { email: OP_EMAIL, password: OP_PASSWORD });
-  ok("operator login", lg.s === 200, `status=${lg.s}`);
+  const lg = await op.req("POST", "/api/auth/login", { email: OP_EMAIL, password: OP_PASSWORD, ...(OP_MFA ? { mfaCode: OP_MFA } : {}) });
+  // Surface WHY a login fails — the API returns distinct 401s: "Invalid email
+  // or password." (wrong/mangled creds) vs "MFA code required." (2FA is on —
+  // re-run with OPERATOR_MFA=<6-digit code>). A 403 means the account is
+  // suspended. Without this, a bare "status=401" is ambiguous.
+  const lgMsg = lg.s === 200 ? "" : ` — ${(lg.j?.error || lg.t || "").toString().slice(0, 80)}`;
+  ok("operator login", lg.s === 200, `status=${lg.s}${lgMsg}`);
+  if (lg.s === 401 && /mfa/i.test(lgMsg)) info("→ this account has 2FA: re-run with OPERATOR_MFA=<current 6-digit code>");
+  if (lg.s === 401 && /invalid/i.test(lgMsg)) info("→ email/password didn't match (check for paste mangling; single-quote a password with ! or #)");
   const opMe = (await op.req("GET", "/api/auth/me")).j?.data;
   ok("operator is platform_admin", opMe?.role === "platform_admin", `role=${opMe?.role}`);
   let served = 0;
