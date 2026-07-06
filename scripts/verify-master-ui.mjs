@@ -97,10 +97,21 @@ info(`operator pages vs org_admin: ${pageGated}/${ADMIN_PAGES.length} redirect/d
 
 // ── PART B — function: the operator (platform_admin) gets real data ───
 console.log("\n████ B. Master surface works for the operator (platform_admin) ████");
+// Catch un-substituted example values ('...', '…', '<...>', 'your-...') so a
+// pasted placeholder fails LOUDLY here instead of as a misleading login 401.
+const isPlaceholder = (v) => v.trim() === "" || /^(\.{2,}|…|<|your-|xxx|changeme|placeholder|todo)/i.test(v.trim());
+const opHelp = () => {
+  info("Set the real password without paste-mangling or on-screen exposure:");
+  info("  read -rs -p 'operator password: ' OPERATOR_PASSWORD; export OPERATOR_PASSWORD; echo");
+  info("  export OPERATOR_EMAIL='hamda@theaura.agency'");
+  info("  BASE_URL=https://app.pallio.io node scripts/verify-master-ui.mjs");
+};
 if (!OP_EMAIL || !OP_PASSWORD) {
   info("OPERATOR_EMAIL / OPERATOR_PASSWORD not set — skipping the operator-side checks.");
-  info("Re-run with Hamda's creds to verify the master backend returns real data:");
-  info("  OPERATOR_EMAIL=… OPERATOR_PASSWORD=… BASE_URL=… node scripts/verify-master-ui.mjs");
+  opHelp();
+} else if (isPlaceholder(OP_PASSWORD) || isPlaceholder(OP_EMAIL)) {
+  info("OPERATOR_* is an un-substituted placeholder, not a real value — the example block was pasted literally.");
+  opHelp();
 } else {
   const op = mkClient();
   const lg = await op.req("POST", "/api/auth/login", { email: OP_EMAIL, password: OP_PASSWORD, ...(OP_MFA ? { mfaCode: OP_MFA } : {}) });
