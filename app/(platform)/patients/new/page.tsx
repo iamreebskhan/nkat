@@ -74,17 +74,23 @@ export default function NewPatientPage() {
     setData((d) => ({ ...d, careTeam: { ...d.careTeam, [key]: value } }));
   }
 
-  // Org roster for step 5 — fetched only for org_admin, because the POST
-  // gate rejects care-team assignments from any other role. Gating the UI on
-  // roster-fetch success alone would let a non-admin WITH team.view pick
-  // assignments and then hard-fail the whole intake at the final step.
+  // ACTIVE org roster for step 5 — fetched only when the user holds
+  // patients.careteam.edit (mirrors the POST gate exactly; roles are
+  // display-only). Gating the UI on roster-fetch success alone would let a
+  // user WITH team.view but WITHOUT the permission pick assignments and then
+  // hard-fail the whole intake at the final step. ?active=1 keeps the picker
+  // consistent with what the service accepts.
   const [roster, setRoster] = useState<{ userId: string; fullName: string | null; email: string }[] | null>(null);
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
       .then((me) => {
-        if (!me.success || me.data?.role !== "org_admin") return;
-        return fetch("/api/team/members")
+        const can =
+          me.success &&
+          ((me.data?.permissions ?? []).includes("patients.careteam.edit") ||
+            me.data?.role === "platform_admin");
+        if (!can) return;
+        return fetch("/api/team/members?active=1")
           .then((r) => r.json())
           .then((d) => setRoster(d.success ? (d.data?.rows ?? []) : null));
       })
@@ -416,9 +422,9 @@ export default function NewPatientPage() {
         if (roster === null) {
           return (
             <p className="text-sm text-slate-600">
-              Care-team assignment is org-admin-only. The patient will be
-              created unassigned — an org admin can assign the team from the
-              patient detail page afterwards.
+              Care-team assignment needs the patients.careteam.edit permission
+              (org admins have it). The patient will be created unassigned —
+              the team can be assigned from the patient detail page afterwards.
             </p>
           );
         }

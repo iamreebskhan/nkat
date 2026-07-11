@@ -39,20 +39,27 @@ export default function PatientDetailPage({
   const [tab, setTab] = useState<Tab>("overview");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  // Self user id (messaging panel) + role (care-team editing is org_admin-only).
+  // Self user id (messaging panel) + care-team edit capability. Gated on the
+  // patients.careteam.edit PERMISSION (roles are display-only) — mirrors the
+  // server-side gate exactly.
   const [selfUserId, setSelfUserId] = useState<string | null>(null);
-  const [isOrgAdmin, setIsOrgAdmin] = useState(false);
-  // Org roster for the care-team selects — fetched only for org_admin
-  // (other roles lack team.view and get the read-only names instead).
+  const [canEditCareTeam, setCanEditCareTeam] = useState(false);
+  // ACTIVE org roster for the care-team selects — ?active=1 keeps the picker
+  // consistent with what the patient service will accept (suspended/removed
+  // members are rejected with a 422).
   const [roster, setRoster] = useState<{ userId: string; fullName: string | null; email: string }[]>([]);
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
       .then((d) => {
         if (d.success && d.data?.userId) setSelfUserId(d.data.userId);
-        if (d.success && d.data?.role === "org_admin") {
-          setIsOrgAdmin(true);
-          return fetch("/api/team/members")
+        const can =
+          d.success &&
+          ((d.data?.permissions ?? []).includes("patients.careteam.edit") ||
+            d.data?.role === "platform_admin");
+        if (can) {
+          setCanEditCareTeam(true);
+          return fetch("/api/team/members?active=1")
             .then((r) => r.json())
             .then((m) => {
               if (m.success) setRoster(m.data?.rows ?? []);
@@ -249,7 +256,7 @@ export default function PatientDetailPage({
               ] as const).map(([label, field, seat]) => (
                 <div key={field} className="flex items-center justify-between gap-3">
                   <span className="text-slate-500">{label}</span>
-                  {isOrgAdmin ? (
+                  {canEditCareTeam ? (
                     <select
                       value={patient.careTeam[seat].userId ?? ""}
                       aria-label={`Assign ${label}`}
@@ -257,6 +264,16 @@ export default function PatientDetailPage({
                       onChange={(e) => void assignSeat(field, e.target.value || null, seat)}
                     >
                       <option value="">— unassigned —</option>
+                      {/* Current assignee may be missing from the ACTIVE roster
+                          (suspended/removed since assignment). Without this
+                          option the controlled select renders blank — reading
+                          as unassigned and inviting a silent overwrite. */}
+                      {patient.careTeam[seat].userId &&
+                        !roster.some((m) => m.userId === patient.careTeam[seat].userId) && (
+                          <option value={patient.careTeam[seat].userId}>
+                            {patient.careTeam[seat].name ?? "assigned (former staff)"}
+                          </option>
+                        )}
                       {roster.map((m) => (
                         <option key={m.userId} value={m.userId}>
                           {m.fullName ?? m.email}

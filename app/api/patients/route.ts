@@ -59,11 +59,16 @@ export async function POST(req: NextRequest): Promise<Response> {
   const body = await parseJson(req, CreatePatientSchema);
   if (body instanceof Response) return body;
 
-  // Same gate as PATCH: care-team assignment is org-admin-only. The intake
-  // wizard sends `careTeam: {}` for non-admins (they can't load the roster),
-  // so this only blocks deliberate API calls.
-  if (Object.keys(body.careTeam).length > 0 && session.role !== "org_admin") {
-    return fail("Only an org admin can assign the care team.", { status: 403 });
+  // Same gate as PATCH: care-team assignment needs patients.careteam.edit
+  // (roles are display-only; platform_admin is the operator override). The
+  // intake wizard hides the selects from users without the permission, so
+  // this only blocks deliberate API calls.
+  if (
+    Object.keys(body.careTeam).length > 0 &&
+    !session.permissions.includes("patients.careteam.edit") &&
+    session.role !== "platform_admin"
+  ) {
+    return fail("patients.careteam.edit permission required to assign the care team.", { status: 403 });
   }
 
   try {

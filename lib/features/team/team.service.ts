@@ -265,6 +265,13 @@ export async function listInvites(args: {
 
 export async function listMembers(args: {
   orgId: string;
+  /**
+   * Restrict to ACTIVE org members (org_member.status = 'active'). Care-team
+   * pickers must use this: the default (permission-based) list can include
+   * suspended/removed members whose assignment the patient service rejects
+   * with a 422 — a roster/validator mismatch that hard-failed intake.
+   */
+  activeOnly?: boolean;
 }): Promise<MemberRecord[]> {
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<
@@ -283,6 +290,14 @@ export async function listMembers(args: {
       FROM user_permission up
       JOIN app_user u ON u.id = up.user_id
       WHERE up.user_id IS NOT NULL
+        AND (
+          ${!args.activeOnly}
+          OR EXISTS (
+            SELECT 1 FROM org_member om
+            WHERE om.user_id = up.user_id AND om.org_id = up.org_id
+              AND om.status = 'active'
+          )
+        )
       GROUP BY up.user_id, u.email, u.full_name
       ORDER BY u.email
     `;
