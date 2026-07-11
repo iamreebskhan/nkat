@@ -83,8 +83,17 @@ async function crawlPage(page, path, tag) {
   const onResponse = (r) => {
     const s = r.status();
     const u = r.url();
-    if (s >= 500) badResponses.push(`5xx ${s} ${u.replace(BASE, "")}`);
-    else if (s === 404 && u.includes("/api/")) badResponses.push(`404 ${u.replace(BASE, "")}`);
+    if (s >= 500 || (s === 404 && u.includes("/api/"))) {
+      // Distinguish app bugs from DEPLOYMENT STATE: routes deliberately answer
+      // 503/404 when an optional third-party service isn't provisioned
+      // (Stripe checkout → "Billing not configured", Google OAuth →
+      // "not configured", subscription → "No subscription on file"). Those are
+      // expected on a VPS without those keys — report as warnings, not bugs.
+      r.text().then((t) => {
+        const unconfigured = /not configured|no subscription on file|contact sales/i.test(t || "");
+        badResponses.push(`${unconfigured ? "404 unconfigured" : s >= 500 ? "5xx" : "404"} ${s} ${u.replace(BASE, "")}`);
+      }).catch(() => badResponses.push(`${s >= 500 ? "5xx" : "404"} ${s} ${u.replace(BASE, "")}`));
+    }
     // A 400 on a GET the page fires while loading is broken wiring (bad query
     // params) — e.g. the schedule composer's limit=500 vs the API's max 200.
     // POST 400s are excluded: submitting half-filled forms validates as 400.
@@ -121,6 +130,9 @@ async function crawlPage(page, path, tag) {
   } catch (e) {
     pageErrors.push(`goto failed: ${String(e.message).slice(0, 100)}`);
   }
+  // Let in-flight response-body reads (the unconfigured-service classifier)
+  // land their badResponses pushes before tallying.
+  await page.waitForTimeout(600);
   page.off("pageerror", onPageError);
   page.off("response", onResponse);
   const fives = badResponses.filter((b) => b.startsWith("5xx"));
@@ -173,6 +185,15 @@ async function crawlPage(page, path, tag) {
   // ── 2. schedule drag-and-drop (visit card → different day) ────────────
   console.log("\n████ 2. Drag-and-drop: reschedule a visit on the week grid ████");
   try {
+    // Seed a DEDICATED visit here, not in phase 1: the crawl legitimately
+    // clicks "Sign + submit for billing" on the document page, transitioning
+    // the phase-1 visit out of status=scheduled — which emptied the week grid
+    // (that click is proof the sign fix works; it just can't share a fixture).
+    // Scheduled today+2h: today is always inside the Monday-start week grid.
+    await api("POST", "/api/visits", {
+      patientId, clinicianUserId: me.userId, visitType: "established_patient_home",
+      scheduledStart: new Date(Date.now() + 2 * 3600_000).toISOString(), isTelehealth: false,
+    });
     await page.goto(`${BASE}/schedule`);
     await page.waitForLoadState("networkidle").catch(() => {});
     const card = page.locator('[draggable="true"]').first();
@@ -223,7 +244,9 @@ async function crawlPage(page, path, tag) {
     if (await submit.count()) await submit.click({ timeout: 3000, noWaitAfter: true }).catch(() => {});
     const resp = await uploaded;
     const body = await resp.json().catch(() => null);
-    const good = resp.status() === 200 && body?.success !== false;
+    // 201 Created is the route's success status (a prior run asserted ===200
+    // and marked a SUCCESSFUL upload as failed).
+    const good = [200, 201].includes(resp.status()) && body?.success !== false;
     ok("CSV chosen via file input → POST /api/rulebook/upload", good, `status=${resp.status()}`);
     if (good) {
       await page.waitForTimeout(2500);
