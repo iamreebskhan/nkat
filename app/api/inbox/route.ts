@@ -10,6 +10,7 @@ export async function GET(): Promise<Response> {
     orgId: session.orgId,
     userId: session.userId,
     canSeeDenials: session.permissions.includes("billing.denials.view"),
+    canAttest: session.permissions.includes("knowledge.attest"),
   });
   return ok({ rows: items, total: items.length });
 }

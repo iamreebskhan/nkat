@@ -57,6 +57,26 @@ export async function withPhiKey<T>(
   });
 }
 
+/**
+ * Set the app.phi_key GUC inside an ALREADY-OPEN org transaction, iff the
+ * runtime key is configured. Returns whether encryption is available so the
+ * caller can branch its SQL (CASE WHEN … THEN encrypt_phi(…) ELSE NULL END).
+ *
+ * Use this from services that already run inside withOrgContext — nesting
+ * withPhiKey there would open a second transaction. Never throws on a
+ * missing key: dual-write is opt-in until the key is provisioned (0034
+ * keeps plaintext as source of truth for X12 eligibility).
+ */
+export async function applyPhiKeyIfConfigured(tx: {
+  $executeRawUnsafe: (q: string) => Promise<unknown>;
+}): Promise<boolean> {
+  const key = process.env[PHI_KEY_ENV_VAR];
+  if (!key || key.length < 32) return false;
+  const escaped = key.replace(/'/g, "''");
+  await tx.$executeRawUnsafe(`SET LOCAL app.phi_key = '${escaped}'`);
+  return true;
+}
+
 /** True iff the runtime is configured for pgcrypto (key present, valid length). */
 export function isPgcryptoConfigured(): boolean {
   try {

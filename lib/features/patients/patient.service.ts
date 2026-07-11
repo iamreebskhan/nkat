@@ -9,6 +9,7 @@
  */
 import { NotFoundError } from "@/lib/api";
 import { prisma, withOrgContext } from "@/lib/db";
+import { applyPhiKeyIfConfigured } from "@/lib/hipaa/pgp";
 import type {
   CareTeam,
   CreatePatient,
@@ -84,13 +85,17 @@ export async function createPatient(args: {
 
   return withOrgContext(orgId, async (tx) => {
     await assertCareTeamMembers(tx, ct);
+    // Dual-write PHI (0034): plaintext stays source of truth for X12
+    // eligibility; the _enc companion is populated when PALLIO_PHI_KEY is
+    // provisioned. CASE short-circuits, so encrypt_phi never runs keyless.
+    const phi = await applyPhiKeyIfConfigured(tx);
     const rows = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO patient (
         org_id, first_name, last_name, date_of_birth,
         sex_assigned_at_birth,
         address_line_1, address_line_2, city, state, zip,
         phone, emergency_contact_name, emergency_contact_phone,
-        primary_payer_id, primary_member_id, primary_group_number,
+        primary_payer_id, primary_member_id, primary_member_id_enc, primary_group_number,
         insurance_effective_date, insurance_termination_date,
         primary_diagnosis_icd10, referring_physician_npi,
         referring_physician_name, palliative_referral_reason,
@@ -102,7 +107,9 @@ export async function createPatient(args: {
         ${d.sexAssignedAtBirth ?? null},
         ${d.addressLine1 ?? null}, ${d.addressLine2 ?? null}, ${d.city ?? null}, ${d.state ?? null}, ${d.zip ?? null},
         ${d.phone ?? null}, ${d.emergencyContactName ?? null}, ${d.emergencyContactPhone ?? null},
-        ${i.primaryPayerId ?? null}::uuid, ${i.primaryMemberId ?? null}, ${i.primaryGroupNumber ?? null},
+        ${i.primaryPayerId ?? null}::uuid, ${i.primaryMemberId ?? null},
+        CASE WHEN ${phi} THEN encrypt_phi(${i.primaryMemberId ?? null}) ELSE NULL END,
+        ${i.primaryGroupNumber ?? null},
         ${i.insuranceEffectiveDate ?? null}::date, ${i.insuranceTerminationDate ?? null}::date,
         ${c.primaryDiagnosisIcd10 ?? null}, ${c.referringPhysicianNpi ?? null},
         ${c.referringPhysicianName ?? null}, ${c.palliativeReferralReason ?? null},
@@ -373,6 +380,8 @@ export async function updatePatient(args: {
     `;
     if (exists.length === 0) throw new NotFoundError("Patient not found.");
 
+    // PHI dual-write (0034) — see createPatient.
+    const phi = await applyPhiKeyIfConfigured(tx);
     let touched = false;
     if (args.payload.demographics) {
       const d = args.payload.demographics;
@@ -392,6 +401,13 @@ export async function updatePatient(args: {
         UPDATE patient SET
           primary_payer_id   = COALESCE(${i.primaryPayerId ?? null}::uuid, primary_payer_id),
           primary_member_id  = COALESCE(${i.primaryMemberId ?? null},     primary_member_id),
+          -- Mirror the plaintext: absent = keep ciphertext; provided = re-encrypt
+          -- (or NULL when keyless — a stale ciphertext must never outlive its plaintext).
+          primary_member_id_enc = CASE
+            WHEN ${i.primaryMemberId ?? null}::text IS NULL THEN primary_member_id_enc
+            WHEN ${phi} THEN encrypt_phi(${i.primaryMemberId ?? null})
+            ELSE NULL
+          END,
           primary_group_number = COALESCE(${i.primaryGroupNumber ?? null}, primary_group_number),
           insurance_effective_date  = COALESCE(${i.insuranceEffectiveDate ?? null}::date, insurance_effective_date),
           insurance_termination_date = COALESCE(${i.insuranceTerminationDate ?? null}::date, insurance_termination_date),

@@ -8,8 +8,10 @@
  *   3. `markStatus()` — billing agent transitions through draft →
  *      ready_to_submit → submitted → paid|partially_paid|denied|voided.
  */
+import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { predictSuperbill } from "@/lib/features/billing/predict-superbill.service";
+import { applyPhiKeyIfConfigured } from "@/lib/hipaa/pgp";
 import { buildSuperbill, type DraftSuperbill, type ProviderTier } from "./superbill-pure";
 
 export const SUPERBILL_STATUSES = [
@@ -131,17 +133,21 @@ export async function persistDraft(args: {
   }
 
   return withOrgContext(orgId, async (tx) => {
+    // PHI dual-write (0034): _enc companion when PALLIO_PHI_KEY is set.
+    const phi = await applyPhiKeyIfConfigured(tx);
     const rows = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO superbill (
         org_id, visit_id, patient_id, payer_id,
-        member_id_snapshot, date_of_service,
+        member_id_snapshot, member_id_snapshot_enc, date_of_service,
         cpt_codes, icd10_codes, modifiers,
         provider_npi, provider_name, place_of_service_code,
         billed_amount_cents, status, predicted_risk
       ) VALUES (
         ${orgId}::uuid, ${draft.visitId}::uuid, ${draft.patientId}::uuid,
         ${draft.payerId ?? null}::uuid,
-        ${draft.memberIdSnapshot}, ${draft.dateOfService}::date,
+        ${draft.memberIdSnapshot},
+        CASE WHEN ${phi} THEN encrypt_phi(${draft.memberIdSnapshot}) ELSE NULL END,
+        ${draft.dateOfService}::date,
         ${draft.cptCodes}::text[], ${draft.icd10Codes}::text[], ${draft.modifiers}::text[],
         ${draft.providerNpi}, ${draft.providerName}, ${draft.placeOfServiceCode},
         ${draft.billedAmountCents}, 'draft',
@@ -379,13 +385,34 @@ export async function updateSuperbill(args: {
   });
 }
 
+/** Legal status moves — mirrors the lifecycle documented in the header. */
+const STATUS_TRANSITIONS: Record<SuperbillStatus, SuperbillStatus[]> = {
+  draft: ["ready_to_submit", "submitted", "voided"],
+  ready_to_submit: ["submitted", "draft", "voided"],
+  submitted: ["paid", "partially_paid", "denied", "voided"],
+  partially_paid: ["paid", "denied", "voided"],
+  denied: ["submitted", "voided"], // refiled claims go out again
+  paid: [],
+  voided: [],
+};
+
 export async function markStatus(args: {
   orgId: string;
   id: string;
   to: SuperbillStatus;
   paidAmountCents?: number;
-}): Promise<void> {
-  await withOrgContext(args.orgId, async (tx) => {
+}): Promise<{ from: SuperbillStatus; to: SuperbillStatus }> {
+  return withOrgContext(args.orgId, async (tx) => {
+    // FOR UPDATE: serialize concurrent transitions on the same superbill —
+    // check-then-update without the lock could apply two conflicting moves.
+    const rows = await tx.$queryRaw<{ status: SuperbillStatus }[]>`
+      SELECT status FROM superbill WHERE id = ${args.id}::uuid LIMIT 1 FOR UPDATE
+    `;
+    const from = rows[0]?.status;
+    if (!from) throw new NotFoundError("Superbill not found.");
+    if (!STATUS_TRANSITIONS[from].includes(args.to)) {
+      throw new Error(`Illegal superbill transition ${from} → ${args.to}.`);
+    }
     if (args.to === "submitted") {
       await tx.$executeRaw`
         UPDATE superbill SET status = 'submitted', submitted_at = now(), updated_at = now()
@@ -406,5 +433,6 @@ export async function markStatus(args: {
         WHERE id = ${args.id}::uuid
       `;
     }
+    return { from, to: args.to };
   });
 }
