@@ -1,6 +1,7 @@
 /** POST /api/auth/mfa/disable — wipe the user's MFA enrollment. */
 import { ok } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+
 import { disableMfa } from "@/lib/features/auth/mfa.service";
 
 export async function POST(): Promise<Response> {

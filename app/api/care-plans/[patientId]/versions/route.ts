@@ -8,7 +8,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { ok } from "@/lib/api";
+import { ok, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { listCarePlanVersions } from "@/lib/features/care-plans/care-plan.service";
 import { logPhiAccess } from "@/lib/hipaa/phi-access-log";
@@ -21,6 +21,8 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["careplans.view"]);
   if (session instanceof Response) return session;
   const { patientId } = await ctx.params;
+  const bad = requireUuidParam(patientId);
+  if (bad) return bad;
   const rows = await listCarePlanVersions({ orgId: session.orgId, patientId });
   void logPhiAccess({
     orgId: session.orgId,

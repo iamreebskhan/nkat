@@ -13,6 +13,7 @@
  * produce the side-by-side view. The org admin resolves each row,
  * then we persist the merged set.
  */
+import { NotFoundError } from "@/lib/api";
 import { withBreakglass, withOrgContext } from "@/lib/db";
 import { hasAmaLicense } from "@/lib/features/billing/code.service";
 import { compareRulebooks } from "./rulebook-pure";
@@ -502,7 +503,7 @@ export async function buildComparison(args: {
     const upload = await tx.$queryRaw<{ parsed_rows: unknown }[]>`
       SELECT parsed_rows FROM rulebook_upload WHERE id = ${args.uploadId}::uuid LIMIT 1
     `;
-    if (!upload[0]) throw new Error("buildComparison: upload not found");
+    if (!upload[0]) throw new NotFoundError("Upload not found.");
     const orgRows = (upload[0].parsed_rows as unknown[]) as Array<{
       payerId: string | null;
       state: string;

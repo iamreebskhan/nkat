@@ -4,7 +4,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { buildComparison } from "@/lib/features/rulebook/rulebook.service";
 
@@ -23,8 +23,6 @@ export async function GET(req: NextRequest): Promise<Response> {
     }, {});
     return ok({ rows, total: rows.length, summary });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Comparison failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

@@ -1,6 +1,7 @@
 /** Cross-tenant org list — platform_admin only. */
-import { fail, ok } from "@/lib/api";
+import { ok, fail } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+
 import { listAllOrgs } from "@/lib/features/admin/admin.service";
 
 export async function GET(): Promise<Response> {

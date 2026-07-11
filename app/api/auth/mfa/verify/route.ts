@@ -2,7 +2,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, fail, parseJson } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { confirmMfaSetup } from "@/lib/features/auth/mfa.service";
 

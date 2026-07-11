@@ -1,6 +1,7 @@
 /** GET /api/inbox — current user's task feed. */
 import { ok } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+
 import { listInbox } from "@/lib/features/inbox/inbox.service";
 
 export async function GET(): Promise<Response> {

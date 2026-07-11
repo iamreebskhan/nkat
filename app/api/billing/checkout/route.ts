@@ -2,7 +2,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, fail, parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { env } from "@/lib/env";
 import {
@@ -34,6 +34,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     });
     return ok(r);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Checkout failed", { status: 500 });
+    return handleServiceError(err);
   }
 }

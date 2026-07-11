@@ -22,7 +22,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail, handleServiceError } from "@/lib/api";
 import {
   ingestDocumentFromUrl,
   type IngestableDocumentType,
@@ -75,6 +75,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     });
     return ok(r);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Extraction failed", { status: 500 });
+    return handleServiceError(err);
   }
 }

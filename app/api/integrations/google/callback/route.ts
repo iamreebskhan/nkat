@@ -7,7 +7,7 @@
  */
 import { type NextRequest, NextResponse } from "next/server";
 
-import { fail } from "@/lib/api";
+import { fail, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   exchangeCodeAndStore,
@@ -44,6 +44,6 @@ export async function GET(req: NextRequest): Promise<Response> {
     if (err instanceof GoogleConfigMissingError) {
       return fail(err.message, { status: 503 });
     }
-    return fail(err instanceof Error ? err.message : "Callback failed.", { status: 500 });
+    return handleServiceError(err);
   }
 }

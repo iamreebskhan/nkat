@@ -7,7 +7,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail, handleServiceError } from "@/lib/api";
 import { pullAllConnected } from "@/lib/features/calendar/google-calendar.service";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +22,6 @@ export async function POST(req: NextRequest): Promise<Response> {
   try {
     return ok(await pullAllConnected());
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Pull failed.", { status: 500 });
+    return handleServiceError(err);
   }
 }

@@ -1,7 +1,7 @@
 /** Per-org white-label settings. */
 import { type NextRequest } from "next/server";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   BrandingSchema,
@@ -25,6 +25,6 @@ export async function PUT(req: NextRequest): Promise<Response> {
     const view = await updateBranding({ orgId: session.orgId, payload: body });
     return ok(view);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Save failed", { status: 422 });
+    return handleServiceError(err);
   }
 }

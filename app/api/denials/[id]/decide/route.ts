@@ -4,7 +4,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { decideDenial } from "@/lib/features/denials/denial.service";
 import { DecideDenialSchema } from "@/lib/features/denials/denial.types";
@@ -21,6 +21,8 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
   if (body instanceof Response) return body;
 
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   try {
     await decideDenial({
       orgId: session.orgId,
@@ -31,8 +33,6 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok({ ok: true });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Decide failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

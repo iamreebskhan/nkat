@@ -2,7 +2,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, parseJson } from "@/lib/api";
+import { fail, parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { generateCheatSheet } from "@/lib/features/cheatsheets/cheatsheet.service";
 import { isCheatsheetAllowedForOrg } from "@/lib/features/cheatsheets/template.service";
@@ -54,6 +54,6 @@ export async function POST(req: NextRequest): Promise<Response> {
       },
     });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Cheat sheet failed", { status: 500 });
+    return handleServiceError(err);
   }
 }

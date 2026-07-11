@@ -16,7 +16,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { updateSuperbill } from "@/lib/features/superbills/superbill.service";
 
@@ -46,6 +46,8 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
   if (session instanceof Response) return session;
 
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   const body = await parseJson(req, PatchSchema);
   if (body instanceof Response) return body;
 
@@ -59,8 +61,6 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok(result);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Update failed.", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

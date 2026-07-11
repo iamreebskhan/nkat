@@ -8,7 +8,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { listPublishedForOrg } from "@/lib/features/cheatsheets/template.service";
 
@@ -19,6 +19,6 @@ export async function GET(_req: NextRequest): Promise<Response> {
     const rows = await listPublishedForOrg();
     return ok({ rows, total: rows.length });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Failed.", { status: 500 });
+    return handleServiceError(err);
   }
 }

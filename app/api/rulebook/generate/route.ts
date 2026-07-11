@@ -8,8 +8,9 @@
  *
  * Idempotent on a per-org basis — re-running bumps the version.
  */
-import { fail, ok } from "@/lib/api";
+import { ok, fail, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+
 import { getOrCreateOnboarding } from "@/lib/features/onboarding/onboarding.service";
 import { generateRulebook } from "@/lib/features/rulebook/rulebook.service";
 
@@ -53,8 +54,6 @@ export async function POST(): Promise<Response> {
     });
     return ok({ rulebook });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Generation failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

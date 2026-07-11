@@ -1,6 +1,6 @@
 import { type NextRequest } from "next/server";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { saveProfile } from "@/lib/features/onboarding/onboarding.service";
 import { ProfileSchema } from "@/lib/features/onboarding/onboarding.types";
@@ -14,6 +14,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     const r = await saveProfile({ orgId: session.orgId, profile: body });
     return ok(r);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Save failed", { status: 422 });
+    return handleServiceError(err);
   }
 }

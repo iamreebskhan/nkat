@@ -5,7 +5,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson, parseSearchParams } from "@/lib/api";
+import { ok, parseJson, parseSearchParams, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { createTimeOff, listTimeOff } from "@/lib/features/schedule/time-off.service";
 
@@ -46,6 +46,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     });
     return ok(r, { status: 201 });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Failed", { status: 422 });
+    return handleServiceError(err);
   }
 }

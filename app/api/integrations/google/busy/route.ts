@@ -9,7 +9,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, fail, parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   getBusyForClinician,
@@ -41,6 +41,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     if (err instanceof GoogleConfigMissingError) {
       return fail(err.message, { status: 503 });
     }
-    return fail(err instanceof Error ? err.message : "Busy lookup failed.", { status: 422 });
+    return handleServiceError(err);
   }
 }

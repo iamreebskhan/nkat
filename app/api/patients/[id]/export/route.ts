@@ -7,7 +7,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail } from "@/lib/api";
+import { handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { getBranding } from "@/lib/features/branding/branding.service";
 import { exportPatientRecord } from "@/lib/features/patients/patient-export.service";
@@ -20,6 +20,8 @@ export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["patients.view"]);
   if (session instanceof Response) return session;
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
 
   try {
     const branding = await getBranding(session.orgId);
@@ -39,6 +41,6 @@ export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
       },
     });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Export failed", { status: 500 });
+    return handleServiceError(err);
   }
 }

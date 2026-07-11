@@ -8,7 +8,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   listMessages,
@@ -26,6 +26,8 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["messaging.read"]);
   if (session instanceof Response) return session;
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   try {
     const result = await listMessages({
       orgId: session.orgId,
@@ -42,7 +44,7 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok(result);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Failed.", { status: 422 });
+    return handleServiceError(err);
   }
 }
 
@@ -50,6 +52,8 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["messaging.send"]);
   if (session instanceof Response) return session;
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   const body = await parseJson(req, PostBody);
   if (body instanceof Response) return body;
   try {
@@ -61,6 +65,6 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok(message, { status: 201 });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Post failed.", { status: 422 });
+    return handleServiceError(err);
   }
 }

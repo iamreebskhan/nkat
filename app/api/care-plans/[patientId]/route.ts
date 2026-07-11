@@ -6,7 +6,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { NotFoundError, fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   getCarePlan,
@@ -22,6 +22,8 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["careplans.view"]);
   if (session instanceof Response) return session;
   const { patientId } = await ctx.params;
+  const bad = requireUuidParam(patientId);
+  if (bad) return bad;
   const cp = await getCarePlan({ orgId: session.orgId, patientId });
   void logPhiAccess({
     orgId: session.orgId,
@@ -52,6 +54,8 @@ export async function PUT(req: NextRequest, ctx: Params): Promise<Response> {
   if (body instanceof Response) return body;
 
   const { patientId } = await ctx.params;
+  const bad = requireUuidParam(patientId);
+  if (bad) return bad;
   try {
     const r = await upsertCarePlan({
       orgId: session.orgId,
@@ -73,9 +77,6 @@ export async function PUT(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok(r);
   } catch (err) {
-    if (err instanceof NotFoundError) return fail(err.message, { status: 404 });
-    return fail(err instanceof Error ? err.message : "Save failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

@@ -13,7 +13,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, fail, parseJson } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { pushAttestationRequest } from "@/lib/features/attestations/attestation.service";
 import { ATTRIBUTE_DB_MAP } from "@/lib/features/billing/payer-rule.repository";

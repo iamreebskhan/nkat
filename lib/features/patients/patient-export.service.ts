@@ -11,6 +11,7 @@
  */
 import puppeteer, { type Browser } from "puppeteer";
 
+import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { logPhiExport } from "@/lib/hipaa/phi-access-log";
 
@@ -80,7 +81,7 @@ export async function exportPatientRecord(
       LIMIT 1
     `;
     const patient = patientRows[0];
-    if (!patient) throw new Error("Patient not found.");
+    if (!patient) throw new NotFoundError("Patient not found.");
 
     const visits = await tx.$queryRaw<VisitRow[]>`
       SELECT id, visit_type, status, scheduled_start, start_time, total_minutes,

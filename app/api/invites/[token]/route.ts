@@ -1,7 +1,7 @@
 /** GET — preview invite (no auth). Used by the accept-invite landing page. */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail } from "@/lib/api";
 import { previewInvite } from "@/lib/features/team/invite-redeem.service";
 
 interface Params {

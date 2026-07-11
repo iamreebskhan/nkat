@@ -10,7 +10,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { fail, parseJson } from "@/lib/api";
+import { parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { renderRuleAnswerPdf } from "@/lib/pdf/rule-answer";
 
@@ -58,8 +58,6 @@ export async function POST(req: NextRequest): Promise<Response> {
       },
     });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "PDF render failed.", {
-      status: 500,
-    });
+    return handleServiceError(err);
   }
 }

@@ -7,7 +7,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { markRulebookComplete } from "@/lib/features/onboarding/onboarding.service";
 import { applyEdits } from "@/lib/features/rulebook/rulebook.service";
@@ -31,8 +31,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
     return ok({ updated: r.updated, finalized: Boolean(body.finalize) });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Save failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

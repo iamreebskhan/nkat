@@ -12,7 +12,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { NotFoundError, fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   SUPERBILL_STATUSES,
@@ -41,11 +41,8 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
   if (body instanceof Response) return body;
 
   const { id } = await ctx.params;
-  // Validate before the raw query — a non-UUID id would surface Postgres
-  // 22P02 through Prisma's error text, leaking query detail to the client.
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
-    return fail("Superbill not found.", { status: 404 });
-  }
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   try {
     const r = await markStatus({
       orgId: session.orgId,
@@ -55,12 +52,9 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok(r);
   } catch (err) {
-    if (err instanceof NotFoundError) return fail(err.message, { status: 404 });
-    // Only the domain violation is client-caused and safe to echo; anything
-    // else (Prisma/DB faults) is a server error and must not leak internals.
-    if (err instanceof Error && err.message.startsWith("Illegal superbill transition")) {
-      return fail(err.message, { status: 422 });
-    }
-    return fail("Transition failed.", { status: 500 });
+    // Central policy: typed domain errors echo (404/402/422), everything
+    // else is reported + genericized to 500. markStatus throws
+    // ValidationError for illegal transitions, NotFoundError for misses.
+    return handleServiceError(err);
   }
 }

@@ -9,7 +9,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, fail, parseJson } from "@/lib/api";
 import { setSessionCookie, signSession } from "@/lib/auth";
 import { signup } from "@/lib/features/auth/auth.service";
 

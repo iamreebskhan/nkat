@@ -1,7 +1,7 @@
 /** Team invites: POST creates invite + permission rows in a tx. GET lists pending. */
 import { type NextRequest } from "next/server";
 
-import { handleServiceError, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   InviteSchema,

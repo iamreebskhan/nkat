@@ -7,6 +7,7 @@
  */
 import puppeteer, { type Browser } from "puppeteer";
 
+import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { logPhiExport } from "@/lib/hipaa/phi-access-log";
 
@@ -65,7 +66,7 @@ export async function generateSuperbillPdf(args: {
       WHERE s.id = ${superbillId}::uuid
       LIMIT 1
     `;
-    if (rows.length === 0) throw new Error("Superbill not found.");
+    if (rows.length === 0) throw new NotFoundError("Superbill not found.");
 
     const orgRow = await tx.$queryRaw<{ name: string }[]>`
       SELECT name FROM org WHERE id = ${orgId}::uuid LIMIT 1

@@ -5,9 +5,9 @@
  * user there. We embed `${orgId}:${userId}` in the `state` param
  * (the callback verifies it against the cookie session).
  */
-import { type NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
-import { fail } from "@/lib/api";
+import { fail, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   buildAuthUrl,
@@ -24,6 +24,6 @@ export async function GET(_req: NextRequest): Promise<Response> {
     if (err instanceof GoogleConfigMissingError) {
       return fail(err.message, { status: 503 });
     }
-    return fail(err instanceof Error ? err.message : "Connect failed.", { status: 500 });
+    return handleServiceError(err);
   }
 }

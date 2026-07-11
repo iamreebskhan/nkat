@@ -7,7 +7,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { analyzeDenial } from "@/lib/ai/denial-analyst";
 import {
@@ -26,6 +26,8 @@ export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
   if (session instanceof Response) return session;
 
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   const denial = await getDenial({ orgId: session.orgId, id });
   if (!denial) return fail("Denial not found.", { status: 404 });
 

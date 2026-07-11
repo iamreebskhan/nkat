@@ -4,7 +4,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseSearchParams } from "@/lib/api";
+import { ok, parseSearchParams, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { searchIcd10 } from "@/lib/features/billing/icd10.service";
 
@@ -22,6 +22,6 @@ export async function GET(req: NextRequest): Promise<Response> {
     const rows = await searchIcd10({ query: params.query, limit: params.limit });
     return ok({ rows });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Search failed", { status: 422 });
+    return handleServiceError(err);
   }
 }

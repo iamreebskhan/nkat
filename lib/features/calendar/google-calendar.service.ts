@@ -19,6 +19,7 @@
  * raises a typed error the route translates into a friendly 503 "set up
  * Google Calendar in env first" message instead of a crash.
  */
+import { ValidationError } from "@/lib/api";
 import { withBreakglass, withOrgContext } from "@/lib/db";
 
 const GOOGLE_OAUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -135,8 +136,8 @@ async function getAccessToken(args: { orgId: string; userId: string }): Promise<
     `;
   });
   const row = rows[0];
-  if (!row) throw new Error("Calendar not connected for this user.");
-  if (row.status === "revoked") throw new Error("Calendar connection was revoked. Reconnect.");
+  if (!row) throw new ValidationError("Calendar not connected for this user.");
+  if (row.status === "revoked") throw new ValidationError("Calendar connection was revoked. Reconnect.");
   const refresh = row.refresh;
 
   const r = await fetch(GOOGLE_TOKEN_URL, {
@@ -157,7 +158,7 @@ async function getAccessToken(args: { orgId: string; userId: string }): Promise<
          WHERE org_id = ${args.orgId}::uuid AND user_id = ${args.userId}::uuid
       `;
     });
-    throw new Error("Google refresh failed; user needs to reconnect.");
+    throw new ValidationError("Google refresh failed; user needs to reconnect.");
   }
   const data = (await r.json()) as { access_token: string };
   return data.access_token;
