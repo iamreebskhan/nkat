@@ -14,7 +14,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Field, Select, TextArea, TextInput } from "@/components/forms/field";
 import { Wizard, type WizardStep } from "@/components/wizard/wizard";
@@ -67,6 +67,29 @@ export default function NewPatientPage() {
   ) {
     setData((d) => ({ ...d, consents: { ...d.consents, [key]: value } }));
   }
+  function setCareTeam<K extends keyof CreatePatient["careTeam"]>(
+    key: K,
+    value: CreatePatient["careTeam"][K],
+  ) {
+    setData((d) => ({ ...d, careTeam: { ...d.careTeam, [key]: value } }));
+  }
+
+  // Org roster for step 5 — fetched only for org_admin, because the POST
+  // gate rejects care-team assignments from any other role. Gating the UI on
+  // roster-fetch success alone would let a non-admin WITH team.view pick
+  // assignments and then hard-fail the whole intake at the final step.
+  const [roster, setRoster] = useState<{ userId: string; fullName: string | null; email: string }[] | null>(null);
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((me) => {
+        if (!me.success || me.data?.role !== "org_admin") return;
+        return fetch("/api/team/members")
+          .then((r) => r.json())
+          .then((d) => setRoster(d.success ? (d.data?.rows ?? []) : null));
+      })
+      .catch(() => setRoster(null));
+  }, []);
 
   const steps: WizardStep[] = [
     {
@@ -387,15 +410,45 @@ export default function NewPatientPage() {
     {
       key: "care-team",
       title: "Care team",
-      description: "Per-patient assignment is coming; clinicians are assigned per visit for now.",
+      description: "Assign the clinicians and billing agent. All optional — edit later from the patient page.",
       optional: true,
       render: () => {
+        if (roster === null) {
+          return (
+            <p className="text-sm text-slate-600">
+              Care-team assignment is org-admin-only. The patient will be
+              created unassigned — an org admin can assign the team from the
+              patient detail page afterwards.
+            </p>
+          );
+        }
+        const seats = [
+          ["Primary NP", "primaryNpUserId"],
+          ["RN", "rnUserId"],
+          ["Social worker", "socialWorkerUserId"],
+          ["Billing agent", "billingAgentUserId"],
+        ] as const;
         return (
-          <p className="text-sm text-slate-600">
-            Care team assignment goes here in the next iteration. Today, the
-            patient is created unassigned — clinicians are assigned per visit
-            when scheduling (Schedule → New visit).
-          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {seats.map(([label, key]) => (
+              <Field key={key} id={`care-team-${key}`} label={label}>
+                <Select
+                  id={`care-team-${key}`}
+                  value={data.careTeam[key] ?? ""}
+                  onChange={(e) =>
+                    setCareTeam(key, e.target.value || undefined)
+                  }
+                >
+                  <option value="">— unassigned —</option>
+                  {roster.map((m) => (
+                    <option key={m.userId} value={m.userId}>
+                      {m.fullName ?? m.email}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ))}
+          </div>
         );
       },
     },

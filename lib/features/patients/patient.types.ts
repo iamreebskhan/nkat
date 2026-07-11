@@ -102,11 +102,9 @@ export const ConsentsSchema = z.object({
 export type Consents = z.infer<typeof ConsentsSchema>;
 
 /**
- * Step 5 — care team assignment.
- * NOT YET PERSISTED: the create service currently ignores these fields (no
- * patient care-team columns exist). Kept in the contract so existing senders
- * (`careTeam: {}`) stay valid; per-visit clinician assignment is the live
- * mechanism until per-patient assignment ships.
+ * Step 5 — care team assignment. Persisted on the patient row (migration
+ * 0054); every assignee must be a member of the patient's org (service-
+ * enforced). All optional — a patient may have any subset assigned.
  */
 export const CareTeamSchema = z.object({
   primaryNpUserId: z.string().uuid().optional(),
@@ -115,6 +113,26 @@ export const CareTeamSchema = z.object({
   billingAgentUserId: z.string().uuid().optional(),
 });
 export type CareTeam = z.infer<typeof CareTeamSchema>;
+
+/**
+ * PATCH variant — tri-state per field: absent = keep, null = unassign,
+ * uuid = reassign. (The create schema has no nulls: absent simply means
+ * "not assigned yet".)
+ */
+export const UpdateCareTeamSchema = z.object({
+  primaryNpUserId: z.string().uuid().nullable().optional(),
+  rnUserId: z.string().uuid().nullable().optional(),
+  socialWorkerUserId: z.string().uuid().nullable().optional(),
+  billingAgentUserId: z.string().uuid().nullable().optional(),
+});
+export type UpdateCareTeam = z.infer<typeof UpdateCareTeamSchema>;
+
+/** One assigned care-team seat as the API returns it. */
+export interface CareTeamMemberView {
+  userId: string | null;
+  /** Display name (app_user.full_name, falling back to email) — resolved on detail reads. */
+  name: string | null;
+}
 
 /** Full payload for POST /api/patients (server merges + persists). */
 export const CreatePatientSchema = z.object({
@@ -146,6 +164,13 @@ export interface PatientView {
   lastVisitDate: string | null;
   /** Next upcoming scheduled visit (ISO date) — caseload column. */
   nextVisitDate: string | null;
+  /** Assigned care team. Names are resolved on detail reads; list reads carry ids only. */
+  careTeam: {
+    primaryNp: CareTeamMemberView;
+    rn: CareTeamMemberView;
+    socialWorker: CareTeamMemberView;
+    billingAgent: CareTeamMemberView;
+  };
   status: PatientStatus;
   createdAt: string;
   updatedAt: string;
@@ -156,6 +181,7 @@ export const UpdatePatientSchema = z.object({
   demographics: DemographicsSchema.partial().optional(),
   insurance: InsuranceSchema.partial().optional(),
   clinical: ClinicalSchema.partial().optional(),
+  careTeam: UpdateCareTeamSchema.optional(),
   status: z.enum(PATIENT_STATUSES).optional(),
 });
 export type UpdatePatient = z.infer<typeof UpdatePatientSchema>;

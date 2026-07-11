@@ -39,16 +39,54 @@ export default function PatientDetailPage({
   const [tab, setTab] = useState<Tab>("overview");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  // Self user id for the messaging panel — fetch from /api/auth/me.
+  // Self user id (messaging panel) + role (care-team editing is org_admin-only).
   const [selfUserId, setSelfUserId] = useState<string | null>(null);
+  const [isOrgAdmin, setIsOrgAdmin] = useState(false);
+  // Org roster for the care-team selects — fetched only for org_admin
+  // (other roles lack team.view and get the read-only names instead).
+  const [roster, setRoster] = useState<{ userId: string; fullName: string | null; email: string }[]>([]);
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
       .then((d) => {
         if (d.success && d.data?.userId) setSelfUserId(d.data.userId);
+        if (d.success && d.data?.role === "org_admin") {
+          setIsOrgAdmin(true);
+          return fetch("/api/team/members")
+            .then((r) => r.json())
+            .then((m) => {
+              if (m.success) setRoster(m.data?.rows ?? []);
+            });
+        }
       })
       .catch(() => {});
   }, []);
+
+  async function assignSeat(field: string, userId: string | null, seat: "primaryNp" | "rn" | "socialWorker" | "billingAgent") {
+    if (!patient) return;
+    const prevSeat = patient.careTeam[seat];
+    const member = roster.find((m) => m.userId === userId);
+    // Functional updates: only touch the one seat, so a concurrent change to
+    // any other field (e.g. acuity) is never clobbered by optimism/rollback.
+    const applySeat = (value: typeof prevSeat) =>
+      setPatient((p) => (p ? { ...p, careTeam: { ...p.careTeam, [seat]: value } } : p));
+    applySeat({ userId, name: member ? (member.fullName ?? member.email) : null });
+    try {
+      const r = await fetch(`/api/patients/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ careTeam: { [field]: userId } }),
+      });
+      const d = await r.json();
+      if (!d.success) {
+        applySeat(prevSeat);
+        alert(d.error ?? "Failed to update care team.");
+      }
+    } catch {
+      applySeat(prevSeat);
+      alert("Network error — care team not saved.");
+    }
+  }
 
   useEffect(() => {
     let abandoned = false;
@@ -196,6 +234,40 @@ export default function PatientDetailPage({
                   <option value="critical">Critical</option>
                 </select>
               </div>
+            </CardContent>
+          </Card>
+          <Card className="md:col-span-2">
+            <CardHeader>
+              <CardTitle>Care team</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-slate-700">
+              {([
+                ["Primary NP", "primaryNpUserId", "primaryNp"],
+                ["RN", "rnUserId", "rn"],
+                ["Social worker", "socialWorkerUserId", "socialWorker"],
+                ["Billing agent", "billingAgentUserId", "billingAgent"],
+              ] as const).map(([label, field, seat]) => (
+                <div key={field} className="flex items-center justify-between gap-3">
+                  <span className="text-slate-500">{label}</span>
+                  {isOrgAdmin ? (
+                    <select
+                      value={patient.careTeam[seat].userId ?? ""}
+                      aria-label={`Assign ${label}`}
+                      className="h-8 px-2 rounded-md border border-slate-300 bg-white text-sm max-w-56"
+                      onChange={(e) => void assignSeat(field, e.target.value || null, seat)}
+                    >
+                      <option value="">— unassigned —</option>
+                      {roster.map((m) => (
+                        <option key={m.userId} value={m.userId}>
+                          {m.fullName ?? m.email}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span>{patient.careTeam[seat].name ?? "—"}</span>
+                  )}
+                </div>
+              ))}
             </CardContent>
           </Card>
         </div>
