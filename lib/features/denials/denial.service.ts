@@ -112,6 +112,18 @@ export async function logDenial(args: {
       )
       RETURNING id
     `;
+
+    // Keep the superbill's own status machine in sync: a logged denial moves
+    // a submitted/partially-paid superbill to 'denied'. Opportunistic — a
+    // draft superbill (harness flows log denials pre-submission) is left
+    // alone rather than forcing an illegal transition.
+    await tx.$executeRaw`
+      UPDATE superbill
+         SET status = 'denied', updated_at = now()
+       WHERE id = ${payload.superbillId}::uuid
+         AND status IN ('submitted', 'partially_paid')
+    `;
+
     return { id: rows[0]!.id };
   });
 }

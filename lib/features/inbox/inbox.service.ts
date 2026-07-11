@@ -11,8 +11,12 @@
  * newest-first.
  */
 import { withOrgContext } from "@/lib/db";
+import {
+  daysUntilExpiry,
+  shouldRemindToday,
+} from "@/lib/features/attestations/attestation-pure";
 
-export type InboxItemKind = "visit" | "attestation_request" | "denial";
+export type InboxItemKind = "visit" | "attestation_request" | "denial" | "attestation_expiring";
 
 export interface InboxItem {
   key: string;
@@ -28,6 +32,8 @@ export async function listInbox(args: {
   userId: string;
   /** True if the user has billing.denials.view — controls denial fetch. */
   canSeeDenials: boolean;
+  /** True if the user has knowledge.attest — controls expiry reminders. */
+  canAttest?: boolean;
   limit?: number;
 }): Promise<InboxItem[]> {
   const limit = Math.min(100, args.limit ?? 50);
@@ -88,6 +94,32 @@ export async function listInbox(args: {
       `;
     }
 
+    // §15.3 re-verification reminders: active attestations hitting the
+    // 15/5/0-days-remaining marks TODAY (shouldRemindToday). Fetch the
+    // ≤16-day window and let the pure helper pick today's exact marks.
+    let expiring: {
+      id: string;
+      cpt_code: string;
+      state: string | null;
+      expires_at: Date;
+      payer_name: string | null;
+    }[] = [];
+    if (args.canAttest) {
+      // Bounded window [today, +16d): rows already past expiry can never hit a
+      // 15/5/0 mark and — while they wait for the on-read sweep — would only
+      // starve the LIMIT. ASC = most urgent first among today's reminders.
+      expiring = await tx.$queryRaw`
+        SELECT a.id, a.cpt_code, a.state, a.expires_at, p.name AS payer_name
+        FROM analyst_attestation a
+        LEFT JOIN payer p ON p.id = a.payer_id
+        WHERE a.status = 'active'
+          AND a.expires_at >= CURRENT_DATE
+          AND a.expires_at <= (CURRENT_DATE + INTERVAL '16 days')
+        ORDER BY a.expires_at ASC
+        LIMIT ${limit}
+      `;
+    }
+
     const out: InboxItem[] = [];
 
     for (const v of visits) {
@@ -129,6 +161,29 @@ export async function listInbox(args: {
         subtitle: `$${(Number(d.denied_amount_cents) / 100).toFixed(2)} denied · awaiting decision`,
         href: `/billing/denials/${d.id}`,
         occurredAt: d.denied_at.toISOString(),
+      });
+    }
+
+    // §15.3 reminders fire on the exact 15/5/0-days-remaining marks (a
+    // reminder SCHEDULE, not a standing queue — the attestations page's
+    // freshness buckets give continuous visibility). occurredAt is "now":
+    // these are today's reminders, so they sort with today's items instead
+    // of a future expires_at pinning the least-urgent one to the top.
+    const remindedAt = new Date().toISOString();
+    for (const a of expiring) {
+      const att = { status: "active" as const, expiresAt: a.expires_at };
+      if (!shouldRemindToday(att)) continue;
+      const remaining = daysUntilExpiry(a.expires_at);
+      out.push({
+        key: `att-exp:${a.id}`,
+        kind: "attestation_expiring",
+        title:
+          remaining <= 0
+            ? `Attestation expires TODAY — ${a.cpt_code}`
+            : `Attestation expires in ${remaining} days — ${a.cpt_code}`,
+        subtitle: `${a.payer_name ?? "payer"}${a.state ? ` · ${a.state}` : ""} · re-verify with the payer to keep the rule fresh`,
+        href: "/payers/attestations",
+        occurredAt: remindedAt,
       });
     }
 

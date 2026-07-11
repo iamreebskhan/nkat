@@ -183,6 +183,81 @@ export default function CarePlanPage({
           Save now
         </Button>
       </div>
+
+      <VersionHistory patientId={patientId} />
     </div>
+  );
+}
+
+interface VersionRow {
+  version: number;
+  document: JSONContent | null;
+  snapshotVisitId: string | null;
+  createdAt: string;
+}
+
+/**
+ * Frozen snapshots (care_plan_version) — written on visit-tied saves;
+ * this viewer is the read side. "What did the plan say when that visit
+ * was billed?"
+ */
+function VersionHistory({ patientId }: { patientId: string }) {
+  const [rows, setRows] = useState<VersionRow[] | null>(null);
+  const [openVersion, setOpenVersion] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/care-plans/${patientId}/versions`)
+      .then((r) => r.json())
+      .then((d) => setRows(d.success ? (d.data?.rows ?? []) : []))
+      .catch(() => setRows([]));
+  }, [patientId]);
+
+  if (!rows || rows.length === 0) return null;
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle>Version history</CardTitle>
+        <CardDescription>
+          Frozen snapshots taken when a visit-tied save signs the plan. Click a
+          version to view it as it stood.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <ul className="divide-y divide-slate-100">
+          {rows.map((v) => (
+            <li key={v.version}>
+              <button
+                type="button"
+                onClick={() => setOpenVersion(openVersion === v.version ? null : v.version)}
+                className="w-full px-4 py-2.5 flex items-center justify-between text-sm hover:bg-slate-50"
+                aria-expanded={openVersion === v.version}
+              >
+                <span className="font-medium tabular">v{v.version}</span>
+                <span className="text-slate-500 tabular text-xs">
+                  {new Date(v.createdAt).toLocaleString()}
+                  {v.snapshotVisitId && <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5">visit-tied</span>}
+                </span>
+              </button>
+              {openVersion === v.version && (
+                <div className="px-4 pb-4">
+                  {v.snapshotVisitId && (
+                    <Link
+                      href={`/visits/${v.snapshotVisitId}/document`}
+                      className="text-xs text-[var(--color-brand-700)] underline"
+                    >
+                      Open the visit that snapshotted this version →
+                    </Link>
+                  )}
+                  <div className="mt-2">
+                    <TipTapEditor initial={v.document ?? null} readOnly />
+                  </div>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }

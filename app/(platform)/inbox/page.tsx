@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 interface InboxItem {
   key: string;
-  kind: "visit" | "attestation_request" | "denial";
+  kind: "visit" | "attestation_request" | "denial" | "attestation_expiring";
   title: string;
   subtitle: string;
   href: string;
@@ -24,12 +24,14 @@ const KIND_LABEL: Record<InboxItem["kind"], string> = {
   visit: "Visit",
   attestation_request: "Attestation",
   denial: "Denial",
+  attestation_expiring: "Expiring",
 };
 
 const KIND_COLORS: Record<InboxItem["kind"], string> = {
   visit: "bg-emerald-50 text-emerald-800 ring-emerald-600/20",
   attestation_request: "bg-amber-50 text-amber-800 ring-amber-600/30",
   denial: "bg-red-50 text-red-800 ring-red-600/30",
+  attestation_expiring: "bg-orange-50 text-orange-800 ring-orange-600/30",
 };
 
 export default function InboxPage() {

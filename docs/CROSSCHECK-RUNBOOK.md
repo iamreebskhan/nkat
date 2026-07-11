@@ -91,6 +91,27 @@ BASE_URL=https://app.pallio.io node scripts/verify-scan-fixes.mjs
 Denial decide→refile→outcome persistence, attestation claim-on-open, breakglass
 audit. Expected: **15/15**.
 
+## 5b. PHI column encryption (one-time provisioning)
+
+Member IDs are dual-written to encrypted `_enc` companions (0034) once
+`PALLIO_PHI_KEY` is set. One-time setup — generates the key, stores it, and
+backfills existing rows (nothing to hand-edit):
+
+```bash
+cd /opt/pallio/app
+grep -q '^PALLIO_PHI_KEY=' .env || echo "PALLIO_PHI_KEY=$(openssl rand -hex 32)" >> .env
+pm2 restart pallio
+export PALLIO_PHI_KEY=$(grep -hE '^PALLIO_PHI_KEY=' .env | head -1 | cut -d= -f2- | tr -d '"')
+sudo -u postgres psql pallio -v phi_key="$PALLIO_PHI_KEY" -f scripts/backfill-phi-encryption.sql
+```
+
+The verify SELECT at the end must show **0 / 0 / 0** (no plaintext without
+ciphertext, no round-trip mismatch). The admin **/admin/compliance** page has
+a "PHI member-id encryption coverage" check that turns green once this runs.
+⚠ Back the key up (password manager / Vault) — ciphertexts are unreadable
+without it. Rotate quarterly per the pgp.ts header (re-encrypt via a rerun of
+the backfill after clearing `_enc`, old key in hand).
+
 ## 6. Live AI features  *(needs Anthropic API credits)*
 
 ```bash

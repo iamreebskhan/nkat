@@ -5,7 +5,7 @@
  * renders all probes as a single status board. Failures here don't
  * 5xx — the whole point is to surface the bad ones.
  */
-import { prisma } from "@/lib/db";
+import { prisma, withBreakglass } from "@/lib/db";
 
 export interface ComplianceCheck {
   id: string;
@@ -136,14 +136,57 @@ export async function runComplianceChecks(): Promise<ComplianceCheck[]> {
     });
   }
 
+  // 4b) PHI encryption coverage — the helpers existing is not the same as
+  // the _enc companions actually being populated (0034 dual-write). Counts
+  // plaintext member ids that lack ciphertext; non-zero means the backfill
+  // (scripts/backfill-phi-encryption.sql) hasn't run or the key is unset.
+  try {
+    // Cross-tenant read via withBreakglass (audited): patient + superbill are
+    // FORCE-RLS'd — the tenant client with no org GUC sees ZERO rows, which
+    // would report this check green forever.
+    const rows = await withBreakglass(
+      (client) => client.$queryRaw<{ p: bigint; s: bigint }[]>`
+        SELECT
+          (SELECT count(*) FROM patient
+            WHERE primary_member_id IS NOT NULL AND primary_member_id_enc IS NULL)  AS p,
+          (SELECT count(*) FROM superbill
+            WHERE member_id_snapshot IS NOT NULL AND member_id_snapshot_enc IS NULL) AS s
+      `,
+      "compliance dashboard: PHI encryption coverage counts (aggregate, no PHI values)",
+    );
+    const p = Number(rows[0]?.p ?? 0);
+    const s = Number(rows[0]?.s ?? 0);
+    checks.push({
+      id: "phi_encryption_coverage",
+      label: "PHI member-id encryption coverage",
+      ok: p === 0 && s === 0,
+      detail:
+        p === 0 && s === 0
+          ? "Every stored member id has an encrypted companion."
+          : `${p} patient + ${s} superbill member ids lack ciphertext — set PALLIO_PHI_KEY and run scripts/backfill-phi-encryption.sql.`,
+    });
+  } catch (err) {
+    checks.push({
+      id: "phi_encryption_coverage",
+      label: "PHI member-id encryption coverage",
+      ok: false,
+      detail: err instanceof Error ? err.message : "probe failed",
+    });
+  }
+
   // 5) Audit log freshness — at least one row in the last 24h
   try {
-    const rows = await prisma.$queryRaw<{ recent: bigint; total: bigint }[]>`
-      SELECT
-        COUNT(*) FILTER (WHERE occurred_at > now() - interval '24 hours') AS recent,
-        COUNT(*) AS total
-      FROM audit_log
-    `;
+    // Cross-tenant read via withBreakglass (audited): audit_log is RLS'd
+    // (0007) — the tenant client reported "0 rows, ok" forever.
+    const rows = await withBreakglass(
+      (client) => client.$queryRaw<{ recent: bigint; total: bigint }[]>`
+        SELECT
+          COUNT(*) FILTER (WHERE occurred_at > now() - interval '24 hours') AS recent,
+          COUNT(*) AS total
+        FROM audit_log
+      `,
+      "compliance dashboard: audit-log freshness counts (aggregate)",
+    );
     const r = rows[0]!;
     checks.push({
       id: "audit_fresh",
