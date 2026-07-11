@@ -19,7 +19,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseSearchParams } from "@/lib/api";
+import { ok, parseSearchParams, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   getAllowedCodesForPayer,
@@ -65,8 +65,6 @@ export async function GET(req: NextRequest): Promise<Response> {
         });
     return ok({ rows, total: rows.length });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Lookup failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

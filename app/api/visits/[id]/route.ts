@@ -3,7 +3,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { getVisit } from "@/lib/features/visits/visit.service";
 import { logPhiAccess } from "@/lib/hipaa/phi-access-log";
@@ -22,6 +22,8 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
     return fail("Permission denied", { status: 403 });
   }
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   const visit = await getVisit({ orgId: session.orgId, id });
   if (!visit) return fail("Visit not found.", { status: 404 });
   // .own permission requires the row's clinician_user_id to match.

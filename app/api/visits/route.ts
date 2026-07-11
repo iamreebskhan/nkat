@@ -4,7 +4,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson, parseSearchParams } from "@/lib/api";
+import { ok, fail, parseJson, parseSearchParams, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   getBusyForClinician,
@@ -127,8 +127,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     });
     return ok(r, { status: 201 });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Schedule failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

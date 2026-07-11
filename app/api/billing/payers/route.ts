@@ -8,6 +8,7 @@
  */
 import { ok } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+
 import { listPayers } from "@/lib/features/billing/payer-rule.repository";
 
 export async function GET(): Promise<Response> {

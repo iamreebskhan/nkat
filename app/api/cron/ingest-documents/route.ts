@@ -13,7 +13,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail } from "@/lib/api";
 import { scanForCandidates } from "@/lib/features/cheatsheets/template.service";
 import { runIngestionCron } from "@/lib/features/ingestion/sources.service";
 

@@ -8,7 +8,7 @@
  *   3. `markStatus()` — billing agent transitions through draft →
  *      ready_to_submit → submitted → paid|partially_paid|denied|voided.
  */
-import { NotFoundError } from "@/lib/api";
+import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { predictSuperbill } from "@/lib/features/billing/predict-superbill.service";
 import { applyPhiKeyIfConfigured } from "@/lib/hipaa/pgp";
@@ -73,7 +73,7 @@ export async function buildDraftFromVisit(args: {
       LIMIT 1
     `;
     const r = rows[0];
-    if (!r) throw new Error("buildDraftFromVisit: visit not found");
+    if (!r) throw new NotFoundError("Visit not found.");
 
     const dosDate = r.start_time ?? r.scheduled_start ?? new Date();
 
@@ -297,9 +297,9 @@ export async function updateSuperbill(args: {
     const exists = await tx.$queryRaw<{ id: string; status: SuperbillStatus }[]>`
       SELECT id, status FROM superbill WHERE id = ${args.id}::uuid LIMIT 1
     `;
-    if (!exists[0]) throw new Error("Superbill not found.");
+    if (!exists[0]) throw new NotFoundError("Superbill not found.");
     if (exists[0].status !== "draft") {
-      throw new Error(
+      throw new ValidationError(
         `Superbill is ${exists[0].status}; only drafts can be edited.`,
       );
     }
@@ -411,7 +411,7 @@ export async function markStatus(args: {
     const from = rows[0]?.status;
     if (!from) throw new NotFoundError("Superbill not found.");
     if (!STATUS_TRANSITIONS[from].includes(args.to)) {
-      throw new Error(`Illegal superbill transition ${from} → ${args.to}.`);
+      throw new ValidationError(`Illegal superbill transition ${from} → ${args.to}.`);
     }
     if (args.to === "submitted") {
       await tx.$executeRaw`

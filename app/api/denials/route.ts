@@ -4,7 +4,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson, parseSearchParams } from "@/lib/api";
+import { ok, parseJson, parseSearchParams, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   listDenials,
@@ -48,8 +48,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     const r = await logDenial({ orgId: session.orgId, payload: body });
     return ok(r, { status: 201 });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Log failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

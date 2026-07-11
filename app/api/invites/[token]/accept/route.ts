@@ -2,7 +2,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, fail, parseJson } from "@/lib/api";
 import { setSessionCookie, signSession, type Session } from "@/lib/auth";
 import { withOrgContext } from "@/lib/db";
 import { redeemInvite } from "@/lib/features/team/invite-redeem.service";

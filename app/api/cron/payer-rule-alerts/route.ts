@@ -10,7 +10,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail, handleServiceError } from "@/lib/api";
 import { dispatchPayerRuleAlerts } from "@/lib/features/alerts/payer-rule-alerts.service";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +34,6 @@ export async function POST(req: NextRequest): Promise<Response> {
       totalDigests: summaries.reduce((sum, s) => sum + s.digestsSent, 0),
     });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Cron failed", { status: 500 });
+    return handleServiceError(err);
   }
 }

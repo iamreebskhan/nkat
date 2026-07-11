@@ -1,6 +1,7 @@
 /** GET /api/billing/subscription — read the cached subscription row. */
-import { fail, ok } from "@/lib/api";
+import { ok, fail } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+
 import { withOrgContext } from "@/lib/db";
 
 export async function GET(): Promise<Response> {

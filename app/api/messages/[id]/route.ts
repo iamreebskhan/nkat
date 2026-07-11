@@ -4,7 +4,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { editMessage } from "@/lib/features/messaging/messaging.service";
 
@@ -18,6 +18,8 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["messaging.send"]);
   if (session instanceof Response) return session;
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   const body = await parseJson(req, Body);
   if (body instanceof Response) return body;
   try {
@@ -29,6 +31,6 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok(r);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Edit failed.", { status: 422 });
+    return handleServiceError(err);
   }
 }

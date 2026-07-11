@@ -8,7 +8,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, fail, parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   CreateSourceSchema,
@@ -38,8 +38,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     const row = await createSource(body);
     return ok(row, { status: 201 });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Create failed.", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

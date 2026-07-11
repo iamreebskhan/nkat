@@ -7,7 +7,7 @@
  *
  * Source schema: db/migrations/0029_phase_pallio_emr.sql.
  */
-import { NotFoundError } from "@/lib/api";
+import { NotFoundError, ValidationError } from "@/lib/api";
 import { prisma, withOrgContext } from "@/lib/db";
 import { applyPhiKeyIfConfigured } from "@/lib/hipaa/pgp";
 import type {
@@ -29,7 +29,7 @@ async function assertPayerExists(payerId: string): Promise<void> {
     SELECT id FROM payer WHERE id = ${payerId}::uuid LIMIT 1
   `;
   if (!rows[0]) {
-    throw new Error(
+    throw new ValidationError(
       `Unknown payer: ${payerId}. Pick one from /api/billing/payers.`,
     );
   }
@@ -60,7 +60,7 @@ async function assertCareTeamMembers(
   const known = new Set(found.map((r) => r.user_id));
   const missing = ids.filter((id) => !known.has(id));
   if (missing.length > 0) {
-    throw new Error(
+    throw new ValidationError(
       `Care-team assignee ${missing[0]} is not an active member of this organization.`,
     );
   }

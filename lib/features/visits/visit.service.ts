@@ -3,7 +3,7 @@
  *
  * Every read + write tenant-scoped via withOrgContext.
  */
-import { NotFoundError } from "@/lib/api";
+import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import {
   type DocumentVisit,
@@ -261,7 +261,7 @@ export async function transitionVisit(args: {
     const from = rows[0]?.status;
     if (!from) throw new NotFoundError("Visit not found.");
     if (!canTransition(from, args.to)) {
-      throw new Error(`Illegal status transition ${from} → ${args.to}`);
+      throw new ValidationError(`Illegal status transition ${from} → ${args.to}`);
     }
 
     if (args.to === "documented") {

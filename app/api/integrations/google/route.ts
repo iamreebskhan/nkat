@@ -4,7 +4,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { disconnect, getStatus } from "@/lib/features/calendar/google-calendar.service";
 
@@ -14,7 +14,7 @@ export async function GET(_req: NextRequest): Promise<Response> {
   try {
     return ok(await getStatus({ orgId: session.orgId, userId: session.userId }));
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Status failed.", { status: 500 });
+    return handleServiceError(err);
   }
 }
 
@@ -25,6 +25,6 @@ export async function DELETE(_req: NextRequest): Promise<Response> {
     await disconnect({ orgId: session.orgId, userId: session.userId });
     return ok({ disconnected: true });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Disconnect failed.", { status: 500 });
+    return handleServiceError(err);
   }
 }

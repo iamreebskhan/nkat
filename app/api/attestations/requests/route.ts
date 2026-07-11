@@ -2,7 +2,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { handleServiceError, ok, parseJson, parseSearchParams } from "@/lib/api";
+import { ok, parseJson, parseSearchParams, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   listAttestationRequests,

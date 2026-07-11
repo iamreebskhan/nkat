@@ -1,5 +1,6 @@
 import { ok } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+
 import { markRulebookComplete } from "@/lib/features/onboarding/onboarding.service";
 
 export async function POST(): Promise<Response> {

@@ -1,5 +1,6 @@
 import { ok } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+
 import { isMfaEnrolled } from "@/lib/features/auth/mfa.service";
 
 export async function GET(): Promise<Response> {

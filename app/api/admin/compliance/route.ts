@@ -1,6 +1,7 @@
 /** GET /api/admin/compliance — live HIPAA / RLS / retention probe. */
-import { fail, ok } from "@/lib/api";
+import { ok, fail } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+
 import { runComplianceChecks } from "@/lib/features/admin/compliance.service";
 
 export async function GET(): Promise<Response> {

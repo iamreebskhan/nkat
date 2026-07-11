@@ -6,7 +6,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { getDenialPrediction } from "@/lib/features/denials/denial.service";
 
@@ -18,6 +18,8 @@ export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["billing.denials.view"]);
   if (session instanceof Response) return session;
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   const result = await getDenialPrediction({ orgId: session.orgId, id });
   if (!result) return fail("Denial not found.", { status: 404 });
   return ok(result);

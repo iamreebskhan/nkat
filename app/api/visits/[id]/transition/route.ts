@@ -8,7 +8,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { transitionVisit } from "@/lib/features/visits/visit.service";
 import { VISIT_STATUSES } from "@/lib/features/visits/visit.types";
@@ -29,6 +29,8 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
   if (body instanceof Response) return body;
 
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   try {
     const r = await transitionVisit({
       orgId: session.orgId,
@@ -38,8 +40,6 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok(r);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Transition failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

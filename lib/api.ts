@@ -66,18 +66,53 @@ export class SeatLimitError extends Error {
 }
 
 /**
- * Helper for routes — wraps a service call. Catches NotFoundError →
- * 404, SeatLimitError → 402; otherwise 422 on validation, 500 on
- * unknown.
+ * Throw from a service when the CALLER's input is at fault and the
+ * message is written for the user's eyes (unknown payer, illegal status
+ * transition, non-member assignee…). Routes echo it at 422. Anything a
+ * service throws that is NOT one of the typed errors is treated as an
+ * internal fault: reported to the dashboard and returned as a generic
+ * 500 — raw driver/Prisma messages must never reach a client.
+ */
+export class ValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Format check for dynamic route params that must be UUIDs. */
+export function isUuid(v: string): boolean {
+  return UUID_RE.test(v);
+}
+
+/**
+ * Guard a dynamic route param that feeds a `::uuid` cast. Returns a 404
+ * envelope for malformed ids (a garbage id can't exist, and existence is
+ * never leaked) — without this, Postgres 22P02 surfaced Prisma's
+ * raw-query error text to the client. Use like parseJson:
+ *
+ *   const bad = requireUuidParam(id);
+ *   if (bad) return bad;
+ */
+export function requireUuidParam(v: string): NextResponse<ApiResponse<null>> | null {
+  return isUuid(v) ? null : fail("Not found.", { status: 404 });
+}
+
+/**
+ * Helper for routes — wraps a service call. Typed domain errors map to
+ * their status with the message echoed (NotFoundError → 404,
+ * SeatLimitError → 402, ValidationError → 422); everything else is an
+ * internal fault: reported to the error dashboard (PHI-scrubbed, no-op
+ * without SENTRY_DSN) and genericized to 500.
  */
 export function handleServiceError(err: unknown): NextResponse<ApiResponse<null>> {
   if (err instanceof NotFoundError) return fail(err.message, { status: 404 });
   if (err instanceof SeatLimitError) return fail(err.message, { status: 402 });
-  // Unexpected — surface to the error dashboard (PHI-scrubbed, no-op
-  // without SENTRY_DSN). This was the missing consumer of reportError.
+  if (err instanceof ValidationError) return fail(err.message, { status: 422 });
   reportError(err, { source: "handleServiceError" });
-  const msg = err instanceof Error ? err.message : "Unknown error";
-  return fail(msg, { status: 422 });
+  return fail("Something went wrong. Try again or contact support.", { status: 500 });
 }
 
 /**

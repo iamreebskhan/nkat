@@ -3,7 +3,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { NotFoundError, fail, ok, parseJson } from "@/lib/api";
+import { ok, fail, parseJson, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   getPatient,
@@ -20,6 +20,8 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["patients.view"]);
   if (session instanceof Response) return session;
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   const patient = await getPatient({ orgId: session.orgId, id });
   if (!patient) return fail("Patient not found.", { status: 404 });
   void logPhiAccess({
@@ -64,6 +66,8 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
   }
 
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   try {
     const r = await updatePatient({
       orgId: session.orgId,
@@ -81,9 +85,6 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok(r);
   } catch (err) {
-    if (err instanceof NotFoundError) return fail(err.message, { status: 404 });
-    return fail(err instanceof Error ? err.message : "Update failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

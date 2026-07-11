@@ -11,7 +11,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   ingestPolicyDocument,
@@ -68,8 +68,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
     return ok(r, { status: 201 });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Ingestion failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

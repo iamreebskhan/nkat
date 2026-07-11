@@ -8,7 +8,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail, handleServiceError } from "@/lib/api";
 import { runDenialFeedback } from "@/lib/features/billing/denial-feedback.service";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +23,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     const summary = await runDenialFeedback();
     return ok(summary);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Cron crashed.", { status: 500 });
+    return handleServiceError(err);
   }
 }

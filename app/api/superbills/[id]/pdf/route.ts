@@ -1,7 +1,7 @@
 /** GET /api/superbills/[id]/pdf — branded superbill PDF. */
 import { type NextRequest } from "next/server";
 
-import { fail } from "@/lib/api";
+import { handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { generateSuperbillPdf } from "@/lib/features/superbills/superbill-pdf.service";
 
@@ -13,6 +13,8 @@ export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth(["billing.superbills.export"]);
   if (session instanceof Response) return session;
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   try {
     const { pdfBytes } = await generateSuperbillPdf({
       orgId: session.orgId,
@@ -27,6 +29,6 @@ export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
       },
     });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Export failed", { status: 500 });
+    return handleServiceError(err);
   }
 }

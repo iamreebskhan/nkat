@@ -8,7 +8,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, fail, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { withBreakglass } from "@/lib/db";
 import { ingestDocumentFromUrl } from "@/lib/features/ingestion/document-ingestion.service";
@@ -34,6 +34,8 @@ export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
     return fail("Platform admin only.", { status: 403 });
   }
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
 
   const rows = await withBreakglass(async (tx) => {
     return tx.$queryRaw<SrcRow[]>`

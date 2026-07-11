@@ -2,7 +2,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, fail, parseJson } from "@/lib/api";
 import { confirmReset } from "@/lib/features/auth/password-reset.service";
 
 const Body = z.object({

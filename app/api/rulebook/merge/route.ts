@@ -8,7 +8,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { mergeUploadedRulebook } from "@/lib/features/rulebook/rulebook.service";
 import { COVERAGE_STATUSES } from "@/lib/features/rulebook/rulebook.types";
@@ -46,8 +46,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     });
     return ok(r);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Merge failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

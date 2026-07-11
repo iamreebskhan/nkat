@@ -7,7 +7,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson, parseSearchParams } from "@/lib/api";
+import { ok, parseJson, parseSearchParams } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   listNotifications,

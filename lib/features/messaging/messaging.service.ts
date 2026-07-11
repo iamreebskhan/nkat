@@ -9,6 +9,7 @@
  * RLS: tenant-scoped via withOrgContext. PHI access: every list/get
  * writes an audit_log row (handled by the route).
  */
+import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 
 const EDIT_WINDOW_MS = 5 * 60 * 1000;
@@ -138,8 +139,8 @@ export async function postMessage(args: {
   userId: string;
   body: string;
 }): Promise<MessageView> {
-  if (args.body.trim().length === 0) throw new Error("Empty message.");
-  if (args.body.length > 5000) throw new Error("Message too long.");
+  if (args.body.trim().length === 0) throw new ValidationError("Empty message.");
+  if (args.body.length > 5000) throw new ValidationError("Message too long.");
 
   const threadId = await ensureThread(args);
   const mentions = await resolveMentions({ orgId: args.orgId, body: args.body });
@@ -183,8 +184,8 @@ export async function editMessage(args: {
   userId: string;
   newBody: string;
 }): Promise<{ updated: boolean }> {
-  if (args.newBody.trim().length === 0) throw new Error("Empty message.");
-  if (args.newBody.length > 5000) throw new Error("Message too long.");
+  if (args.newBody.trim().length === 0) throw new ValidationError("Empty message.");
+  if (args.newBody.length > 5000) throw new ValidationError("Message too long.");
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<
       { author_user_id: string; created_at: Date; body: string }[]
@@ -194,11 +195,11 @@ export async function editMessage(args: {
        LIMIT 1
     `;
     const r = rows[0];
-    if (!r) throw new Error("Message not found.");
-    if (r.author_user_id !== args.userId) throw new Error("Only the author can edit.");
+    if (!r) throw new NotFoundError("Message not found.");
+    if (r.author_user_id !== args.userId) throw new ValidationError("Only the author can edit.");
     const ageMs = Date.now() - r.created_at.getTime();
     if (ageMs > EDIT_WINDOW_MS) {
-      throw new Error("Edit window (5 minutes) has expired.");
+      throw new ValidationError("Edit window (5 minutes) has expired.");
     }
     const updated = await tx.$executeRaw`
       UPDATE patient_message

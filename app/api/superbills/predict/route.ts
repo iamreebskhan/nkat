@@ -19,7 +19,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, ok, parseJson } from "@/lib/api";
+import { ok, parseJson, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { predictSuperbill } from "@/lib/features/billing/predict-superbill.service";
 
@@ -57,8 +57,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     });
     return ok(result);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Predict failed.", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }

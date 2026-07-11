@@ -5,7 +5,7 @@
  */
 import { type NextRequest } from "next/server";
 
-import { fail, ok } from "@/lib/api";
+import { ok, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
   buildDraftFromVisit,
@@ -23,6 +23,8 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
   if (session instanceof Response) return session;
 
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   const existing = await getSuperbillByVisit({
     orgId: session.orgId,
     visitId: id,
@@ -48,9 +50,7 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
     });
     return ok({ existing: null, draft });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Build failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }
 
@@ -59,6 +59,8 @@ export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
   if (session instanceof Response) return session;
 
   const { id } = await ctx.params;
+  const bad = requireUuidParam(id);
+  if (bad) return bad;
   try {
     const draft = await buildDraftFromVisit({
       orgId: session.orgId,
@@ -67,8 +69,6 @@ export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
     const r = await persistDraft({ orgId: session.orgId, draft });
     return ok({ id: r.id, draft }, { status: 201 });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Create failed", {
-      status: 422,
-    });
+    return handleServiceError(err);
   }
 }
