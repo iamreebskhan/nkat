@@ -66,15 +66,23 @@ export async function upsertCarePlan(
         ${args.orgId}::uuid, ${args.patientId}::uuid,
         ${JSON.stringify(args.document)}::jsonb,
         ${args.goalsOfCareSummary ?? null},
-        ${args.primarySymptoms ?? []}::text[],
-        ${args.activeMedications ?? []}::text[],
+        ${args.primarySymptoms ?? null}::text[],
+        ${args.activeMedications ?? null}::text[],
         ${args.snapshotForVisitId ?? null}::uuid
       )
       ON CONFLICT (patient_id) DO UPDATE SET
         document = EXCLUDED.document,
-        goals_of_care_summary = COALESCE(EXCLUDED.goals_of_care_summary, care_plan.goals_of_care_summary),
-        primary_symptoms = EXCLUDED.primary_symptoms,
-        active_medications = EXCLUDED.active_medications,
+        -- Update semantics: absent/NULL = keep the stored value; '' (goals)
+        -- or [] (arrays) = explicit clear. The care-plan editor PUTs only
+        -- {document, goals}, so the previous unconditional overwrites wiped
+        -- primary_symptoms/active_medications on every editor save, and the
+        -- plain COALESCE on goals made an emptied textarea impossible to save.
+        goals_of_care_summary = CASE
+          WHEN EXCLUDED.goals_of_care_summary IS NULL THEN care_plan.goals_of_care_summary
+          ELSE NULLIF(EXCLUDED.goals_of_care_summary, '')
+        END,
+        primary_symptoms = COALESCE(EXCLUDED.primary_symptoms, care_plan.primary_symptoms),
+        active_medications = COALESCE(EXCLUDED.active_medications, care_plan.active_medications),
         last_updated_visit_id = COALESCE(EXCLUDED.last_updated_visit_id, care_plan.last_updated_visit_id),
         current_version = care_plan.current_version + 1,
         updated_at = now()

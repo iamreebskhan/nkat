@@ -22,21 +22,28 @@ export default function AuditPage() {
   async function load(reset: boolean) {
     setLoading(true);
     setError(null);
-    const params = new URLSearchParams();
-    if (filters.action) params.set("action", filters.action);
-    if (filters.userEmail) params.set("userEmail", filters.userEmail);
-    if (filters.fromDate) params.set("fromDate", filters.fromDate);
-    if (filters.toDate) params.set("toDate", filters.toDate);
-    if (!reset && nextCursor) params.set("cursor", nextCursor);
-    const r = await fetch(`/api/audit?${params.toString()}`);
-    const d = await r.json();
-    setLoading(false);
-    if (!d.success) {
-      setError(d.error ?? "Failed.");
-      return;
+    try {
+      const params = new URLSearchParams();
+      if (filters.action) params.set("action", filters.action);
+      if (filters.userEmail) params.set("userEmail", filters.userEmail);
+      if (filters.fromDate) params.set("fromDate", filters.fromDate);
+      if (filters.toDate) params.set("toDate", filters.toDate);
+      if (!reset && nextCursor) params.set("cursor", nextCursor);
+      const r = await fetch(`/api/audit?${params.toString()}`);
+      const d = await r.json();
+      if (!d.success) {
+        setError(d.error ?? "Failed.");
+        return;
+      }
+      setRows(reset ? d.data.rows : [...rows, ...d.data.rows]);
+      setNextCursor(d.data.nextCursor);
+    } catch {
+      // Without this, a thrown fetch left `loading` stuck true and the
+      // Apply / Load-more buttons permanently disabled.
+      setError("Network error — try again.");
+    } finally {
+      setLoading(false);
     }
-    setRows(reset ? d.data.rows : [...rows, ...d.data.rows]);
-    setNextCursor(d.data.nextCursor);
   }
 
   useEffect(() => {

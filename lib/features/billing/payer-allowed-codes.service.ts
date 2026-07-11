@@ -197,7 +197,3 @@ export async function searchAllowedCodes(args: {
     .slice(0, limit);
 }
 
-/** Test helper — clear the in-process cache. */
-export function _clearAllowedCodesCache(): void {
-  CACHE.clear();
-}

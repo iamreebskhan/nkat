@@ -211,6 +211,15 @@ function NewAttestationInner() {
                   className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
                 />
               </Field>
+              {/* callTime was in state + the POST body but had no input */}
+              <Field label="Call time">
+                <input
+                  type="time"
+                  value={form.callTime}
+                  onChange={(e) => setForm({ ...form, callTime: e.target.value })}
+                  className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
+                />
+              </Field>
               <Field label="Phone number">
                 <input
                   value={form.callPhoneNumber}

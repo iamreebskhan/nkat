@@ -331,7 +331,7 @@ export default function OnboardingPage() {
           />
           <PathChoice
             label="Upload our existing rulebook"
-            sub="Upload a PDF / DOCX / XLSX. Pallio compares it against the source library and surfaces any differences for you to resolve."
+            sub="Upload a CSV (payer, state, cpt, attribute, coverage, value). Pallio compares it against the source library and surfaces any differences for you to resolve."
             selected={rulebookPath === "upload"}
             onClick={() => setRulebookPath("upload")}
           />

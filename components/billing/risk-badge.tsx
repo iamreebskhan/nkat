@@ -54,18 +54,37 @@ interface Props {
   band: RiskBand;
   score: number;
   reasons: RiskReason[];
+  /** Context for the citation deep-link into /billing/lookup (prefills the form). */
+  cptCode?: string;
+  payerId?: string | null;
+  state?: string | null;
 }
 
-export function RiskBadge({ band, score, reasons }: Props) {
+export function RiskBadge({ band, score, reasons, cptCode, payerId, state }: Props) {
   const [open, setOpen] = useState(false);
   const style = BAND_STYLE[band];
   const Icon = style.Icon;
+  const citationHref = (r: RiskReason): string => {
+    const p = new URLSearchParams();
+    if (cptCode) p.set("cpt", cptCode);
+    if (payerId) p.set("payerId", payerId);
+    if (state) p.set("state", state);
+    if (r.code) p.set("attribute", "covered");
+    return `/billing/lookup${p.size ? `?${p.toString()}` : ""}`;
+  };
   return (
-    <span className="relative inline-block">
+    <span
+      className="relative inline-block"
+      // Close only when focus leaves the WHOLE widget — a blur handler on the
+      // trigger alone unmounted the popover mid-mousedown, making the citation
+      // link inside it unclickable.
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        onBlur={() => setOpen(false)}
         aria-expanded={open}
         aria-haspopup="dialog"
         className={cn(
@@ -99,7 +118,9 @@ export function RiskBadge({ band, score, reasons }: Props) {
                   {r.payerRuleId && (
                     <a
                       className="text-emerald-700 hover:underline"
-                      href={`/billing/lookup?rule=${r.payerRuleId}`}
+                      // Prefills the lookup form (cpt/payer/state) — the old
+                      // ?rule=<id> param was never read by the lookup page.
+                      href={citationHref(r)}
                       target="_blank"
                       rel="noreferrer"
                     >

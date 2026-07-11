@@ -363,8 +363,8 @@ export async function voidAttestation(args: {
 
 /**
  * Sweep: flip any active row past its expires_at to `expired`. Called
- * by the daily cron + opportunistically by listAttestations callers
- * that want the freshness counts to be accurate.
+ * opportunistically by GET /api/attestations before each list read, so
+ * freshness counts stay accurate without a scheduler dependency.
  */
 export async function sweepExpired(args: {
   orgId: string;

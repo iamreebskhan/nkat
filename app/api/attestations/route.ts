@@ -7,6 +7,7 @@ import { requireAuth } from "@/lib/auth";
 import {
   createAttestation,
   listAttestations,
+  sweepExpired,
 } from "@/lib/features/attestations/attestation.service";
 import {
   ATTESTATION_LIFECYCLES,
@@ -25,6 +26,9 @@ export async function GET(req: NextRequest): Promise<Response> {
   if (session instanceof Response) return session;
   const params = parseSearchParams(new URL(req.url), ListSchema);
   if (params instanceof Response) return params;
+  // Opportunistic expiry sweep on read — without this, rows past expires_at
+  // stayed "active" forever (the documented daily cron was never built).
+  await sweepExpired({ orgId: session.orgId }).catch(() => undefined);
   const rows = await listAttestations({ orgId: session.orgId, ...params });
   return ok({ rows, total: rows.length });
 }

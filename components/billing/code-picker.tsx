@@ -81,6 +81,10 @@ export function CodePicker({
   const [override, setOverride] = useState<{ code: string; reason: string } | null>(
     null,
   );
+  // Code typed into the empty-allow-list banner's attestation request. The
+  // banner unmounts as soon as the MAIN query input gets text (the "no rules
+  // on file" claim is only true for an empty query), so it needs its own field.
+  const [attCode, setAttCode] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Fetch the allow-list whenever payer / state / query changes.
@@ -230,28 +234,45 @@ export function CodePicker({
             You can still bill — type any CPT/HCPCS above (we&rsquo;ll log it as an override).
             Or request an analyst attestation so the next billing agent gets the answer cached.
           </p>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="mt-2"
-            onClick={async () => {
-              if (!payerId || !state) return;
-              await fetch("/api/attestations/requests", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({
-                  payerId,
-                  state,
-                  cptCode: query.trim() || "any",
-                  attribute: "covered",
-                  sourceQuery: "Empty allow-list at point of care",
-                }),
-              });
-              alert("Attestation request queued.");
-            }}
-          >
-            Request analyst attestation
-          </Button>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              value={attCode}
+              onChange={(e) => setAttCode(e.target.value.toUpperCase())}
+              placeholder="CPT/HCPCS e.g. G0318"
+              maxLength={5}
+              aria-label="Code to attest"
+              className="w-36 rounded-md border border-amber-300 bg-white px-2 py-1 text-xs"
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!/^[A-Z0-9]{4,5}$/.test(attCode.trim())}
+              onClick={async () => {
+                if (!payerId || !state) return;
+                // The API requires a concrete 4-5 char code (and the analyst
+                // needs one to verify) — the old "any" fallback 400'd silently
+                // while still alerting success. Uses its own field because the
+                // banner unmounts when the main query input has text.
+                const code = attCode.trim().toUpperCase();
+                const r = await fetch("/api/attestations/requests", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
+                    payerId,
+                    state,
+                    cptCode: code,
+                    attribute: "covered",
+                    sourceQuery: "Empty allow-list at point of care",
+                  }),
+                });
+                const d = await r.json().catch(() => null);
+                if (d?.success) setAttCode("");
+                alert(d?.success ? `Attestation request queued for ${code}.` : `Request failed: ${d?.error ?? `HTTP ${r.status}`}`);
+              }}
+            >
+              Request analyst attestation
+            </Button>
+          </div>
         </div>
       )}
 

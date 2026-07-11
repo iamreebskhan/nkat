@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { ok, parseJson } from "@/lib/api";
 import { sendEmail } from "@/lib/email/email.service";
-import { passwordResetEmail } from "@/lib/email/templates-auth";
+import { passwordResetEmail, passwordResetUrl } from "@/lib/email/templates-auth";
 import { env } from "@/lib/env";
 import { requestReset } from "@/lib/features/auth/password-reset.service";
 
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (result.rawToken) {
     const tmpl = passwordResetEmail({
       to: result.email,
-      resetUrl: `${env().APP_BASE_URL}/auth/reset-password?token=${result.rawToken}`,
+      resetUrl: passwordResetUrl(env().APP_BASE_URL, result.rawToken),
       branding: { displayName: null, primaryColor: null, logoUrl: null },
     });
     void sendEmail({

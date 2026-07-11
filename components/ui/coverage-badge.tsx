@@ -72,20 +72,3 @@ export function CoverageBadge({ status, size = "md", label }: Props) {
   );
 }
 
-/**
- * Tailwind class for a row-level left-border stripe matching the
- * coverage status. Use on `<tr>` in a billing table to make status
- * scannable without reading every badge (playbook §5.3).
- */
-export function rowStripe(status: CoverageStatus): string {
-  switch (status) {
-    case "covered":
-      return "border-l-4 border-l-emerald-500";
-    case "not_covered":
-      return "border-l-4 border-l-red-500";
-    case "varies":
-      return "border-l-4 border-l-amber-400";
-    case "unknown":
-      return "border-l-4 border-l-slate-300";
-  }
-}

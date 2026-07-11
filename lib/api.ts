@@ -12,6 +12,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { ZodError, type ZodSchema } from "zod";
 
+import { reportError } from "@/lib/observability/sentry";
+
 export type ApiResponse<T> = {
   success: boolean;
   data: T | null;
@@ -71,6 +73,9 @@ export class SeatLimitError extends Error {
 export function handleServiceError(err: unknown): NextResponse<ApiResponse<null>> {
   if (err instanceof NotFoundError) return fail(err.message, { status: 404 });
   if (err instanceof SeatLimitError) return fail(err.message, { status: 402 });
+  // Unexpected — surface to the error dashboard (PHI-scrubbed, no-op
+  // without SENTRY_DSN). This was the missing consumer of reportError.
+  reportError(err, { source: "handleServiceError" });
   const msg = err instanceof Error ? err.message : "Unknown error";
   return fail(msg, { status: 422 });
 }

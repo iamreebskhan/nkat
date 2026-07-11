@@ -101,7 +101,13 @@ export const ConsentsSchema = z.object({
 });
 export type Consents = z.infer<typeof ConsentsSchema>;
 
-/** Step 5 — care team assignment. */
+/**
+ * Step 5 — care team assignment.
+ * NOT YET PERSISTED: the create service currently ignores these fields (no
+ * patient care-team columns exist). Kept in the contract so existing senders
+ * (`careTeam: {}`) stay valid; per-visit clinician assignment is the live
+ * mechanism until per-patient assignment ships.
+ */
 export const CareTeamSchema = z.object({
   primaryNpUserId: z.string().uuid().optional(),
   rnUserId: z.string().uuid().optional(),
