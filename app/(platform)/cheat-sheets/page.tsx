@@ -42,6 +42,12 @@ export default function CheatSheetsPage() {
   }, []);
 
   async function generate() {
+    // The API requires exactly two letters (z.string().length(2)) — a partial
+    // entry like "O" used to round-trip as an opaque 400.
+    if (state && !/^[A-Za-z]{2}$/.test(state.trim())) {
+      setError("State must be 2 letters (e.g. OH) or blank for all states.");
+      return;
+    }
     setGenerating(true);
     setError(null);
     try {
@@ -53,7 +59,7 @@ export default function CheatSheetsPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          state: state ? state.toUpperCase() : null,
+          state: state.trim() ? state.trim().toUpperCase() : null,
           payerId: payerId || null,
           cptCodes,
           orgName,

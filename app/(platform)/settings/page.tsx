@@ -10,6 +10,8 @@ const SECTIONS = [
   { href: "/settings/security", title: "Security", desc: "Multi-factor authentication, recovery codes." },
   { href: "/settings/branding", title: "Branding", desc: "Logo, primary color, custom domain, email identity." },
   { href: "/settings/billing",  title: "Billing",  desc: "Subscription tier, seats, invoice history." },
+  // Was missing entirely — the page had zero inbound navigation paths.
+  { href: "/settings/integrations", title: "Integrations", desc: "Google Calendar sync and other third-party connections." },
   // Rulebook is now a top-level nav item ("Rulebook") — no duplicate door here.
 ];
 

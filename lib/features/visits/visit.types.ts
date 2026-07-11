@@ -66,10 +66,6 @@ export const DocumentVisitSchema = z.object({
 });
 export type DocumentVisit = z.infer<typeof DocumentVisitSchema>;
 
-export const SubmitVisitForBillingSchema = z.object({
-  status: z.literal("pending_billing"),
-});
-
 /** Visit row as the API returns it. */
 export interface VisitView {
   id: string;
