@@ -10,9 +10,11 @@
 import { NotFoundError } from "@/lib/api";
 import { prisma, withOrgContext } from "@/lib/db";
 import type {
+  CareTeam,
   CreatePatient,
   PatientStatus,
   PatientView,
+  UpdateCareTeam,
   UpdatePatient,
 } from "./patient.types";
 
@@ -33,6 +35,37 @@ async function assertPayerExists(payerId: string): Promise<void> {
 }
 
 /**
+ * Every care-team assignee must be a member of the patient's org —
+ * app_user is global, so a bare FK can't enforce tenancy. Runs inside
+ * withOrgContext, so RLS scopes org_member to the current org. Surfaces
+ * a friendly 422 instead of silently accepting a cross-tenant id.
+ */
+async function assertCareTeamMembers(
+  tx: Parameters<Parameters<typeof withOrgContext>[1]>[0],
+  careTeam: CareTeam | UpdateCareTeam | undefined,
+): Promise<void> {
+  const ids = [
+    careTeam?.primaryNpUserId,
+    careTeam?.rnUserId,
+    careTeam?.socialWorkerUserId,
+    careTeam?.billingAgentUserId,
+  ].filter((v): v is string => typeof v === "string");
+  if (ids.length === 0) return;
+  // status = 'active' — invited/suspended/removed members can't be assigned.
+  const found = await tx.$queryRaw<{ user_id: string }[]>`
+    SELECT user_id FROM org_member
+    WHERE user_id = ANY(${ids}::uuid[]) AND status = 'active'
+  `;
+  const known = new Set(found.map((r) => r.user_id));
+  const missing = ids.filter((id) => !known.has(id));
+  if (missing.length > 0) {
+    throw new Error(
+      `Care-team assignee ${missing[0]} is not an active member of this organization.`,
+    );
+  }
+}
+
+/**
  * Persist a new patient. Caller must set `orgId` from the session.
  * `createdByUserId` is recorded for audit.
  */
@@ -45,10 +78,12 @@ export async function createPatient(args: {
   const d = payload.demographics;
   const i = payload.insurance;
   const c = payload.clinical;
+  const ct = payload.careTeam;
 
   if (i.primaryPayerId) await assertPayerExists(i.primaryPayerId);
 
   return withOrgContext(orgId, async (tx) => {
+    await assertCareTeamMembers(tx, ct);
     const rows = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO patient (
         org_id, first_name, last_name, date_of_birth,
@@ -60,6 +95,7 @@ export async function createPatient(args: {
         primary_diagnosis_icd10, referring_physician_npi,
         referring_physician_name, palliative_referral_reason,
         acuity, acuity_updated_at, acuity_updated_by_user_id,
+        primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
         status, created_by_user_id
       ) VALUES (
         ${orgId}::uuid, ${d.firstName}, ${d.lastName}, ${d.dateOfBirth}::date,
@@ -73,6 +109,8 @@ export async function createPatient(args: {
         ${c.acuity ?? null},
         ${c.acuity ? new Date() : null},
         ${c.acuity ? createdByUserId : null}::uuid,
+        ${ct?.primaryNpUserId ?? null}::uuid, ${ct?.rnUserId ?? null}::uuid,
+        ${ct?.socialWorkerUserId ?? null}::uuid, ${ct?.billingAgentUserId ?? null}::uuid,
         'active', ${createdByUserId}::uuid
       )
       RETURNING id
@@ -99,6 +137,15 @@ interface PatientRow {
   acuity: PatientView["acuity"];
   last_visit_date: Date | null;
   next_visit_date: Date | null;
+  primary_np_user_id: string | null;
+  rn_user_id: string | null;
+  social_worker_user_id: string | null;
+  billing_agent_user_id: string | null;
+  /** Assignee display names — only the detail read (getPatient) resolves these. */
+  primary_np_name?: string | null;
+  rn_name?: string | null;
+  social_worker_name?: string | null;
+  billing_agent_name?: string | null;
   status: PatientStatus;
   created_at: Date;
   updated_at: Date;
@@ -122,6 +169,12 @@ function rowToView(row: PatientRow): PatientView {
     acuity: row.acuity,
     lastVisitDate: row.last_visit_date ? row.last_visit_date.toISOString().slice(0, 10) : null,
     nextVisitDate: row.next_visit_date ? row.next_visit_date.toISOString().slice(0, 10) : null,
+    careTeam: {
+      primaryNp: { userId: row.primary_np_user_id, name: row.primary_np_name ?? null },
+      rn: { userId: row.rn_user_id, name: row.rn_name ?? null },
+      socialWorker: { userId: row.social_worker_user_id, name: row.social_worker_name ?? null },
+      billingAgent: { userId: row.billing_agent_user_id, name: row.billing_agent_name ?? null },
+    },
     status: row.status,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -134,8 +187,8 @@ export async function getPatient(args: {
 }): Promise<PatientView | null> {
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<PatientRow[]>`
-      SELECT id, first_name, last_name, date_of_birth,
-             sex_assigned_at_birth, address_line_1, city, state, zip, phone,
+      SELECT patient.id, first_name, last_name, date_of_birth,
+             sex_assigned_at_birth, address_line_1, city, patient.state, zip, phone,
              primary_payer_id, primary_member_id,
              primary_diagnosis_icd10, acuity,
              (SELECT MAX(COALESCE(v.start_time, v.scheduled_start)) FROM visit v
@@ -144,9 +197,18 @@ export async function getPatient(args: {
              (SELECT MIN(v.scheduled_start) FROM visit v
                WHERE v.patient_id = patient.id
                  AND v.scheduled_start > now()) AS next_visit_date,
-             status, created_at, updated_at
+             primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
+             COALESCE(np.full_name, np.email)  AS primary_np_name,
+             COALESCE(rn.full_name, rn.email)  AS rn_name,
+             COALESCE(sw.full_name, sw.email)  AS social_worker_name,
+             COALESCE(ba.full_name, ba.email)  AS billing_agent_name,
+             patient.status, patient.created_at, patient.updated_at
       FROM patient
-      WHERE id = ${args.id}::uuid
+      LEFT JOIN app_user np ON np.id = patient.primary_np_user_id
+      LEFT JOIN app_user rn ON rn.id = patient.rn_user_id
+      LEFT JOIN app_user sw ON sw.id = patient.social_worker_user_id
+      LEFT JOIN app_user ba ON ba.id = patient.billing_agent_user_id
+      WHERE patient.id = ${args.id}::uuid
       LIMIT 1
     `;
     return rows[0] ? rowToView(rows[0]) : null;
@@ -190,6 +252,7 @@ export async function listPatients(
              (SELECT MIN(v.scheduled_start) FROM visit v
                WHERE v.patient_id = patient.id
                  AND v.scheduled_start > now()) AS next_visit_date,
+             primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
              status, created_at, updated_at
           FROM patient
           WHERE status = ${status}
@@ -215,6 +278,7 @@ export async function listPatients(
              (SELECT MIN(v.scheduled_start) FROM visit v
                WHERE v.patient_id = patient.id
                  AND v.scheduled_start > now()) AS next_visit_date,
+             primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
              status, created_at, updated_at
           FROM patient
           WHERE status = ${status}
@@ -255,6 +319,7 @@ export async function searchPatients(args: {
              (SELECT MIN(v.scheduled_start) FROM visit v
                WHERE v.patient_id = patient.id
                  AND v.scheduled_start > now()) AS next_visit_date,
+             primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
              status, created_at, updated_at
       FROM patient
       WHERE (${args.status ?? null}::text IS NULL OR status = ${args.status ?? null})
@@ -331,6 +396,23 @@ export async function updatePatient(args: {
           acuity = COALESCE(${c.acuity ?? null}, acuity),
           acuity_updated_at = CASE WHEN ${c.acuity ?? null}::text IS NULL THEN acuity_updated_at ELSE now() END,
           acuity_updated_by_user_id = CASE WHEN ${c.acuity ?? null}::text IS NULL THEN acuity_updated_by_user_id ELSE ${args.userId ?? null}::uuid END,
+          updated_at = now()
+        WHERE id = ${args.id}::uuid
+      `;
+      touched = true;
+    }
+    if (args.payload.careTeam && Object.keys(args.payload.careTeam).length > 0) {
+      const ct = args.payload.careTeam;
+      await assertCareTeamMembers(tx, ct);
+      // Tri-state per seat: absent = keep, null = unassign, uuid = reassign.
+      // COALESCE can't express "explicit null clears", so each CASE is driven
+      // by a JS-side "was the field provided" boolean.
+      await tx.$executeRaw`
+        UPDATE patient SET
+          primary_np_user_id    = CASE WHEN ${ct.primaryNpUserId === undefined} THEN primary_np_user_id    ELSE ${ct.primaryNpUserId ?? null}::uuid END,
+          rn_user_id            = CASE WHEN ${ct.rnUserId === undefined} THEN rn_user_id            ELSE ${ct.rnUserId ?? null}::uuid END,
+          social_worker_user_id = CASE WHEN ${ct.socialWorkerUserId === undefined} THEN social_worker_user_id ELSE ${ct.socialWorkerUserId ?? null}::uuid END,
+          billing_agent_user_id = CASE WHEN ${ct.billingAgentUserId === undefined} THEN billing_agent_user_id ELSE ${ct.billingAgentUserId ?? null}::uuid END,
           updated_at = now()
         WHERE id = ${args.id}::uuid
       `;

@@ -48,6 +48,13 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
     });
   }
 
+  // Care-team assignment is an org-management decision — org_admin only.
+  if (body.careTeam && Object.keys(body.careTeam).length > 0 && session.role !== "org_admin") {
+    return fail("Only an org admin can change care-team assignments.", {
+      status: 403,
+    });
+  }
+
   const { id } = await ctx.params;
   try {
     const r = await updatePatient({
