@@ -387,14 +387,14 @@ export default function NewPatientPage() {
     {
       key: "care-team",
       title: "Care team",
-      description: "Assign the clinicians and billing agent. All optional now — edit later.",
+      description: "Per-patient assignment is coming; clinicians are assigned per visit for now.",
       optional: true,
       render: () => {
         return (
           <p className="text-sm text-slate-600">
             Care team assignment goes here in the next iteration. Today, the
-            patient is created with no assigned NP / RN / SW; an org admin
-            sets these from the patient detail page.
+            patient is created unassigned — clinicians are assigned per visit
+            when scheduling (Schedule → New visit).
           </p>
         );
       },

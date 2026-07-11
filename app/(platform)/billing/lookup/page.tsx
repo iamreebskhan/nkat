@@ -88,6 +88,18 @@ export default function LookupPage() {
       .catch(() => undefined);
   }, []);
 
+  // Prefill from deep-link params (risk-badge "View rule citation" links here
+  // with ?cpt=&payerId=&state=&attribute=).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    const cpt = p.get("cpt");
+    if (cpt) setCptCode(cpt.toUpperCase());
+    if (p.get("payerId")) setPayerId(p.get("payerId")!);
+    if (p.get("state")) setState(p.get("state")!.toUpperCase());
+    if (p.get("attribute")) setAttribute(p.get("attribute")!);
+  }, []);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);

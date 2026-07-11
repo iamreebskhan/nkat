@@ -35,6 +35,9 @@ export async function GET(req: NextRequest): Promise<Response> {
     const rows = await searchPatients({
       orgId: session.orgId,
       query: params.search,
+      // Without this, the status filter was silently ignored during search —
+      // discharged/deceased patients were unfindable by name.
+      status: params.status,
       limit: params.limit,
     });
     return ok({ rows, total: rows.length });

@@ -59,6 +59,22 @@ patients → superbill → billing lookup → denials (decide/refile/outcome
 buttons) → rulebook → cheat sheets → messages → care plan → schedule →
 logout, with screenshots. Expected: **30/30**.
 
+## 3b. Exhaustive UI crawl — every page, every button, DnD, file upload
+
+```bash
+BASE_URL=https://app.pallio.io node scripts/e2e-exhaustive-ui.mjs
+# include the master pages too (operator creds, via read -rs as in §2)
+# include AI-invoking buttons (spends a little credit): INCLUDE_AI=1
+```
+Breadth to the walkthrough's depth: crawls **all ~34 user pages** (+5 detail
+pages it seeds itself), clicks **every safe button** (destructive labels
+skipped), and fails hard on any uncaught page exception or 5xx; UI-provoked
+`/api` 404s are reported as broken-wiring warnings. Also drives the two flows
+nothing else covers: **schedule drag-and-drop** (drag a visit card to another
+day → `PATCH /reschedule` must 200) and the **rulebook CSV file input**
+(real file chosen → `POST /api/rulebook/upload` → comparison renders).
+Expected: **0 hard failures**.
+
 ## 4. Full CY2026 rule — extraction reads + comparison (demo seat)
 
 ```bash
@@ -97,9 +113,10 @@ export CRON_SECRET=$(grep -hE '^CRON_SECRET=' .env .env.local .env.production 2>
 node scripts/probe-full-live.mjs        && \
 node scripts/verify-master-ui.mjs       && \
 node scripts/e2e-live-walkthrough.mjs   && \
+node scripts/e2e-exhaustive-ui.mjs      && \
 node scripts/verify-demo-user-medicare.mjs && \
 node scripts/verify-scan-fixes.mjs      && \
-echo "✅ ALL GREEN (backend + master UI + user UI + full rule + wiring)"
+echo "✅ ALL GREEN (backend + master UI + user UI + every button + full rule + wiring)"
 ```
 
 CI additionally guarantees on every PR: typecheck + lint, unit tests,

@@ -348,6 +348,13 @@ function PtoComposer({ onCreated, onCancel }: { onCreated: () => void; onCancel:
               onChange={(e) => setForm({ ...form, endDate: e.target.value })}
               className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
           </Field>
+          {/* reason was collected in state + sent to the API but had no input */}
+          <Field label="Reason">
+            <input value={form.reason} placeholder="e.g. vacation, sick"
+              maxLength={200}
+              onChange={(e) => setForm({ ...form, reason: e.target.value })}
+              className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+          </Field>
           <div className="flex gap-2">
             <Button type="submit" disabled={submitting || !form.clinicianUserId}>Add</Button>
             <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
@@ -383,7 +390,9 @@ function NewVisitComposer({
 
   useEffect(() => {
     void Promise.all([
-      fetch("/api/patients?limit=500").then((r) => r.json()),
+      // 200 is the API's max limit — 500 was rejected with a 400, leaving the
+      // patient dropdown empty and the composer unusable.
+      fetch("/api/patients?limit=200").then((r) => r.json()),
       fetch("/api/team/members").then((r) => r.json()),
     ]).then(([p, m]) => {
       if (p.success) setPatients(p.data?.rows ?? []);

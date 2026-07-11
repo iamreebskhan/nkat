@@ -105,17 +105,20 @@ export async function updateBranding(args: {
         ${p.emailFromAddress ?? null}
       )
       ON CONFLICT (org_id) DO UPDATE SET
-        display_name = COALESCE(EXCLUDED.display_name, org_branding.display_name),
-        logo_url = COALESCE(EXCLUDED.logo_url, org_branding.logo_url),
-        primary_color = COALESCE(EXCLUDED.primary_color, org_branding.primary_color),
+        -- Verbatim, not COALESCE: the settings form PUTs its FULL state (sole
+        -- caller), and null means "cleared". The old COALESCEs made a set
+        -- logo/color/name impossible to remove (custom_domain already did this).
+        display_name = EXCLUDED.display_name,
+        logo_url = EXCLUDED.logo_url,
+        primary_color = EXCLUDED.primary_color,
         custom_domain = EXCLUDED.custom_domain,
         domain_status = CASE
           WHEN EXCLUDED.custom_domain IS DISTINCT FROM org_branding.custom_domain
           THEN ${p.customDomain ? "pending" : "unconfigured"}
           ELSE org_branding.domain_status
         END,
-        email_from_name = COALESCE(EXCLUDED.email_from_name, org_branding.email_from_name),
-        email_from_address = COALESCE(EXCLUDED.email_from_address, org_branding.email_from_address),
+        email_from_name = EXCLUDED.email_from_name,
+        email_from_address = EXCLUDED.email_from_address,
         updated_at = now()
       RETURNING *
     `;

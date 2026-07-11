@@ -116,14 +116,18 @@ export default function RulebookPage() {
       .catch(() => {});
   }, []);
 
-  // Auto-generate when ?init=generate (from the onboarding wizard).
+  // Honor the onboarding wizard's choice: ?init=generate auto-generates,
+  // ?init=upload jumps to the Path B upload card (previously ignored —
+  // "upload" users landed with no pointer to the uploader).
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("init") === "generate") {
       void generate();
+    } else if (params.get("init") === "upload") {
+      document.getElementById("path-b-upload")?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-     
+
   }, []);
 
   async function generate() {
@@ -140,6 +144,9 @@ export default function RulebookPage() {
       setRb(data.data.rulebook);
       setEdits({});
       setInfo(`Generated ${data.data.rulebook.rows.length} rules from sources.`);
+      // The rulebook now exists — record onboarding completion (this endpoint
+      // previously had no caller, so rulebook_complete could never flip).
+      void fetch("/api/onboarding/finalize", { method: "POST" }).catch(() => {});
     } catch {
       setError("Network error.");
     } finally {
@@ -717,6 +724,8 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
       setMsg(`Merged ${d.data.merged} rows into your rulebook.`);
       setRows(null);
       setUploadId(null);
+      // Path B completion also counts as onboarding's rulebook step done.
+      void fetch("/api/onboarding/finalize", { method: "POST" }).catch(() => {});
       onMerged();
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : "Merge failed");
@@ -726,7 +735,7 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
   }
 
   return (
-    <Card className="mb-6">
+    <Card className="mb-6" id="path-b-upload">
       <CardHeader>
         <CardTitle>Path B — upload your existing rulebook</CardTitle>
         <CardDescription>

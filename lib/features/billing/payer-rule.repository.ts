@@ -45,11 +45,19 @@ export const ATTRIBUTE_DB_MAP: Record<PayerRuleAttribute, string> = {
 
 export type CoverageStatus = "covered" | "not_covered" | "varies" | "unknown";
 
+/** Mirrors the payer.payer_type CHECK in db/migrations/0003_payers_and_rules.sql. */
 export type PayerType =
-  | "medicare_advantage"
+  | "medicare_mac"
+  | "medicare_advantage_org"
+  | "medicaid_state"
+  | "medicaid_mco"
   | "commercial"
-  | "medicaid"
-  | "exchange";
+  | "tpa"
+  | "workers_comp"
+  | "auto_no_fault"
+  | "tribal"
+  | "self_insured"
+  | "other";
 
 export interface FetchRuleInput {
   payerId: string;

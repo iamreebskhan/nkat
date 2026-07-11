@@ -3,6 +3,15 @@ import type { BrandingForEmail } from "./templates";
 
 const DEFAULT_PRIMARY = "#0d9488";
 
+/**
+ * Canonical reset link. The page lives in the (auth) route GROUP —
+ * groups don't appear in URLs, so it serves at /reset-password.
+ * (A /auth/reset-password link 404s; regression-tested.)
+ */
+export function passwordResetUrl(baseUrl: string, rawToken: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/reset-password?token=${encodeURIComponent(rawToken)}`;
+}
+
 export function passwordResetEmail(input: {
   to: string;
   resetUrl: string;

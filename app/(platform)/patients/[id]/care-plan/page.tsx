@@ -81,7 +81,9 @@ export default function CarePlanPage({
     try {
       const body = {
         document: documentJson ?? doc ?? { type: "doc", content: [] },
-        goalsOfCareSummary: goals || null,
+        // "" = explicit clear; null would mean "keep stored value" server-side,
+        // which made an emptied textarea impossible to save.
+        goalsOfCareSummary: goals,
       };
       const r = await fetch(`/api/care-plans/${patientId}`, {
         method: "PUT",

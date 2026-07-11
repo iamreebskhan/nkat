@@ -238,6 +238,7 @@ export async function listPatients(
 export async function searchPatients(args: {
   orgId: string;
   query: string;
+  status?: PatientStatus;
   limit?: number;
 }): Promise<PatientView[]> {
   const limit = Math.min(50, Math.max(1, args.limit ?? 20));
@@ -256,7 +257,7 @@ export async function searchPatients(args: {
                  AND v.scheduled_start > now()) AS next_visit_date,
              status, created_at, updated_at
       FROM patient
-      WHERE status = 'active'
+      WHERE (${args.status ?? null}::text IS NULL OR status = ${args.status ?? null})
         AND (
           lower(first_name) LIKE ${q}
           OR lower(last_name) LIKE ${q}

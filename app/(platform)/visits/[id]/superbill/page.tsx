@@ -364,7 +364,14 @@ export default function SuperbillPage({
                 .map((p) => (
                   <li key={p.code} className="flex items-center gap-2">
                     <span className="font-mono tabular text-slate-700">{p.code}</span>
-                    <RiskBadge band={p.riskBand} score={p.score} reasons={p.reasons} />
+                    <RiskBadge
+                      band={p.riskBand}
+                      score={p.score}
+                      reasons={p.reasons}
+                      cptCode={p.code}
+                      payerId={patient?.primaryPayerId ?? draft?.payerId}
+                      state={patient?.state}
+                    />
                   </li>
                 ))}
             </ul>

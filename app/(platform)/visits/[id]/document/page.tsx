@@ -53,7 +53,11 @@ export default function VisitDocumentPage({
   const { id } = use(params);
   const [visit, setVisit] = useState<VisitView | null>(null);
   const [patient, setPatient] = useState<PatientView | null>(null);
+  const [payerCategory, setPayerCategory] = useState<"medicare" | "non_medicare">("non_medicare");
   const [loading, setLoading] = useState(true);
+  // loadError kills the page (visit unfetchable); error renders inline so a
+  // failed save/submit doesn't unmount the editor and eat unsaved work.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Local form state
@@ -80,7 +84,7 @@ export default function VisitDocumentPage({
         const data = await r.json();
         if (abandoned) return;
         if (!data.success) {
-          setError(data.error ?? "Visit not found.");
+          setLoadError(data.error ?? "Visit not found.");
           return;
         }
         const v = data.data as VisitView;
@@ -96,12 +100,27 @@ export default function VisitDocumentPage({
         try {
           const pr = await fetch(`/api/patients/${v.patientId}`);
           const pd = await pr.json();
-          if (pd.success && !abandoned) setPatient(pd.data as PatientView);
+          if (pd.success && !abandoned) {
+            const p = pd.data as PatientView;
+            setPatient(p);
+            // Resolve the primary payer's category so the CPT suggester picks
+            // G0318 (Medicare) vs 99417 (non-Medicare) correctly.
+            if (p.primaryPayerId) {
+              const yr = await fetch("/api/billing/payers");
+              const yd = await yr.json();
+              const payer = (yd.data?.payers ?? []).find(
+                (x: { id: string; type?: string }) => x.id === p.primaryPayerId,
+              );
+              if (!abandoned && payer?.type?.startsWith("medicare")) {
+                setPayerCategory("medicare");
+              }
+            }
+          }
         } catch {
           /* non-fatal — sidebar shows a hint to set payer on patient record */
         }
       } catch {
-        if (!abandoned) setError("Network error.");
+        if (!abandoned) setLoadError("Network error.");
       } finally {
         if (!abandoned) setLoading(false);
       }
@@ -123,25 +142,24 @@ export default function VisitDocumentPage({
   const suggestion = useMemo(() => {
     if (!visit) return null;
     // The suggester picks G0318 (Medicare) vs 99417 (non-Medicare) for
-    // prolonged service based on payer category. We default to
-    // non-Medicare; Phase 5's payer-resolution layer flips it when the
-    // patient's primary payer is a Medicare/Medicare-Advantage plan.
+    // prolonged service based on payer category, resolved from the
+    // patient's primary payer (medicare_mac / medicare_advantage_org).
     return suggestCodes({
       visitType: visit.visitType,
       totalMinutes,
       acpMinutes,
       providerType,
-      payerCategory: "non_medicare",
+      payerCategory,
       isTelehealth,
       telehealthModality,
     });
-  }, [visit, totalMinutes, acpMinutes, providerType, isTelehealth, telehealthModality]);
+  }, [visit, totalMinutes, acpMinutes, providerType, payerCategory, isTelehealth, telehealthModality]);
 
   if (loading) return <div className="px-8 py-8 text-slate-500">Loading…</div>;
-  if (error || !visit)
+  if (loadError || !visit)
     return (
       <div className="px-8 py-8">
-        <p className="text-red-700">{error ?? "Visit not found."}</p>
+        <p className="text-red-700">{loadError ?? "Visit not found."}</p>
         <Link
           href="/visits"
           className="mt-4 inline-block text-[var(--color-brand-700)] underline"
@@ -151,7 +169,8 @@ export default function VisitDocumentPage({
       </div>
     );
 
-  async function save() {
+  /** @returns true iff the PATCH persisted — callers must not proceed on false. */
+  async function save(): Promise<boolean> {
     setSaving(true);
     setError(null);
     try {
@@ -185,11 +204,13 @@ export default function VisitDocumentPage({
       const data = await r.json();
       if (!data.success) {
         setError(data.error ?? "Save failed.");
-        return;
+        return false;
       }
       setSaved(new Date().toLocaleTimeString());
+      return true;
     } catch {
       setError("Network error.");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -206,7 +227,9 @@ export default function VisitDocumentPage({
     }
     setSubmitting(true);
     try {
-      await save();
+      // A failed save must block the sign-off — otherwise the visit
+      // transitions to billing with stale/unsaved documentation.
+      if (!(await save())) return;
       const t1 = await fetch(`/api/visits/${id}/transition`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -249,6 +272,12 @@ export default function VisitDocumentPage({
       </header>
 
       <MedicareWindowBanner visit={visit} />
+
+      {error && (
+        <p role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </p>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-4">
