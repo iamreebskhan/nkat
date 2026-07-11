@@ -198,10 +198,25 @@ export async function getPatient(args: {
                WHERE v.patient_id = patient.id
                  AND v.scheduled_start > now()) AS next_visit_date,
              primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
-             COALESCE(np.full_name, np.email)  AS primary_np_name,
-             COALESCE(rn.full_name, rn.email)  AS rn_name,
-             COALESCE(sw.full_name, sw.email)  AS social_worker_name,
-             COALESCE(ba.full_name, ba.email)  AS billing_agent_name,
+             -- Seats survive offboarding (reassignment is a human decision),
+             -- but the display must not pretend departed staff are current —
+             -- flag any assignee whose org_member row is no longer active.
+             CASE WHEN np.id IS NULL THEN NULL
+                  WHEN EXISTS (SELECT 1 FROM org_member om WHERE om.user_id = np.id AND om.status = 'active')
+                    THEN COALESCE(np.full_name, np.email)
+                  ELSE COALESCE(np.full_name, np.email) || ' (inactive)' END AS primary_np_name,
+             CASE WHEN rn.id IS NULL THEN NULL
+                  WHEN EXISTS (SELECT 1 FROM org_member om WHERE om.user_id = rn.id AND om.status = 'active')
+                    THEN COALESCE(rn.full_name, rn.email)
+                  ELSE COALESCE(rn.full_name, rn.email) || ' (inactive)' END AS rn_name,
+             CASE WHEN sw.id IS NULL THEN NULL
+                  WHEN EXISTS (SELECT 1 FROM org_member om WHERE om.user_id = sw.id AND om.status = 'active')
+                    THEN COALESCE(sw.full_name, sw.email)
+                  ELSE COALESCE(sw.full_name, sw.email) || ' (inactive)' END AS social_worker_name,
+             CASE WHEN ba.id IS NULL THEN NULL
+                  WHEN EXISTS (SELECT 1 FROM org_member om WHERE om.user_id = ba.id AND om.status = 'active')
+                    THEN COALESCE(ba.full_name, ba.email)
+                  ELSE COALESCE(ba.full_name, ba.email) || ' (inactive)' END AS billing_agent_name,
              patient.status, patient.created_at, patient.updated_at
       FROM patient
       LEFT JOIN app_user np ON np.id = patient.primary_np_user_id

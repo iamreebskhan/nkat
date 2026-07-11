@@ -48,9 +48,17 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
     });
   }
 
-  // Care-team assignment is an org-management decision — org_admin only.
-  if (body.careTeam && Object.keys(body.careTeam).length > 0 && session.role !== "org_admin") {
-    return fail("Only an org admin can change care-team assignments.", {
+  // Care-team assignment gates on a PERMISSION (roles are display-only per
+  // lib/auth.ts); org_admin templates carry patients.careteam.edit (0055
+  // backfills existing admins). platform_admin is the operator override —
+  // the established primitive for that role (0039).
+  if (
+    body.careTeam &&
+    Object.keys(body.careTeam).length > 0 &&
+    !session.permissions.includes("patients.careteam.edit") &&
+    session.role !== "platform_admin"
+  ) {
+    return fail("patients.careteam.edit permission required to change care-team assignments.", {
       status: 403,
     });
   }

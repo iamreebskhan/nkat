@@ -34,6 +34,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleTemplate, string[]> = {
     "audit.view",
     "messaging.read", "messaging.send",
     "patient.acuity.edit",
+    "patients.careteam.edit",
   ],
   clinician: [
     "patients.list", "patients.view", "patients.edit",
