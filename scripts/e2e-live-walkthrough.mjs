@@ -215,7 +215,8 @@ async function shot(page, name) {
           insurance: { primaryPayerId: payerId, primaryMemberId: "W1" },
           clinical: { acuity: "critical" }, consents: { hipaaAcknowledged: true, goalsOfCareConsent: true, telehealthConsent: true }, careTeam: {},
         }))?.id;
-      const visitId = (await api("POST", "/api/visits", { patientId, clinicianUserId: me.userId, visitType: "established_patient_home", scheduledStart: new Date(Date.now() + 86400000).toISOString(), isTelehealth: false }))?.id;
+      // confirmDoubleBook: fixture ignores the 8-visit/day capacity guard.
+      const visitId = (await api("POST", "/api/visits", { patientId, clinicianUserId: me.userId, visitType: "established_patient_home", scheduledStart: new Date(Date.now() + 86400000).toISOString(), isTelehealth: false, confirmDoubleBook: true }))?.id;
       await api("PATCH", `/api/visits/${visitId}/document`, { totalMinutes: 45, documentText: "note", cptCodesAssigned: ["99349"], icd10Codes: ["Z51.5"] });
       const superbillId = (await api("POST", `/api/visits/${visitId}/superbill`))?.id;
       const denialId = (await api("POST", "/api/denials", { superbillId, cptCode: "99349", carcCode: "16", denialReason: "lacks info", deniedAmountCents: 15000, deniedAt: new Date().toISOString() }))?.id;

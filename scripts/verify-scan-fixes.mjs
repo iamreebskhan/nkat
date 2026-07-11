@@ -57,7 +57,8 @@ async function ensurePatient() {
   })).j?.data?.id;
 }
 const patientId = await ensurePatient();
-const visitId = (await req("POST", "/api/visits", { patientId, clinicianUserId: me.userId, visitType: "established_patient_home", scheduledStart: new Date(Date.now() + 86400_000).toISOString(), isTelehealth: false })).j?.data?.id;
+// confirmDoubleBook: fixture ignores the 8-visit/day capacity guard.
+const visitId = (await req("POST", "/api/visits", { patientId, clinicianUserId: me.userId, visitType: "established_patient_home", scheduledStart: new Date(Date.now() + 86400_000).toISOString(), isTelehealth: false, confirmDoubleBook: true })).j?.data?.id;
 await req("PATCH", `/api/visits/${visitId}/document`, { totalMinutes: 45, documentText: "note", cptCodesAssigned: ["99349"], icd10Codes: ["Z51.5"] });
 const superbillId = (await req("POST", `/api/visits/${visitId}/superbill`)).j?.data?.id;
 
