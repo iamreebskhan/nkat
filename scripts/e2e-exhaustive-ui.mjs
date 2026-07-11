@@ -153,9 +153,15 @@ async function crawlPage(page, path, tag) {
   ok("demo login", true);
 
   // ── seed deterministic detail-page targets via the authenticated session ──
+  // Seeding failures must be LOUD: a silent 4xx here previously left ids
+  // undefined and the crawl hit /visits/undefined/… as phantom failures.
   const api = async (m, p, data) => {
     const r = await page.request.fetch(`${BASE}${p}`, { method: m, ...(data ? { data } : {}) });
-    return (await r.json().catch(() => null))?.data;
+    const j = await r.json().catch(() => null);
+    if (!r.ok() || j?.success === false) {
+      info(`seed step ${m} ${p} → ${r.status()} ${String(j?.error ?? "").slice(0, 90)}`);
+    }
+    return j?.data;
   };
   const me = await api("GET", "/api/auth/me");
   const payers = (await api("GET", "/api/billing/payers"))?.payers || [];
@@ -163,19 +169,27 @@ async function crawlPage(page, path, tag) {
   const patients = (await api("GET", "/api/patients?limit=200"))?.rows || [];
   const patientId = patients.find((p) => p.firstName === "Ada")?.id || patients[0]?.id;
   // a visit ~tomorrow so the schedule week-grid has a draggable card
+  // confirmDoubleBook: fixtures deliberately ignore the 8-visit/day capacity
+  // guard — weeks of harness runs stack visits on the demo clinician's
+  // "tomorrow", and crossing the cap made seeding 409 silently.
   const visitId = (await api("POST", "/api/visits", {
     patientId, clinicianUserId: me.userId, visitType: "established_patient_home",
     scheduledStart: new Date(Date.now() + 26 * 3600_000).toISOString(), isTelehealth: false,
+    confirmDoubleBook: true,
   }))?.id;
   await api("PATCH", `/api/visits/${visitId}/document`, { totalMinutes: 45, documentText: "crawl", cptCodesAssigned: ["99349"], icd10Codes: ["Z51.5"] });
   const superbillId = (await api("POST", `/api/visits/${visitId}/superbill`))?.id;
   const denialId = (await api("POST", "/api/denials", { superbillId, cptCode: "99349", carcCode: "16", denialReason: "crawl", deniedAmountCents: 1000, deniedAt: new Date().toISOString() }))?.id;
-  ok("seeded detail targets", !!(patientId && visitId && denialId), `patient=${(patientId || "").slice(0, 8)} visit=${(visitId || "").slice(0, 8)} denial=${(denialId || "").slice(0, 8)}`);
+  const seeded = !!(patientId && visitId && denialId);
+  ok("seeded detail targets", seeded, `patient=${(patientId || "").slice(0, 8)} visit=${(visitId || "").slice(0, 8)} denial=${(denialId || "").slice(0, 8)}`);
+  if (!seeded) hard.push(`seeding failed — see the seed-step lines above; detail pages skipped`);
 
+  // Only crawl detail pages whose id actually exists — /visits/undefined/…
+  // would just probe the API's bad-id handling, not the pages under test.
   const DETAIL_PAGES = [
-    `/patients/${patientId}`, `/patients/${patientId}/care-plan`,
-    `/visits/${visitId}/document`, `/visits/${visitId}/superbill`,
-    `/billing/denials/${denialId}`,
+    ...(patientId ? [`/patients/${patientId}`, `/patients/${patientId}/care-plan`] : []),
+    ...(visitId ? [`/visits/${visitId}/document`, `/visits/${visitId}/superbill`] : []),
+    ...(denialId ? [`/billing/denials/${denialId}`] : []),
   ];
 
   // ── 1. crawl every user page ──────────────────────────────────────────
@@ -193,6 +207,7 @@ async function crawlPage(page, path, tag) {
     await api("POST", "/api/visits", {
       patientId, clinicianUserId: me.userId, visitType: "established_patient_home",
       scheduledStart: new Date(Date.now() + 2 * 3600_000).toISOString(), isTelehealth: false,
+      confirmDoubleBook: true,
     });
     await page.goto(`${BASE}/schedule`);
     await page.waitForLoadState("networkidle").catch(() => {});
