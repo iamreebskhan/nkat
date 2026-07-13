@@ -7,8 +7,8 @@
  */
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,24 +19,18 @@ interface PayerOption {
 }
 
 export default function NewAttestationPage() {
-  return (
-    <Suspense fallback={null}>
-      <NewAttestationInner />
-    </Suspense>
-  );
-}
-
-function NewAttestationInner() {
   const router = useRouter();
-  const params = useSearchParams();
-  const requestId = params.get("requestId");
+  // ?requestId / ?state / ?cptCode / ?attribute are read client-side (below) to
+  // prefill from an inbox deep-link. Avoiding useSearchParams keeps the page off
+  // a Suspense boundary that can stall on cold load and leave it blank.
+  const [requestId, setRequestId] = useState<string | null>(null);
 
   const [payers, setPayers] = useState<PayerOption[]>([]);
   const [form, setForm] = useState({
     payerId: "",
-    state: params.get("state") ?? "",
-    cptCode: params.get("cptCode") ?? "",
-    attribute: params.get("attribute") ?? "coverage",
+    state: "",
+    cptCode: "",
+    attribute: "coverage",
     coverageStatus: "covered" as "covered" | "not_covered" | "varies" | "unknown",
     payerRepName: "",
     payerRepId: "",
@@ -48,6 +42,18 @@ function NewAttestationInner() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Read deep-link params from the URL on mount and prefill the form.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    setRequestId(p.get("requestId"));
+    setForm((f) => ({
+      ...f,
+      state: p.get("state") ?? f.state,
+      cptCode: p.get("cptCode") ?? f.cptCode,
+      attribute: p.get("attribute") ?? f.attribute,
+    }));
+  }, []);
 
   // Claim the request the moment the analyst opens it from the queue, so it
   // transitions open → in_progress and surfaces on their inbox as "being

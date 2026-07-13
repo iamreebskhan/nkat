@@ -7,24 +7,22 @@
  */
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import type { VisitView } from "@/lib/features/visits/visit.types";
 
 export default function PrintRoutePage() {
-  return (
-    <Suspense fallback={null}>
-      <PrintInner />
-    </Suspense>
-  );
-}
-
-function PrintInner() {
-  const params = useSearchParams();
-  const date = params.get("date") ?? new Date().toISOString().slice(0, 10);
+  // ?date=YYYY-MM-DD read client-side (below), defaulting to today. Avoiding
+  // useSearchParams keeps this off a Suspense boundary that can stall on a cold
+  // load — relevant here because the page is opened in a fresh tab to print.
+  const [date, setDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [visits, setVisits] = useState<VisitView[]>([]);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const d = new URLSearchParams(window.location.search).get("date");
+    if (d) setDate(d);
+  }, []);
 
   useEffect(() => {
     fetch("/api/visits?status=scheduled&limit=200")
