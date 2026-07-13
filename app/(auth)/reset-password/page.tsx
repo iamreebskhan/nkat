@@ -1,35 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
 export default function ResetPasswordPage() {
-  // useSearchParams must run inside a Suspense boundary so the page
-  // can statically prerender and bail to client when the URL is read.
-  return (
-    <Suspense fallback={null}>
-      <ResetPasswordInner />
-    </Suspense>
-  );
-}
-
-function ResetPasswordInner() {
   const router = useRouter();
-  const params = useSearchParams();
-  const token = params.get("token") ?? "";
+  // Read ?token= client-side. useSearchParams would force this under a Suspense
+  // boundary that can stall on a cold load and leave the page blank — the worst
+  // outcome for a reset link a user clicks straight from their email. null =
+  // "not yet read" so we show a neutral state instead of flashing "Invalid".
+  const [token, setToken] = useState<string | null>(null);
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
+  useEffect(() => {
+    setToken(new URLSearchParams(window.location.search).get("token") ?? "");
+  }, []);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!token) return;
     if (pw !== pw2) {
       setError("Passwords don't match.");
       return;
@@ -48,6 +46,17 @@ function ResetPasswordInner() {
     }
     setDone(true);
     setTimeout(() => router.push("/login"), 1500);
+  }
+
+  if (token === null) {
+    return (
+      <Card className="w-full max-w-md mx-auto">
+        <CardContent className="p-8">
+          <h1 className="font-display text-2xl tracking-tight">Set a new password</h1>
+          <p className="text-sm text-slate-500 mt-3">Verifying your reset link…</p>
+        </CardContent>
+      </Card>
+    );
   }
 
   if (!token || !/^[a-f0-9]{64}$/i.test(token)) {
