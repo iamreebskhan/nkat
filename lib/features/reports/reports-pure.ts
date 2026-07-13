@@ -14,6 +14,8 @@ export interface DenialRowLike {
   decision: string;
   outcome: string;
   deniedAt: Date | string;
+  /** The claim this denial is against — used to dedupe re-denials of the same claim. */
+  superbillId: string | null;
 }
 
 export interface SuperbillRowLike {
@@ -64,19 +66,25 @@ export function denialRateTrend(args: {
   return days.map((day) => {
     const billed = billedByDay.get(day) ?? 0;
     const denied = deniedByDay.get(day) ?? 0;
-    return {
-      date: day,
-      // Express as percentage (0–100). Zero when no claims that day.
-      value: billed > 0 ? Math.round((denied / billed) * 10000) / 100 : 0,
-    };
+    // Percentage (0–100), clamped: a rate is bounded at 100%. Denials and
+    // their originating superbills fall on different days (a claim is denied
+    // days after billing), so per-day denied$/billed$ can spike past 100%
+    // without the clamp — which reads as a broken metric rather than signal.
+    const raw = billed > 0 ? (denied / billed) * 100 : 0;
+    return { date: day, value: Math.round(Math.min(100, raw) * 100) / 100 };
   });
 }
 
 export interface DenialByPayer {
   payerId: string | null;
+  /** Number of denial events (a re-denied claim counts each time). */
   count: number;
   deniedCents: number;
-  /** Ratio of denials to total claims for the payer, 0..1. */
+  /**
+   * Denial rate for the payer, 0..1: DISTINCT claims denied ÷ claims
+   * submitted, clamped. Deduping by claim keeps a claim that was denied,
+   * refiled and denied again from inflating the rate past 100%.
+   */
   rate: number;
 }
 
@@ -86,33 +94,30 @@ export function denialsByPayer(args: {
 }): DenialByPayer[] {
   const byPayer = new Map<
     string | null,
-    { count: number; deniedCents: number; submittedCount: number }
+    { count: number; deniedCents: number; submittedCount: number; deniedClaims: Set<string> }
   >();
+  const ensure = (payerId: string | null) => {
+    let e = byPayer.get(payerId);
+    if (!e) { e = { count: 0, deniedCents: 0, submittedCount: 0, deniedClaims: new Set() }; byPayer.set(payerId, e); }
+    return e;
+  };
   for (const sb of args.superbills) {
-    const e = byPayer.get(sb.payerId) ?? {
-      count: 0,
-      deniedCents: 0,
-      submittedCount: 0,
-    };
+    const e = ensure(sb.payerId);
     if (sb.status !== "draft" && sb.status !== "voided") e.submittedCount++;
-    byPayer.set(sb.payerId, e);
   }
   for (const d of args.denials) {
-    const e = byPayer.get(d.payerId) ?? {
-      count: 0,
-      deniedCents: 0,
-      submittedCount: 0,
-    };
+    const e = ensure(d.payerId);
     e.count++;
     e.deniedCents += d.deniedAmountCents;
-    byPayer.set(d.payerId, e);
+    // Distinct claims; fall back to a per-event key when superbillId is absent.
+    e.deniedClaims.add(d.superbillId ?? `evt:${e.count}`);
   }
   return Array.from(byPayer.entries())
     .map(([payerId, v]) => ({
       payerId,
       count: v.count,
       deniedCents: v.deniedCents,
-      rate: v.submittedCount > 0 ? v.count / v.submittedCount : 0,
+      rate: v.submittedCount > 0 ? Math.min(1, v.deniedClaims.size / v.submittedCount) : 0,
     }))
     .sort((a, b) => b.deniedCents - a.deniedCents);
 }
@@ -144,7 +149,9 @@ export function revenueSummary(superbills: SuperbillRowLike[]): RevenueSummary {
     billedCents: billed,
     paidCents: paid,
     outstandingCents: outstanding,
-    collectionRate: billed > 0 ? paid / billed : 0,
+    // Clamped [0,1] like the denial rate: an overpayment/recoupment can push
+    // paid past billed, and a >100% "collection rate" reads as a broken metric.
+    collectionRate: billed > 0 ? Math.min(1, paid / billed) : 0,
   };
 }
 

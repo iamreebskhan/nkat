@@ -31,10 +31,30 @@ interface PatientOption { id: string; firstName: string; lastName: string }
 interface MemberOption  { userId: string; email: string; fullName: string | null }
 
 export default function SchedulePage() {
+  // A real fallback (not null): ScheduleInner needs a Suspense boundary for
+  // useSearchParams, and a null fallback renders a blank page until the client
+  // bundle hydrates — jarring on a cold load / slow network. Show the header +
+  // a skeleton instead.
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<ScheduleSkeleton />}>
       <ScheduleInner />
     </Suspense>
+  );
+}
+
+function ScheduleSkeleton() {
+  // Match ScheduleInner's header (px-8 py-8, text-3xl) so the skeleton→content
+  // swap doesn't visibly shift the heading.
+  return (
+    <div className="px-8 py-8">
+      <h1 className="font-display text-3xl tracking-tight">Schedule</h1>
+      <p className="text-slate-500 mt-1">Loading your week…</p>
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-7 gap-2">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <div key={i} className="rounded-md border border-slate-200 min-h-48 animate-pulse bg-slate-50" />
+        ))}
+      </div>
+    </div>
   );
 }
 

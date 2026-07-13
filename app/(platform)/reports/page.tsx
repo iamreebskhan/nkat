@@ -115,7 +115,7 @@ export default function ReportsPage() {
                 <tbody className="divide-y divide-slate-100">
                   {data.denialsByPayer.slice(0, 8).map((p) => (
                     <tr key={p.payerId ?? "null"}>
-                      <td className="py-2 text-slate-700">{p.payerId?.slice(0, 8) ?? "—"}</td>
+                      <td className="py-2 text-slate-700">{p.payerName ?? p.payerId?.slice(0, 8) ?? "—"}</td>
                       <td className="py-2 text-right tabular">{p.count}</td>
                       <td className="py-2 text-right tabular font-medium">
                         ${(p.deniedCents / 100).toFixed(0)}
@@ -142,7 +142,7 @@ export default function ReportsPage() {
               <ul className="space-y-2">
                 {data.visitVolume.slice(0, 8).map((v) => (
                   <li key={v.clinicianUserId} className="flex items-center justify-between text-sm">
-                    <span className="text-slate-700">{v.clinicianUserId.slice(0, 8)}</span>
+                    <span className="text-slate-700">{v.clinicianName ?? v.clinicianUserId.slice(0, 8)}</span>
                     <span className="tabular font-medium">{v.count}</span>
                   </li>
                 ))}

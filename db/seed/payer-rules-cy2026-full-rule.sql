@@ -648,6 +648,16 @@ SELECT
 FROM _cy2026_rules r
 CROSS JOIN (VALUES ('OH'),('NC'),('SC')) AS s(state);
 
+-- 6. Mark the source document as extracted so /documents shows it correctly
+-- (it produced the rules above; it didn't go through the live pipeline).
+UPDATE source_document
+   SET extracted_at = COALESCE(extracted_at, now()),
+       extraction_candidate_count = (
+         SELECT count(*)::int FROM payer_rule
+         WHERE source_doc_id = 'b0000000-0000-4000-8000-000000002026'::uuid
+       )
+ WHERE id = 'b0000000-0000-4000-8000-000000002026'::uuid;
+
 COMMIT;
 
 -- Verify.
