@@ -20,9 +20,9 @@ import {
 export interface ReportsOverview {
   range: { fromDate: string; toDate: string };
   denialRateTrend: DailyDataPoint[];
-  denialsByPayer: DenialByPayer[];
+  denialsByPayer: (DenialByPayer & { payerName: string | null })[];
   revenue: RevenueSummary;
-  visitVolume: { clinicianUserId: string; count: number }[];
+  visitVolume: { clinicianUserId: string; clinicianName: string | null; count: number }[];
   ruleCoverage: RuleCoverageSummary;
 }
 
@@ -49,10 +49,11 @@ export async function getOverview(args: {
         decision: string;
         outcome: string;
         denied_at: Date;
+        superbill_id: string | null;
       }[]
     >`
       SELECT carc_code, payer_id, cpt_code,
-             denied_amount_cents, decision, outcome, denied_at
+             denied_amount_cents, decision, outcome, denied_at, superbill_id
       FROM superbill_denial
       WHERE denied_at BETWEEN ${fromDate}::timestamptz AND ${toDate}::timestamptz
     `;
@@ -64,6 +65,7 @@ export async function getOverview(args: {
       decision: d.decision,
       outcome: d.outcome,
       deniedAt: d.denied_at,
+      superbillId: d.superbill_id,
     }));
 
     const superbills = await tx.$queryRaw<
@@ -116,6 +118,31 @@ export async function getOverview(args: {
     `;
     const rbRows = rb.map((r) => ({ coverageStatus: r.coverage_status }));
 
+    const byPayer = denialsByPayer({ superbills: sbRows, denials: denialRows });
+    const volume = visitVolumeByClinician(visitRows);
+
+    // Resolve ids → display names so the tables don't show raw UUIDs.
+    // payer is a global reference table; app_user is global too — both are
+    // fine to read without an org GUC. (Names shown are of this org's own
+    // clinicians / the payers on this org's claims.)
+    const payerIds = byPayer.map((p) => p.payerId).filter((v): v is string => !!v);
+    const payerNames = new Map<string, string>();
+    if (payerIds.length > 0) {
+      const rows = await tx.$queryRaw<{ id: string; name: string }[]>`
+        SELECT id::text AS id, name FROM payer WHERE id = ANY(${payerIds}::uuid[])
+      `;
+      for (const r of rows) payerNames.set(r.id, r.name);
+    }
+    const clinicianIds = volume.map((v) => v.clinicianUserId);
+    const clinicianNames = new Map<string, string>();
+    if (clinicianIds.length > 0) {
+      const rows = await tx.$queryRaw<{ id: string; name: string | null }[]>`
+        SELECT id::text AS id, COALESCE(full_name, email) AS name
+        FROM app_user WHERE id = ANY(${clinicianIds}::uuid[])
+      `;
+      for (const r of rows) clinicianNames.set(r.id, r.name ?? "");
+    }
+
     return {
       range: {
         fromDate: fromDate.toISOString().slice(0, 10),
@@ -127,9 +154,15 @@ export async function getOverview(args: {
         fromDate,
         toDate,
       }),
-      denialsByPayer: denialsByPayer({ superbills: sbRows, denials: denialRows }),
+      denialsByPayer: byPayer.map((p) => ({
+        ...p,
+        payerName: p.payerId ? payerNames.get(p.payerId) ?? null : null,
+      })),
       revenue: revenueSummary(sbRows),
-      visitVolume: visitVolumeByClinician(visitRows),
+      visitVolume: volume.map((v) => ({
+        ...v,
+        clinicianName: clinicianNames.get(v.clinicianUserId) || null,
+      })),
       ruleCoverage: ruleCoverage(rbRows),
     };
   });
