@@ -10,8 +10,8 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -30,38 +30,16 @@ import {
 interface PatientOption { id: string; firstName: string; lastName: string }
 interface MemberOption  { userId: string; email: string; fullName: string | null }
 
-export default function SchedulePage() {
-  // A real fallback (not null): ScheduleInner needs a Suspense boundary for
-  // useSearchParams, and a null fallback renders a blank page until the client
-  // bundle hydrates — jarring on a cold load / slow network. Show the header +
-  // a skeleton instead.
-  return (
-    <Suspense fallback={<ScheduleSkeleton />}>
-      <ScheduleInner />
-    </Suspense>
-  );
-}
-
-function ScheduleSkeleton() {
-  // Match ScheduleInner's header (px-8 py-8, text-3xl) so the skeleton→content
-  // swap doesn't visibly shift the heading.
-  return (
-    <div className="px-8 py-8">
-      <h1 className="font-display text-3xl tracking-tight">Schedule</h1>
-      <p className="text-slate-500 mt-1">Loading your week…</p>
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-7 gap-2">
-        {Array.from({ length: 7 }).map((_, i) => (
-          <div key={i} className="rounded-md border border-slate-200 min-h-48 animate-pulse bg-slate-50" />
-        ))}
-      </div>
-    </div>
-  );
-}
-
 interface ExternalBusy { summary: string; start: string; end: string; userId: string | null }
 interface TimeOffEntry { id: string; clinicianUserId: string; clinicianName: string | null; startDate: string; endDate: string; reason: string | null }
 
-function ScheduleInner() {
+// NB: this page deliberately does NOT use next/navigation's useSearchParams.
+// That hook forces the component under a Suspense boundary and defers it to
+// the client; on a cold load the boundary could stall on its fallback, leaving
+// the page blank. The only query param we need (?patientId=) is read from
+// window.location in a mount effect below — purely to pre-open the composer —
+// so the page renders its full chrome server-side/immediately, every time.
+export default function SchedulePage() {
   const [visits, setVisits] = useState<VisitView[]>([]);
   const [externalBusy, setExternalBusy] = useState<ExternalBusy[]>([]);
   const [timeOff, setTimeOff] = useState<TimeOffEntry[]>([]);
@@ -73,8 +51,18 @@ function ScheduleInner() {
   const [weekStart, setWeekStart] = useState<Date>(() => mondayOf(new Date()));
 
   const router = useRouter();
-  const params = useSearchParams();
-  const preselectPatientId = params.get("patientId") ?? "";
+  const [preselectPatientId, setPreselectPatientId] = useState("");
+
+  // Read ?patientId= client-side (see note on the component above). Runs once
+  // on mount; opens the composer pre-filled when arriving from a patient's
+  // "Schedule visit" link.
+  useEffect(() => {
+    const pid = new URLSearchParams(window.location.search).get("patientId");
+    if (pid) {
+      setPreselectPatientId(pid);
+      setComposing(true);
+    }
+  }, []);
 
   const days = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
@@ -109,9 +97,8 @@ function ScheduleInner() {
 
   useEffect(() => {
     void reload();
-    if (preselectPatientId) setComposing(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preselectPatientId, weekStart]);
+  }, [weekStart]);
 
   async function reschedule(visitId: string, dayIso: string, originalIso: string | null) {
     // Keep the original time-of-day, move to the dropped day.
