@@ -22,6 +22,7 @@ import type { JSONContent } from "@tiptap/react";
 
 import { RuleSidebar } from "@/components/billing/rule-sidebar";
 import { TipTapEditor } from "@/components/editor/tiptap-editor";
+import { EncounterRecorder } from "@/components/visits/encounter-recorder";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -62,6 +63,10 @@ export default function VisitDocumentPage({
 
   // Local form state
   const [doc, setDoc] = useState<Doc>(null);
+  // TipTap only reads `content` at mount, so loading a drafted note means
+  // remounting the editor. Bumping the key does that without losing anything
+  // the clinician typed — the draft replaces the body deliberately.
+  const [docKey, setDocKey] = useState(0);
   const [startTime, setStartTime] = useState<string>("");
   const [stopTime, setStopTime] = useState<string>("");
   const [acpMinutes, setAcpMinutes] = useState<number>(0);
@@ -290,6 +295,7 @@ export default function VisitDocumentPage({
             </CardHeader>
             <CardContent>
               <TipTapEditor
+                key={docKey}
                 initial={doc ?? undefined}
                 onChange={(d) => setDoc(d)}
                 onBlurSave={() => save()}
@@ -297,6 +303,16 @@ export default function VisitDocumentPage({
               />
             </CardContent>
           </Card>
+
+          <EncounterRecorder
+            visitId={id}
+            initialTranscript={visit.transcript}
+            initialEngine={visit.transcriptEngine}
+            onNoteDrafted={(note) => {
+              setDoc(textToDoc(note));
+              setDocKey((k) => k + 1);
+            }}
+          />
         </div>
 
         <aside className="space-y-4">
@@ -572,4 +588,43 @@ function parseDoc(text: string | null): Doc {
 
 function prettyVisitType(t: VisitType): string {
   return t.replace(/_/g, " ");
+}
+
+/**
+ * Plain-text draft → TipTap JSON. The drafter emits SUBJECTIVE / OBJECTIVE /
+ * ASSESSMENT / PLAN headings; render those as H2 so the note reads like the
+ * rest of the chart rather than one undifferentiated block.
+ */
+function textToDoc(text: string): JSONContent {
+  const content: JSONContent[] = [];
+  for (const raw of text.split(/\n{2,}/)) {
+    const block = raw.trim();
+    if (!block) continue;
+    const heading = block.match(/^([A-Z][A-Z /]{2,})\s*[:—-]?\s*$/);
+    if (heading) {
+      content.push({
+        type: "heading",
+        attrs: { level: 2 },
+        content: [{ type: "text", text: titleCase(heading[1].trim()) }],
+      });
+      continue;
+    }
+    // "HEADING — body" on one line: split it so the heading still stands out.
+    const inline = block.match(/^([A-Z][A-Z /]{2,})\s*[:—-]\s*([\s\S]+)$/);
+    if (inline) {
+      content.push({
+        type: "heading",
+        attrs: { level: 2 },
+        content: [{ type: "text", text: titleCase(inline[1].trim()) }],
+      });
+      content.push({ type: "paragraph", content: [{ type: "text", text: inline[2].trim() }] });
+      continue;
+    }
+    content.push({ type: "paragraph", content: [{ type: "text", text: block }] });
+  }
+  return { type: "doc", content: content.length ? content : [{ type: "paragraph" }] };
+}
+
+function titleCase(s: string): string {
+  return s.charAt(0) + s.slice(1).toLowerCase();
 }

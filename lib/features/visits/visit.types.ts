@@ -83,6 +83,14 @@ export interface VisitView {
   telehealthModality: TelehealthModality | null;
   telehealthConsentDocumented: boolean;
   documentText: string | null;
+  /**
+   * Verbatim encounter transcript (PHI). Populated by the recorder on the
+   * document screen; the clinical note is drafted from it.
+   */
+  transcript: string | null;
+  transcriptUpdatedAt: string | null;
+  /** Engine that produced it — provenance for PHI-disclosure review. */
+  transcriptEngine: string | null;
   cptCodesAssigned: string[];
   icd10Codes: string[];
   modifiers: string[];

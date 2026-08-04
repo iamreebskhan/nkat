@@ -30,6 +30,9 @@ interface VisitRow {
   telehealth_modality: string | null;
   telehealth_consent_documented: boolean | null;
   document_text: string | null;
+  transcript?: string | null;
+  transcript_updated_at?: Date | null;
+  transcript_engine?: string | null;
   cpt_codes_assigned: string[] | null;
   icd10_codes: string[] | null;
   modifiers: string[] | null;
@@ -61,6 +64,9 @@ function rowToView(row: VisitRow): VisitView {
       (row.telehealth_modality as VisitView["telehealthModality"]) ?? null,
     telehealthConsentDocumented: row.telehealth_consent_documented ?? false,
     documentText: row.document_text,
+    transcript: row.transcript ?? null,
+    transcriptUpdatedAt: row.transcript_updated_at?.toISOString() ?? null,
+    transcriptEngine: row.transcript_engine ?? null,
     cptCodesAssigned: row.cpt_codes_assigned ?? [],
     icd10Codes: row.icd10_codes ?? [],
     modifiers: row.modifiers ?? [],
@@ -112,7 +118,8 @@ export async function getVisit(args: {
              scheduled_start, scheduled_end, start_time, stop_time,
              total_minutes, acp_minutes, prolonged_minutes,
              is_telehealth, telehealth_modality, telehealth_consent_documented,
-             document_text, cpt_codes_assigned, icd10_codes, modifiers,
+             document_text, transcript, transcript_updated_at, transcript_engine,
+             cpt_codes_assigned, icd10_codes, modifiers,
              status, signed_at, created_at, updated_at
       FROM visit
       WHERE id = ${args.id}::uuid
@@ -240,6 +247,33 @@ export async function documentVisit(args: {
         updated_at = now()
       WHERE id = ${args.id}::uuid
     `;
+    return { updated: true };
+  });
+}
+
+/**
+ * Persist an encounter transcript against the visit.
+ *
+ * `engine` is stored alongside the text so a later PHI-disclosure review can
+ * tell where the audio was processed (self-hosted vs a third party).
+ */
+export async function saveTranscript(args: {
+  orgId: string;
+  id: string;
+  transcript: string;
+  engine: string;
+}): Promise<{ updated: boolean }> {
+  return withOrgContext(args.orgId, async (tx) => {
+    const n = await tx.$executeRaw`
+      UPDATE visit SET
+        transcript = ${args.transcript},
+        transcript_updated_at = now(),
+        transcript_engine = ${args.engine},
+        status = CASE WHEN status = 'scheduled' THEN 'in_progress' ELSE status END,
+        updated_at = now()
+      WHERE id = ${args.id}::uuid
+    `;
+    if (n === 0) throw new NotFoundError("Visit not found.");
     return { updated: true };
   });
 }
