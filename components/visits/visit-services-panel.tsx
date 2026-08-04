@@ -34,7 +34,12 @@ const CATEGORY_LABEL: Record<ServiceCategory, string> = {
   other: "Other",
 };
 
-type Selection = { checked: boolean; minutes: string };
+/**
+ * `note` is carried through even though this panel never edits it: the save is
+ * a whole-set replace, so dropping it here would silently wipe any note written
+ * through the API.
+ */
+type Selection = { checked: boolean; minutes: string; note: string | null };
 
 export function VisitServicesPanel({ visitId }: { visitId: string }) {
   const [catalog, setCatalog] = useState<VisitServiceView[]>([]);
@@ -60,6 +65,7 @@ export function VisitServicesPanel({ visitId }: { visitId: string }) {
             next[p.serviceId] = {
               checked: true,
               minutes: p.minutes === null ? "" : String(p.minutes),
+              note: p.note,
             };
           }
           setSelected(next);
@@ -84,6 +90,7 @@ export function VisitServicesPanel({ visitId }: { visitId: string }) {
         .map(([serviceId, s]) => ({
           serviceId,
           minutes: s.minutes.trim() === "" ? null : Number(s.minutes),
+          note: s.note,
         }));
       const r = await fetch(`/api/visits/${visitId}/services`, {
         method: "PUT",
@@ -105,7 +112,7 @@ export function VisitServicesPanel({ visitId }: { visitId: string }) {
 
   function toggle(id: string) {
     setSelected((prev) => {
-      const cur = prev[id] ?? { checked: false, minutes: "" };
+      const cur = prev[id] ?? { checked: false, minutes: "", note: null };
       return { ...prev, [id]: { ...cur, checked: !cur.checked } };
     });
   }
@@ -128,7 +135,10 @@ export function VisitServicesPanel({ visitId }: { visitId: string }) {
         ) : catalog.length === 0 ? (
           <p className="text-slate-600">
             No services in your catalog yet. An administrator can add them under{" "}
-            <a href="/settings" className="text-[var(--color-brand-700)] underline">
+            <a
+              href="/settings/visit-services"
+              className="text-[var(--color-brand-700)] underline"
+            >
               Settings → Visit services
             </a>
             .
@@ -175,7 +185,11 @@ export function VisitServicesPanel({ visitId }: { visitId: string }) {
                           onChange={(e) =>
                             setSelected((prev) => ({
                               ...prev,
-                              [s.id]: { checked: true, minutes: e.target.value },
+                              [s.id]: {
+                                ...(prev[s.id] ?? { note: null }),
+                                checked: true,
+                                minutes: e.target.value,
+                              },
                             }))
                           }
                           placeholder="min"

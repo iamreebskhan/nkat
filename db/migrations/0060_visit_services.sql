@@ -1,5 +1,10 @@
 -- 0060 — services provided against a visit.
 --
+-- (0059 is intentionally absent: it added encounter-transcript columns for a
+-- recording feature that turned out not to be part of Pallio, and was withdrawn.
+-- 0061 drops those columns from any database that did apply it. Migrations run
+-- in filename order, so the gap is harmless — do not renumber this file.)
+--
 -- Client walkthrough [02:28–02:47]: "yahan pe visit types mein jo hai… lekin
 -- koi visit types ke bhi against, agar kuch different types [ki] services
 -- hongi ke is visit mein hum logon ne kya kya un ko help provide karni [hai],
