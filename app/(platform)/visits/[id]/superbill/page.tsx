@@ -54,6 +54,9 @@ export default function SuperbillPage({
   const [draft, setDraft] = useState<SuperbillDraft | null>(null);
   const [persistedId, setPersistedId] = useState<string | null>(null);
   const [patient, setPatient] = useState<PatientView | null>(null);
+  // Coverage rules key on the POLICY's state. Fall back to the address state
+  // for patients recorded before insurance_state existed.
+  const coverageState = patient?.insuranceState ?? patient?.state ?? null;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -210,7 +213,7 @@ export default function SuperbillPage({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             payerId: patient?.primaryPayerId ?? draft?.payerId ?? null,
-            state: patient?.state ?? null,
+            state: coverageState,
             patientId: draft?.patientId,
             dos: dosForPredict,
             cptCodes: currentCptsForPredict,
@@ -230,7 +233,7 @@ export default function SuperbillPage({
     currentCptsForPredict.join(","),
     currentModsForPredict.join(","),
     patient?.primaryPayerId,
-    patient?.state,
+    coverageState,
     draft?.payerId,
   ]);
 
@@ -370,7 +373,7 @@ export default function SuperbillPage({
                       reasons={p.reasons}
                       cptCode={p.code}
                       payerId={patient?.primaryPayerId ?? draft?.payerId}
-                      state={patient?.state}
+                      state={coverageState}
                     />
                   </li>
                 ))}
@@ -433,7 +436,7 @@ export default function SuperbillPage({
         <CardContent>
           <CodePicker
             payerId={patient?.primaryPayerId ?? draft.payerId}
-            state={patient?.state ?? null}
+            state={coverageState}
             selected={currentCpts}
             onChange={(cpt) => setEdits((e) => ({ ...e, cpt }))}
             onOverride={(o) =>
@@ -487,7 +490,7 @@ export default function SuperbillPage({
         <CardContent>
           <RuleSidebar
             payerId={patient?.primaryPayerId ?? draft.payerId}
-            state={patient?.state}
+            state={coverageState}
             cptCodes={currentCpts}
             attribute="covered"
           />
@@ -528,7 +531,89 @@ export default function SuperbillPage({
           {exporting ? "Generating…" : "Export PDF"}
         </Button>
       </div>
+
+      {persistedId && <BillActivity superbillId={persistedId} />}
     </div>
+  );
+}
+
+interface ActivityRow {
+  id: string;
+  at: string;
+  actorName: string | null;
+  kind: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  summary: string;
+}
+
+const KIND_STYLE: Record<string, string> = {
+  created: "bg-slate-100 text-slate-700 ring-slate-500/20",
+  edited: "bg-blue-50 text-blue-800 ring-blue-600/20",
+  status_change: "bg-slate-100 text-slate-700 ring-slate-500/20",
+  denial_logged: "bg-red-50 text-red-800 ring-red-600/30",
+  denial_decision: "bg-amber-50 text-amber-800 ring-amber-600/30",
+  resubmitted: "bg-emerald-50 text-emerald-800 ring-emerald-600/20",
+};
+
+/**
+ * Append-only trail: created → submitted → denied → corrected → resubmitted.
+ * Client walkthrough [06:12]: "activity history lazmi likhna: ke yeh pehle
+ * bill tha, yeh reject hua, aur ab yeh new bill hai."
+ */
+function BillActivity({ superbillId }: { superbillId: string }) {
+  const [rows, setRows] = useState<ActivityRow[] | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/superbills/${superbillId}/activity`)
+      .then((r) => r.json())
+      .then((d) => setRows(d.success ? (d.data?.rows ?? []) : []))
+      .catch(() => setRows([]));
+  }, [superbillId]);
+
+  if (!rows || rows.length === 0) return null;
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle>Activity history</CardTitle>
+        <CardDescription>
+          Every change to this claim, newest first. Append-only — nothing here is
+          ever edited or removed.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <ul className="divide-y divide-slate-100">
+          {rows.map((a) => (
+            <li key={a.id} className="px-4 py-3 flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span
+                    className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset ${
+                      KIND_STYLE[a.kind] ?? "bg-slate-100 text-slate-700 ring-slate-500/20"
+                    }`}
+                  >
+                    {a.kind.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-sm text-slate-800">{a.summary}</span>
+                </div>
+                {a.fromStatus && a.toStatus && a.fromStatus !== a.toStatus && (
+                  <p className="text-xs text-slate-500 mt-0.5 capitalize">
+                    {a.fromStatus.replace(/_/g, " ")} → {a.toStatus.replace(/_/g, " ")}
+                  </p>
+                )}
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-xs text-slate-500 tabular">
+                  {new Date(a.at).toLocaleString()}
+                </p>
+                {a.actorName && <p className="text-xs text-slate-400">{a.actorName}</p>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 

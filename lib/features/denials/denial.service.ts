@@ -85,6 +85,8 @@ function rowToView(r: DenialRow): DenialView {
 export async function logDenial(args: {
   orgId: string;
   payload: LogDenialInput;
+  /** Recorded on the superbill's activity trail. */
+  actorUserId?: string;
 }): Promise<{ id: string }> {
   const { orgId, payload } = args;
   return withOrgContext(orgId, async (tx) => {
@@ -122,6 +124,24 @@ export async function logDenial(args: {
          SET status = 'denied', updated_at = now()
        WHERE id = ${payload.superbillId}::uuid
          AND status IN ('submitted', 'partially_paid')
+    `;
+
+    // The denial is the pivot of the correction loop — put it on the bill's
+    // trail so "this was rejected, and why" reads in one place.
+    await tx.$executeRaw`
+      INSERT INTO superbill_activity (
+        org_id, superbill_id, actor_user_id, kind, to_status, summary, detail
+      ) VALUES (
+        ${orgId}::uuid, ${payload.superbillId}::uuid, ${args.actorUserId ?? null}::uuid,
+        'denial_logged', 'denied',
+        ${`Denied by payer — CARC ${payload.carcCode}${payload.denialReason ? `: ${payload.denialReason}` : ""}`},
+        ${JSON.stringify({
+          carcCode: payload.carcCode,
+          rarcCode: payload.rarcCode ?? null,
+          cptCode: payload.cptCode,
+          deniedAmountCents: payload.deniedAmountCents ?? 0,
+        })}::jsonb
+      )
     `;
 
     return { id: rows[0]!.id };

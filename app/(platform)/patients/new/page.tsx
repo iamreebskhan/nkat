@@ -74,6 +74,21 @@ export default function NewPatientPage() {
     setData((d) => ({ ...d, careTeam: { ...d.careTeam, [key]: value } }));
   }
 
+  // Payer reference list for the Insurance step. The patient's payer is what
+  // every downstream coverage rule keys on, so it must be a real pick — not a
+  // pasted UUID.
+  const [payers, setPayers] = useState<{ id: string; name: string; states: string[] }[]>([]);
+  useEffect(() => {
+    fetch("/api/billing/payers")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.success) return;
+        const list = d.data?.payers ?? d.data?.rows ?? [];
+        setPayers(Array.isArray(list) ? list : []);
+      })
+      .catch(() => undefined);
+  }, []);
+
   // ACTIVE org roster for step 5 — fetched only when the user holds
   // patients.careteam.edit (mirrors the POST gate exactly; roles are
   // display-only). Gating the UI on roster-fetch success alone would let a
@@ -234,22 +249,85 @@ export default function NewPatientPage() {
     {
       key: "insurance",
       title: "Insurance",
-      description: "Primary payer + member ID. We'll use this for rule lookups.",
-      optional: true,
+      description:
+        "Which insurance organization covers this patient, and in which state. This is what Pallio uses to show the right billing codes at the point of care.",
+      // Both empty is allowed (insurance often isn't known at intake). A HALF-set
+      // pair is not: payer-without-state (or the reverse) silently breaks every
+      // coverage lookup, which is worse than knowing nothing.
+      isValid: () =>
+        Boolean(data.insurance.primaryPayerId) === Boolean(data.insurance.insuranceState),
       render: () => {
+        const selectedPayer = payers.find((p) => p.id === data.insurance.primaryPayerId);
+        const noneSet = !data.insurance.primaryPayerId && !data.insurance.insuranceState;
+        const halfSet =
+          Boolean(data.insurance.primaryPayerId) !== Boolean(data.insurance.insuranceState);
         return (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field id="payer-id" label="Primary payer ID" optional hint="UUID — pick from the payer dropdown later">
-              <TextInput
+            {noneSet && (
+              <p className="md:col-span-2 text-sm text-amber-800 bg-amber-50 ring-1 ring-inset ring-amber-600/30 rounded-md px-3 py-2">
+                No insurance yet? You can continue — but until a payer and state
+                are set, Pallio can&rsquo;t show payer-specific coverage rules or
+                flag likely denials for this patient.
+              </p>
+            )}
+            {halfSet && (
+              <p
+                role="alert"
+                className="md:col-span-2 text-sm text-red-700 bg-red-50 ring-1 ring-inset ring-red-600/30 rounded-md px-3 py-2"
+              >
+                Coverage rules need both the organization and the state. Set both,
+                or clear both.
+              </p>
+            )}
+            <Field
+              id="payer-id"
+              label="Insurance organization"
+              hint="Drives every coverage rule we show for this patient."
+            >
+              <Select
                 id="payer-id"
                 value={data.insurance.primaryPayerId ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value || undefined;
+                  setInsurance("primaryPayerId", id);
+                  // Default the policy state to the payer's state when it only
+                  // serves one — saves a keystroke and avoids a mismatched pair.
+                  const p = payers.find((x) => x.id === id);
+                  if (p && p.states.length === 1 && !data.insurance.insuranceState) {
+                    setInsurance("insuranceState", p.states[0]);
+                  }
+                }}
+              >
+                <option value="">Select…</option>
+                {payers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.states.length > 0 ? ` · ${p.states.join("/")}` : ""}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field
+              id="ins-state"
+              label="Coverage state"
+              hint={
+                selectedPayer && selectedPayer.states.length > 0
+                  ? `${selectedPayer.name} covers ${selectedPayer.states.join(", ")}`
+                  : "USPS 2-letter — the state the policy is issued in."
+              }
+            >
+              <TextInput
+                id="ins-state"
+                maxLength={2}
+                placeholder={data.demographics.state ?? "OH"}
+                value={data.insurance.insuranceState ?? ""}
                 onChange={(e) =>
                   setInsurance(
-                    "primaryPayerId",
-                    e.target.value || undefined,
+                    "insuranceState",
+                    e.target.value.toUpperCase() || undefined,
                   )
                 }
-                className="font-mono text-xs"
+                className="uppercase"
               />
             </Field>
             <Field id="mem-id" label="Member ID" optional>

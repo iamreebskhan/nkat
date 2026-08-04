@@ -108,6 +108,8 @@ export async function buildDraftFromVisit(args: {
 export async function persistDraft(args: {
   orgId: string;
   draft: DraftSuperbill;
+  /** Recorded on the activity trail's "created" entry. */
+  actorUserId?: string;
 }): Promise<{ id: string }> {
   const { orgId, draft } = args;
 
@@ -162,7 +164,19 @@ export async function persistDraft(args: {
         updated_at = now()
       RETURNING id
     `;
-    return { id: rows[0]!.id };
+    const id = rows[0]!.id;
+    // First save only — persistDraft is idempotent per visit, so guard on the
+    // trail being empty rather than writing "created" on every re-save.
+    await tx.$executeRaw`
+      INSERT INTO superbill_activity (org_id, superbill_id, actor_user_id, kind, to_status, summary, detail)
+      SELECT ${orgId}::uuid, ${id}::uuid, ${args.actorUserId ?? null}::uuid, 'created', 'draft',
+             'Superbill created from the visit',
+             ${JSON.stringify({ billedAmountCents: draft.billedAmountCents, cptCodes: draft.cptCodes })}::jsonb
+      WHERE NOT EXISTS (
+        SELECT 1 FROM superbill_activity WHERE superbill_id = ${id}::uuid
+      )
+    `;
+    return { id };
   });
 }
 
@@ -298,11 +312,17 @@ export async function updateSuperbill(args: {
       SELECT id, status FROM superbill WHERE id = ${args.id}::uuid LIMIT 1
     `;
     if (!exists[0]) throw new NotFoundError("Superbill not found.");
-    if (exists[0].status !== "draft") {
+    // A DENIED claim must be editable — that is the whole correction loop the
+    // client described (walkthrough 05:48): the payer changed a rule, rejected
+    // the claim, and the nurse fixes the codes and resubmits. 'submitted' stays
+    // locked (it's in flight with the payer) and paid/voided are terminal.
+    const EDITABLE: SuperbillStatus[] = ["draft", "ready_to_submit", "denied"];
+    if (!EDITABLE.includes(exists[0].status)) {
       throw new ValidationError(
-        `Superbill is ${exists[0].status}; only drafts can be edited.`,
+        `Superbill is ${exists[0].status}; only draft, ready-to-submit or denied claims can be edited.`,
       );
     }
+    const statusBefore = exists[0].status;
 
     let touched = false;
     if (args.patch.cptCodes) {
@@ -339,6 +359,35 @@ export async function updateSuperbill(args: {
           )
         `;
       }
+    }
+
+    if (touched) {
+      // Name the fields that changed — after a denial this is the record of
+      // what was actually corrected before resubmission.
+      const changed = [
+        args.patch.cptCodes ? "CPT codes" : null,
+        args.patch.icd10Codes ? "ICD-10 codes" : null,
+        args.patch.modifiers ? "modifiers" : null,
+      ].filter(Boolean);
+      await tx.$executeRaw`
+        INSERT INTO superbill_activity (
+          org_id, superbill_id, actor_user_id, kind, from_status, to_status, summary, detail
+        ) VALUES (
+          ${args.orgId}::uuid, ${args.id}::uuid, ${args.userId}::uuid, 'edited',
+          ${statusBefore}, ${statusBefore},
+          ${
+            statusBefore === "denied"
+              ? `Corrected after denial — updated ${changed.join(", ")}`
+              : `Edited ${changed.join(", ")}`
+          },
+          ${JSON.stringify({
+            cptCodes: args.patch.cptCodes,
+            icd10Codes: args.patch.icd10Codes,
+            modifiers: args.patch.modifiers,
+            overrides: args.overrides ?? [],
+          })}::jsonb
+        )
+      `;
     }
 
     return { updated: touched };
@@ -396,11 +445,36 @@ const STATUS_TRANSITIONS: Record<SuperbillStatus, SuperbillStatus[]> = {
   voided: [],
 };
 
+/** Human-readable line for the activity trail. */
+function statusSummary(
+  from: SuperbillStatus,
+  to: SuperbillStatus,
+  paidAmountCents?: number,
+): string {
+  const money = (c: number) => `$${(c / 100).toFixed(2)}`;
+  if (to === "submitted") {
+    return from === "denied"
+      ? "Resubmitted to the payer after correction"
+      : "Submitted to the payer";
+  }
+  if (to === "paid") {
+    return `Paid in full${paidAmountCents !== undefined ? ` — ${money(paidAmountCents)}` : ""}`;
+  }
+  if (to === "partially_paid") {
+    return `Partially paid${paidAmountCents !== undefined ? ` — ${money(paidAmountCents)}` : ""}`;
+  }
+  if (to === "denied") return "Denied by the payer";
+  if (to === "voided") return "Voided";
+  return `Status changed ${from} → ${to}`;
+}
+
 export async function markStatus(args: {
   orgId: string;
   id: string;
   to: SuperbillStatus;
   paidAmountCents?: number;
+  /** Recorded on the activity trail so the history names who acted. */
+  actorUserId?: string;
 }): Promise<{ from: SuperbillStatus; to: SuperbillStatus }> {
   return withOrgContext(args.orgId, async (tx) => {
     // FOR UPDATE: serialize concurrent transitions on the same superbill —
@@ -433,6 +507,71 @@ export async function markStatus(args: {
         WHERE id = ${args.id}::uuid
       `;
     }
+
+    // Append to the trail inside the same transaction — a status change that
+    // isn't recorded would leave an unexplained gap in an appeal.
+    await tx.$executeRaw`
+      INSERT INTO superbill_activity (
+        org_id, superbill_id, actor_user_id, kind, from_status, to_status, summary, detail
+      ) VALUES (
+        ${args.orgId}::uuid, ${args.id}::uuid, ${args.actorUserId ?? null}::uuid,
+        ${from === "denied" && args.to === "submitted" ? "resubmitted" : "status_change"},
+        ${from}, ${args.to},
+        ${statusSummary(from, args.to, args.paidAmountCents)},
+        ${JSON.stringify(
+          args.paidAmountCents !== undefined ? { paidAmountCents: args.paidAmountCents } : {},
+        )}::jsonb
+      )
+    `;
     return { from, to: args.to };
+  });
+}
+
+export interface SuperbillActivityView {
+  id: string;
+  at: string;
+  actorName: string | null;
+  kind: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  summary: string;
+  detail: Record<string, unknown>;
+}
+
+/** Full append-only trail for one superbill, newest first. */
+export async function listSuperbillActivity(args: {
+  orgId: string;
+  superbillId: string;
+}): Promise<SuperbillActivityView[]> {
+  return withOrgContext(args.orgId, async (tx) => {
+    const rows = await tx.$queryRaw<
+      {
+        id: string;
+        at: Date;
+        actor_name: string | null;
+        kind: string;
+        from_status: string | null;
+        to_status: string | null;
+        summary: string;
+        detail: Record<string, unknown> | null;
+      }[]
+    >`
+      SELECT a.id, a.at, COALESCE(u.full_name, u.email) AS actor_name,
+             a.kind, a.from_status, a.to_status, a.summary, a.detail
+      FROM superbill_activity a
+      LEFT JOIN app_user u ON u.id = a.actor_user_id
+      WHERE a.superbill_id = ${args.superbillId}::uuid
+      ORDER BY a.at DESC, a.id DESC
+    `;
+    return rows.map((r) => ({
+      id: r.id,
+      at: r.at.toISOString(),
+      actorName: r.actor_name,
+      kind: r.kind,
+      fromStatus: r.from_status,
+      toStatus: r.to_status,
+      summary: r.summary,
+      detail: r.detail ?? {},
+    }));
   });
 }

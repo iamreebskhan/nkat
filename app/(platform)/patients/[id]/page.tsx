@@ -201,8 +201,18 @@ export default function PatientDetailPage({
               <CardTitle>Insurance</CardTitle>
             </CardHeader>
             <CardContent className="space-y-1 text-sm text-slate-700">
-              <Row label="Primary payer ID" value={patient.primaryPayerId ?? "—"} mono />
+              <Row
+                label="Insurance organization"
+                value={patient.primaryPayerName ?? (patient.primaryPayerId ? "—" : "Not set")}
+              />
+              <Row label="Coverage state" value={patient.insuranceState ?? patient.state ?? "—"} />
               <Row label="Member ID" value={patient.primaryMemberId ?? "—"} mono />
+              {!patient.primaryPayerId && (
+                <p className="mt-2 text-xs text-amber-800 bg-amber-50 ring-1 ring-inset ring-amber-600/30 rounded px-2 py-1.5">
+                  No payer on file — coverage rules and denial prediction are
+                  unavailable for this patient until one is set.
+                </p>
+              )}
             </CardContent>
           </Card>
           <Card className="md:col-span-2">

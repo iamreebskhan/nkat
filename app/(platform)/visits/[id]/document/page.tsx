@@ -445,7 +445,7 @@ export default function VisitDocumentPage({
             <CardContent>
               <RuleSidebar
                 payerId={patient?.primaryPayerId}
-                state={patient?.state}
+                state={patient?.insuranceState ?? patient?.state}
                 cptCodes={
                   suggestion
                     ? Array.from(
