@@ -12,6 +12,7 @@ import { type InputHTMLAttributes, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import { InfoTip } from "@/components/ui/info-tip";
+import { FieldMarker } from "@/components/forms/field-marker";
 
 type FieldProps = {
   id: string;
@@ -63,22 +64,7 @@ export function Field({
     <div className="space-y-1.5">
       <label htmlFor={id} className="text-sm font-medium text-slate-700">
         {label}
-        {required && (
-          <>
-            <span className="text-red-600 ml-0.5" aria-hidden>
-              *
-            </span>
-            <span className="sr-only"> required</span>
-          </>
-        )}
-        {optional && (
-          <span className="text-slate-500 font-normal ml-1">(optional)</span>
-        )}
-        {recommended && !required && !optional && (
-          <span className="text-[var(--color-brand-700)] font-normal ml-1">
-            (recommended)
-          </span>
-        )}
+        <FieldMarker required={required} optional={optional} recommended={recommended} />
         {(explain ?? hint) && (
           <InfoTip label={typeof label === "string" ? `About ${label}` : "More information"}>
             {explain ?? hint}

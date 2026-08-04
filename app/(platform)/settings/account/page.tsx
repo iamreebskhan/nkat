@@ -1,5 +1,5 @@
 /**
- * /settings/account — your profile + password rotation.
+ * /settings/account Ã¢â‚¬â€ your profile + password rotation.
  */
 "use client";
 
@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { FieldMarker } from "@/components/forms/field-marker";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface Me {
@@ -77,7 +78,7 @@ export default function AccountPage() {
   }
 
   if (!me) {
-    return <div className="px-8 py-8 text-sm text-slate-500">Loading…</div>;
+    return <div className="px-8 py-8 text-sm text-slate-500">LoadingÃ¢â‚¬Â¦</div>;
   }
 
   return (
@@ -85,7 +86,7 @@ export default function AccountPage() {
       <header className="mb-6">
         <h1 className="font-display text-3xl tracking-tight">Account</h1>
         <p className="text-slate-600 mt-1">
-          Your profile, password, and security. <Link href="/settings/security" className="text-[var(--color-brand-700)] underline">MFA & recovery codes →</Link>
+          Your profile, password, and security. <Link href="/settings/security" className="text-[var(--color-brand-700)] underline">MFA & recovery codes Ã¢â€ â€™</Link>
         </p>
       </header>
 
@@ -96,7 +97,7 @@ export default function AccountPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={saveName} className="space-y-4">
-            <Field label="Full name">
+            <Field label="Full name" required>
               <input
                 required
                 value={name}
@@ -106,13 +107,13 @@ export default function AccountPage() {
             </Field>
             <Field label="Email">
               <input value={me.email} readOnly disabled className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-slate-50 text-slate-500" />
-              <p className="text-xs text-slate-500 mt-1">Email changes need org admin approval — not yet self-serve.</p>
+              <p className="text-xs text-slate-500 mt-1">Email changes need org admin approval Ã¢â‚¬â€ not yet self-serve.</p>
             </Field>
             <Field label="Role">
               <input value={me.role.replace("_", " ")} readOnly disabled className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-slate-50 text-slate-500" />
             </Field>
             <Field label="Permissions">
-              <p className="text-xs text-slate-600">{me.permissions.length} grants — managed by org admin in <Link href="/team" className="underline">/team</Link>.</p>
+              <p className="text-xs text-slate-600">{me.permissions.length} grants Ã¢â‚¬â€ managed by org admin in <Link href="/team" className="underline">/team</Link>.</p>
             </Field>
             {me.lastLoginAt && (
               <Field label="Last login">
@@ -126,7 +127,7 @@ export default function AccountPage() {
             )}
             <div className="flex justify-end">
               <Button type="submit" disabled={savingName || name === (me.fullName ?? "")}>
-                {savingName ? "Saving…" : "Save profile"}
+                {savingName ? "SavingÃ¢â‚¬Â¦" : "Save profile"}
               </Button>
             </div>
           </form>
@@ -140,13 +141,13 @@ export default function AccountPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={savePw} className="space-y-4">
-            <Field label="Current password">
+            <Field label="Current password" required>
               <input required type="password" value={cur} onChange={(e) => setCur(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
             </Field>
-            <Field label="New password (min 12 chars)">
+            <Field label="New password (min 12 chars)" required>
               <input required type="password" minLength={12} value={pw1} onChange={(e) => setPw1(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
             </Field>
-            <Field label="Confirm new password">
+            <Field label="Confirm new password" required>
               <input required type="password" minLength={12} value={pw2} onChange={(e) => setPw2(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
             </Field>
             {pwMsg && (
@@ -156,7 +157,7 @@ export default function AccountPage() {
             )}
             <div className="flex justify-end">
               <Button type="submit" disabled={savingPw || !cur || !pw1 || !pw2}>
-                {savingPw ? "Rotating…" : "Rotate password"}
+                {savingPw ? "RotatingÃ¢â‚¬Â¦" : "Rotate password"}
               </Button>
             </div>
           </form>
@@ -166,10 +167,23 @@ export default function AccountPage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  required,
+  optional,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  optional?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-slate-700 mb-1">{label}</span>
+      <span className="block text-xs font-medium text-slate-700 mb-1">
+        {label}
+        <FieldMarker required={required} optional={optional} />
+      </span>
       {children}
     </label>
   );
