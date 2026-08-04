@@ -69,6 +69,21 @@ describe("denialRateTrend", () => {
     });
     expect(series[0].value).toBe(100); // clamped, not 450
   });
+
+  it("keeps draft and voided bills out of the daily denominator", () => {
+    const series = denialRateTrend({
+      superbills: [
+        { payerId: PAYER_A, status: "submitted", billedAmountCents: 100_00, paidAmountCents: null, dateOfService: "2026-05-01" },
+        // If these counted, the denominator would be $1,000 and the rate 2.5%.
+        { payerId: PAYER_A, status: "draft", billedAmountCents: 400_00, paidAmountCents: null, dateOfService: "2026-05-01" },
+        { payerId: PAYER_A, status: "voided", billedAmountCents: 500_00, paidAmountCents: null, dateOfService: "2026-05-01" },
+      ],
+      denials: [denial({ deniedAmountCents: 25_00 })],
+      fromDate: new Date("2026-05-01T00:00:00Z"),
+      toDate: new Date("2026-05-01T00:00:00Z"),
+    });
+    expect(series[0].value).toBe(25);
+  });
 });
 
 describe("denialsByPayer", () => {
@@ -147,6 +162,28 @@ describe("revenueSummary", () => {
 
   it("zero collectionRate when nothing billed", () => {
     expect(revenueSummary([]).collectionRate).toBe(0);
+  });
+
+  // A draft was never raised and a voided bill was cancelled. Counting either
+  // inflates "Billed (30d)" and depresses the collection rate against money
+  // nobody ever asked the payer for.
+  it("excludes draft and voided from billed, paid and the collection rate", () => {
+    const r = revenueSummary([
+      { payerId: PAYER_A, status: "paid", billedAmountCents: 100_00, paidAmountCents: 100_00, dateOfService: "2026-05-01" },
+      { payerId: PAYER_A, status: "draft", billedAmountCents: 500_00, paidAmountCents: null, dateOfService: "2026-05-02" },
+      { payerId: PAYER_A, status: "voided", billedAmountCents: 900_00, paidAmountCents: 50_00, dateOfService: "2026-05-03" },
+    ]);
+    expect(r.billedCents).toBe(100_00);
+    expect(r.paidCents).toBe(100_00);
+    expect(r.collectionRate).toBe(1);
+  });
+
+  it("is all-zero when every bill is a draft", () => {
+    const r = revenueSummary([
+      { payerId: PAYER_A, status: "draft", billedAmountCents: 250_00, paidAmountCents: null, dateOfService: "2026-05-01" },
+    ]);
+    expect(r.billedCents).toBe(0);
+    expect(r.collectionRate).toBe(0);
   });
 });
 

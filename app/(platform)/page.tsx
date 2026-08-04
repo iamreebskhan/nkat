@@ -163,7 +163,11 @@ async function countOpenVisits(orgId: string): Promise<number> {
   return withOrgContext(orgId, async (tx) => {
     const r = await tx.$queryRaw<{ n: bigint }[]>`
       SELECT COUNT(*)::bigint AS n FROM visit
-       WHERE status IN ('scheduled', 'in_progress', 'documented')
+       -- 'pending_billing' belongs here: it's the mandatory waypoint between
+       -- documented and billed, so it IS the "awaiting billing" the subtitle
+       -- promises. Omitting it made this KPI lower than the same buckets on
+       -- /visits, which is exactly the mismatch the client asked us to check.
+       WHERE status IN ('scheduled', 'in_progress', 'documented', 'pending_billing')
     `;
     return Number(r[0]?.n ?? 0);
   }).catch(() => 0);

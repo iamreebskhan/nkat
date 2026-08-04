@@ -55,6 +55,9 @@ export function denialRateTrend(args: {
   const deniedByDay = new Map<string, number>();
 
   for (const sb of args.superbills) {
+    // Same exclusion as revenueSummary: a draft is not a charge and a voided
+    // bill was cancelled, so neither belongs in the rate's denominator.
+    if (sb.status === "draft" || sb.status === "voided") continue;
     const k = isoDay(sb.dateOfService);
     billedByDay.set(k, (billedByDay.get(k) ?? 0) + sb.billedAmountCents);
   }
@@ -136,6 +139,11 @@ export function revenueSummary(superbills: SuperbillRowLike[]): RevenueSummary {
   let paid = 0;
   let outstanding = 0;
   for (const sb of superbills) {
+    // A draft was never raised and a voided bill was cancelled — neither is a
+    // charge. Counting them inflated "Billed" and depressed the collection rate
+    // (paid/billed) against a denominator that included money nobody ever
+    // asked for. `denialsByPayer` above already excludes the same two.
+    if (sb.status === "draft" || sb.status === "voided") continue;
     billed += sb.billedAmountCents;
     paid += sb.paidAmountCents ?? 0;
     if (

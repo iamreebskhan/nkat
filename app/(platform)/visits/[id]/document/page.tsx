@@ -156,6 +156,14 @@ export default function VisitDocumentPage({
     });
   }, [visit, totalMinutes, acpMinutes, providerType, payerCategory, isTelehealth, telehealthModality]);
 
+  // Signed = attested. Past this point the note is frozen and the server
+  // rejects edits; the UI has to agree with it.
+  const locked =
+    visit !== null &&
+    (["documented", "pending_billing", "billed"] as const).includes(
+      visit.status as "documented" | "pending_billing" | "billed",
+    );
+
   if (loading) return <div className="px-8 py-8 text-slate-500">Loading…</div>;
   if (loadError || !visit)
     return (
@@ -172,6 +180,9 @@ export default function VisitDocumentPage({
 
   /** @returns true iff the PATCH persisted — callers must not proceed on false. */
   async function save(): Promise<boolean> {
+    // The server refuses edits to a signed visit; don't let autosave-on-blur
+    // keep firing against it and painting an error over a read-only note.
+    if (locked) return false;
     setSaving(true);
     setError(null);
     try {
@@ -236,7 +247,13 @@ export default function VisitDocumentPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ to: "documented" }),
       });
-      if (!(await t1.json()).success) throw new Error("documented transition failed");
+      // Surface the server's actual message. Swallowing it turned a missing
+      // permission into an opaque "transition failed" with nothing to act on.
+      const d1 = await t1.json();
+      if (!d1.success) {
+        setError(d1.error ?? "Could not sign the visit.");
+        return;
+      }
       const t2 = await fetch(`/api/visits/${id}/transition`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -247,6 +264,9 @@ export default function VisitDocumentPage({
         setError(data.error ?? "Transition failed.");
         return;
       }
+      // Reflect the new status locally so the note locks immediately rather
+      // than only after a reload.
+      setVisit((v) => (v ? { ...v, status: "pending_billing" } : v));
       setSaved(`Submitted ${new Date().toLocaleTimeString()}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Submit failed.");
@@ -274,6 +294,14 @@ export default function VisitDocumentPage({
 
       <MedicareWindowBanner visit={visit} />
 
+      {locked && (
+        <div className="mb-4 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700 ring-1 ring-inset ring-slate-300">
+          Signed{visit.signedAt ? ` ${new Date(visit.signedAt).toLocaleString()}` : ""} and
+          submitted for billing. The documentation is locked — record any change as
+          a new addendum rather than editing an attested note.
+        </div>
+      )}
+
       {error && (
         <p role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
@@ -292,6 +320,7 @@ export default function VisitDocumentPage({
             <CardContent>
               <TipTapEditor
                 initial={doc ?? undefined}
+                readOnly={locked}
                 onChange={(d) => setDoc(d)}
                 onBlurSave={() => save()}
                 placeholder="Document the visit…"
@@ -477,10 +506,10 @@ export default function VisitDocumentPage({
           </p>
         )}
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={save} loading={saving}>
+          <Button variant="secondary" onClick={save} loading={saving} disabled={locked}>
             Save draft
           </Button>
-          <Button onClick={submitForBilling} loading={submitting}>
+          <Button onClick={submitForBilling} loading={submitting} disabled={locked}>
             Sign + submit for billing
           </Button>
         </div>

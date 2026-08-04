@@ -203,8 +203,15 @@ export async function listVisits(args: {
 }
 
 /**
+ * Statuses at or past sign-off. `documented` stamps signed_at, so from that
+ * point the note is attested and frozen.
+ */
+const LOCKED_AFTER_SIGNING: VisitStatus[] = ["documented", "pending_billing", "billed"];
+
+/**
  * Save the clinician's documentation. Recomputes total_minutes from
- * start/stop on every save so the cached value can't drift.
+ * start/stop on every save so the cached value can't drift. Refuses once the
+ * visit has been signed.
  */
 export async function documentVisit(args: {
   orgId: string;
@@ -213,10 +220,19 @@ export async function documentVisit(args: {
 }): Promise<{ updated: boolean }> {
   const p = args.payload;
   return withOrgContext(args.orgId, async (tx) => {
-    const exists = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM visit WHERE id = ${args.id}::uuid LIMIT 1
+    const exists = await tx.$queryRaw<{ id: string; status: VisitStatus }[]>`
+      SELECT id, status FROM visit WHERE id = ${args.id}::uuid LIMIT 1
     `;
     if (exists.length === 0) throw new NotFoundError("Visit not found.");
+    // Signing is an attestation. Once the note is signed and on its way to
+    // billing, silently rewriting it — which the editor's autosave-on-blur
+    // did happily — leaves a claim supported by documentation nobody attested
+    // to. Amendments belong in a follow-up addendum, not an invisible edit.
+    if (LOCKED_AFTER_SIGNING.includes(exists[0]!.status)) {
+      throw new ValidationError(
+        "This visit is signed and submitted for billing — its documentation can no longer be edited.",
+      );
+    }
     const startTs = p.startTime ? new Date(p.startTime) : null;
     const stopTs = p.stopTime ? new Date(p.stopTime) : null;
     const computed = computeTotalMinutes(startTs, stopTs);

@@ -37,7 +37,10 @@ export async function getOverview(args: {
   toDate?: Date;
 }): Promise<ReportsOverview> {
   const toDate = args.toDate ?? new Date();
-  const fromDate = args.fromDate ?? new Date(toDate.getTime() - 30 * 86_400_000);
+  // 29, not 30: enumerateUtcDays is inclusive of both endpoints, so a 30-day
+  // offset produced 31 points and the card rendered "31 days" under a "(30d)"
+  // heading. Today plus the 29 before it is 30 days.
+  const fromDate = args.fromDate ?? new Date(toDate.getTime() - 29 * 86_400_000);
 
   return withOrgContext(args.orgId, async (tx) => {
     const denials = await tx.$queryRaw<

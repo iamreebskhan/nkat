@@ -83,8 +83,14 @@ export async function getBillingOverview(args: {
         COUNT(*) FILTER (WHERE status = 'partially_paid')  AS partially_paid,
         COUNT(*) FILTER (WHERE status = 'denied')          AS denied,
         COUNT(*) FILTER (WHERE status = 'voided')          AS voided,
-        COALESCE(SUM(billed_amount_cents), 0)              AS billed_cents,
-        COALESCE(SUM(paid_amount_cents), 0)                AS paid_cents,
+        -- Money excludes drafts and voided bills: a draft was never raised and
+        -- a voided bill was cancelled, so neither is a charge. The status
+        -- COUNTs above still report them, which is what the pipeline chips
+        -- want; the totals must not.
+        COALESCE(SUM(billed_amount_cents)
+                 FILTER (WHERE status NOT IN ('draft', 'voided')), 0) AS billed_cents,
+        COALESCE(SUM(paid_amount_cents)
+                 FILTER (WHERE status NOT IN ('draft', 'voided')), 0) AS paid_cents,
         COALESCE(SUM(billed_amount_cents - COALESCE(paid_amount_cents, 0))
                  FILTER (WHERE status IN ('submitted', 'partially_paid')), 0) AS outstanding_cents
       FROM superbill
@@ -107,8 +113,10 @@ export async function getBillingOverview(args: {
              TRIM(p.first_name || ' ' || p.last_name) AS patient_name,
              pay.name AS payer_name,
              COUNT(*)                                  AS bills,
-             COALESCE(SUM(s.billed_amount_cents), 0)   AS billed_cents,
-             COALESCE(SUM(s.paid_amount_cents), 0)     AS paid_cents,
+             COALESCE(SUM(s.billed_amount_cents)
+                      FILTER (WHERE s.status NOT IN ('draft', 'voided')), 0) AS billed_cents,
+             COALESCE(SUM(s.paid_amount_cents)
+                      FILTER (WHERE s.status NOT IN ('draft', 'voided')), 0) AS paid_cents,
              COUNT(*) FILTER (WHERE s.status = 'denied') AS denied_count,
              MAX(s.updated_at)                         AS last_activity_at
       FROM superbill s
@@ -138,7 +146,8 @@ export async function getBillingOverview(args: {
              COUNT(*) FILTER (WHERE s.status IN ('submitted', 'paid', 'partially_paid')) AS submitted,
              COUNT(*) FILTER (WHERE s.status = 'paid')   AS paid,
              COUNT(*) FILTER (WHERE s.status = 'denied') AS denied,
-             COALESCE(SUM(s.billed_amount_cents), 0)     AS billed_cents
+             COALESCE(SUM(s.billed_amount_cents)
+                      FILTER (WHERE s.status NOT IN ('draft', 'voided')), 0) AS billed_cents
       FROM superbill s
       JOIN visit v ON v.id = s.visit_id
       LEFT JOIN app_user u ON u.id = v.clinician_user_id
@@ -198,6 +207,66 @@ export interface BillableVisit {
   billedAmountCents: number | null;
 }
 
+export interface BillableClient {
+  patientId: string;
+  name: string;
+  status: string;
+  payerName: string | null;
+  billableVisits: number;
+  unbilledVisits: number;
+}
+
+/**
+ * Clients who actually have a visit worth billing — powers the Create Bill
+ * client dropdown (walkthrough 03:48: "is mein humare paas client selection
+ * add hoga").
+ *
+ * Deliberately NOT the plain patient list. That list defaults to status
+ * 'active', which silently hid discharged and deceased patients — in
+ * palliative care those are the normal end states, and their claims are still
+ * filed well after discharge or death. Keying off billable visits instead of
+ * patient status includes them, and drops active patients with nothing to bill.
+ */
+export async function listBillableClients(args: {
+  orgId: string;
+}): Promise<BillableClient[]> {
+  return withOrgContext(args.orgId, async (tx) => {
+    const rows = await tx.$queryRaw<
+      {
+        patient_id: string;
+        name: string;
+        status: string;
+        payer_name: string | null;
+        billable_visits: bigint;
+        unbilled_visits: bigint;
+      }[]
+    >`
+      SELECT p.id AS patient_id,
+             TRIM(p.first_name || ' ' || p.last_name) AS name,
+             p.status,
+             pay.name AS payer_name,
+             COUNT(v.id)                                     AS billable_visits,
+             COUNT(v.id) FILTER (WHERE s.id IS NULL)         AS unbilled_visits
+      FROM patient p
+      JOIN visit v ON v.patient_id = p.id
+        AND v.status IN ('in_progress', 'documented', 'pending_billing', 'billed')
+      LEFT JOIN superbill s ON s.visit_id = v.id
+      LEFT JOIN payer pay ON pay.id = p.primary_payer_id
+      GROUP BY p.id, p.first_name, p.last_name, p.status, pay.name
+      ORDER BY COUNT(v.id) FILTER (WHERE s.id IS NULL) DESC, name ASC
+      LIMIT 500
+    `;
+    return rows.map((r) => ({
+      patientId: r.patient_id,
+      name: r.name,
+      status: r.status,
+      payerName: r.payer_name,
+      billableVisits: Number(r.billable_visits),
+      unbilledVisits: Number(r.unbilled_visits),
+    }));
+  });
+}
+
 /**
  * Visits for one patient that a bill can be raised against — powers the
  * "Create Bill" flow's appointment dropdown (walkthrough 04:03: "jaise hum
@@ -231,6 +300,11 @@ export async function listBillableVisits(args: {
       LEFT JOIN app_user u ON u.id = v.clinician_user_id
       LEFT JOIN superbill s ON s.visit_id = v.id
       WHERE v.patient_id = ${args.patientId}::uuid
+        -- Only encounters that actually happened. 'cancelled' and 'no_show'
+        -- were never delivered, and 'scheduled' hasn't happened yet — billing
+        -- any of them is a false claim, and the draft would come out at $0
+        -- because there are no coded charges.
+        AND v.status IN ('in_progress', 'documented', 'pending_billing', 'billed')
       ORDER BY COALESCE(v.start_time, v.scheduled_start, v.created_at) DESC
       LIMIT 100
     `;

@@ -21,10 +21,12 @@ import { Button } from "@/components/ui/button";
 import { Field, Select } from "@/components/forms/field";
 
 interface PatientOption {
-  id: string;
-  firstName: string;
-  lastName: string;
-  primaryPayerId: string | null;
+  patientId: string;
+  name: string;
+  status: string;
+  payerName: string | null;
+  billableVisits: number;
+  unbilledVisits: number;
 }
 
 interface BillableVisit {
@@ -55,8 +57,11 @@ export function CreateBillDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Clients with something to bill — not the patient list, which defaults to
+  // active and so hid discharged and deceased clients whose claims are still
+  // being filed.
   useEffect(() => {
-    fetch("/api/patients?limit=200")
+    fetch("/api/billing/billable-clients")
       .then((r) => r.json())
       .then((d) => {
         if (d.success) setPatients(d.data?.rows ?? []);
@@ -125,9 +130,11 @@ export function CreateBillDialog({
             <Select id="cb-patient" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
               <option value="">Select…</option>
               {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.firstName} {p.lastName}
-                  {p.primaryPayerId ? "" : "  (no payer on file)"}
+                <option key={p.patientId} value={p.patientId}>
+                  {p.name}
+                  {p.status !== "active" ? ` · ${p.status}` : ""}
+                  {p.unbilledVisits > 0 ? ` · ${p.unbilledVisits} unbilled` : ""}
+                  {p.payerName ? "" : " · no payer on file"}
                 </option>
               ))}
             </Select>

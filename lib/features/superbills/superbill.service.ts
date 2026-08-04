@@ -36,6 +36,8 @@ interface VisitForSuperbill {
   start_time: Date | null;
   primary_payer_id: string | null;
   primary_member_id: string | null;
+  /** Intake-captured diagnosis — the fallback when the visit carries none. */
+  primary_diagnosis_icd10: string | null;
   npi: string | null;
   full_name: string | null;
 }
@@ -63,6 +65,7 @@ export async function buildDraftFromVisit(args: {
              v.cpt_codes_assigned, v.icd10_codes, v.modifiers,
              v.scheduled_start, v.start_time,
              p.primary_payer_id, p.primary_member_id,
+             p.primary_diagnosis_icd10,
              COALESCE(ob.npi, '') AS npi,
              u.full_name
       FROM visit v
@@ -83,7 +86,16 @@ export async function buildDraftFromVisit(args: {
         patientId: r.patient_id,
         isTelehealth: r.is_telehealth,
         cptCodesAssigned: r.cpt_codes_assigned ?? [],
-        icd10Codes: r.icd10_codes ?? [],
+        // Fall back to the patient's primary diagnosis, captured at intake.
+        // The document screen has no ICD-10 input, so visit.icd10_codes is
+        // empty in practice — without this every claim was born with no
+        // diagnosis, and a claim with no diagnosis is denied by every payer.
+        icd10Codes:
+          r.icd10_codes && r.icd10_codes.length > 0
+            ? r.icd10_codes
+            : r.primary_diagnosis_icd10
+              ? [r.primary_diagnosis_icd10]
+              : [],
         modifiers: r.modifiers ?? [],
         dos: dosDate.toISOString().slice(0, 10),
       },
@@ -491,6 +503,16 @@ export async function markStatus(args: {
       await tx.$executeRaw`
         UPDATE superbill SET status = 'submitted', submitted_at = now(), updated_at = now()
         WHERE id = ${args.id}::uuid
+      `;
+      // Close out the visit too. Submitting the claim is the moment the visit
+      // is genuinely billed; without this nothing ever left 'pending_billing',
+      // so the claims queue never drained and it kept listing visits whose
+      // claims had already been paid. Guarded on the current status so a
+      // refile (denied → submitted) doesn't re-fire on an already-billed visit.
+      await tx.$executeRaw`
+        UPDATE visit SET status = 'billed', updated_at = now()
+        WHERE id = (SELECT visit_id FROM superbill WHERE id = ${args.id}::uuid)
+          AND status = 'pending_billing'
       `;
     } else if (args.to === "paid" || args.to === "partially_paid") {
       await tx.$executeRaw`

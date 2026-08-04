@@ -111,4 +111,28 @@ describe("markStatus", () => {
       expect(calls.some((c) => c.sql.includes("INSERT INTO superbill_activity"))).toBe(false);
     });
   });
+
+  // Nothing used to move a visit out of pending_billing, so the claims queue
+  // never drained and kept listing visits whose claims had already been paid.
+  describe("closing out the visit", () => {
+    it("marks the visit billed when the claim is submitted", async () => {
+      currentStatus = "ready_to_submit";
+      await markStatus({ orgId: ORG, id: SB, to: "submitted" });
+      const upd = calls.find((c) => c.sql.includes("UPDATE visit SET status = 'billed'"));
+      expect(upd).toBeDefined();
+      // Guarded, so a refile can't re-fire on an already-billed visit.
+      expect(upd!.sql).toContain("status = 'pending_billing'");
+    });
+
+    it("leaves the visit alone for every other transition", async () => {
+      currentStatus = "submitted";
+      await markStatus({ orgId: ORG, id: SB, to: "paid", paidAmountCents: 15000 });
+      expect(calls.some((c) => c.sql.includes("UPDATE visit SET"))).toBe(false);
+
+      calls = [];
+      currentStatus = "submitted";
+      await markStatus({ orgId: ORG, id: SB, to: "denied" });
+      expect(calls.some((c) => c.sql.includes("UPDATE visit SET"))).toBe(false);
+    });
+  });
 });
