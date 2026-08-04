@@ -53,14 +53,19 @@ export default async function PlatformHome() {
           subtitle="Currently under care"
           value={activePatients.toLocaleString()}
         />
+        {/* Subtitle matches the query, which also counts 'documented' visits —
+            work that's done but not yet billed. The old "Scheduled or in
+            progress" under-described it. */}
         <KPI
           title="Open visits"
-          subtitle="Scheduled or in progress"
+          subtitle="Scheduled, in progress, or awaiting billing"
           value={openVisits.toLocaleString()}
         />
+        {/* This is charges RAISED, not money received — calling it "Revenue"
+            overstated it. Collected sits in the next tile. */}
         <KPI
-          title="Revenue (30d)"
-          subtitle="Billed"
+          title="Billed (30d)"
+          subtitle="Charges raised"
           value={overview ? `$${(overview.revenue.billedCents / 100).toFixed(0)}` : "—"}
         />
         <KPI

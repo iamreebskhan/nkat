@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Field, Select, TextArea, TextInput } from "@/components/forms/field";
+import { InfoTip } from "@/components/ui/info-tip";
 import { Wizard, type WizardStep } from "@/components/wizard/wizard";
 import {
   CreatePatientSchema,
@@ -282,7 +283,8 @@ export default function NewPatientPage() {
             <Field
               id="payer-id"
               label="Insurance organization"
-              hint="Drives every coverage rule we show for this patient."
+              recommended
+              explain="Pallio uses the payer plus the coverage state to show only the codes that payer accepts, and to warn before a claim is likely to be denied. Without it, coding falls back to unfiltered lists."
             >
               <Select
                 id="payer-id"
@@ -310,6 +312,7 @@ export default function NewPatientPage() {
             <Field
               id="ins-state"
               label="Coverage state"
+              recommended
               hint={
                 selectedPayer && selectedPayer.states.length > 0
                   ? `${selectedPayer.name} covers ${selectedPayer.states.join(", ")}`
@@ -485,7 +488,7 @@ export default function NewPatientPage() {
               checked={data.consents.telehealthConsent}
               onChange={(v) => setConsents("telehealthConsent", v)}
               label="Telehealth consent"
-              hint="Required only if the patient may receive telehealth visits."
+              explain="Required only if the patient may receive telehealth visits. Without it, telehealth visit types can't be billed for this patient."
             />
           </div>
         );
@@ -515,7 +518,7 @@ export default function NewPatientPage() {
         return (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {seats.map(([label, key]) => (
-              <Field key={key} id={`care-team-${key}`} label={label}>
+              <Field key={key} id={`care-team-${key}`} label={label} optional>
                 <Select
                   id={`care-team-${key}`}
                   value={data.careTeam[key] ?? ""}
@@ -573,14 +576,15 @@ function CheckboxRow({
   checked,
   onChange,
   label,
-  hint,
+  explain,
   required,
 }: {
   id: string;
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
-  hint?: string;
+  /** Long explanation — shown from an ⓘ, not inline (walkthrough 02:03). */
+  explain?: string;
   required?: boolean;
 }) {
   return (
@@ -606,8 +610,8 @@ function CheckboxRow({
               <span className="sr-only"> required</span>
             </>
           )}
+          {explain && <InfoTip label={`About ${label}`}>{explain}</InfoTip>}
         </span>
-        {hint && <span className="block text-slate-500 mt-0.5">{hint}</span>}
       </span>
     </label>
   );

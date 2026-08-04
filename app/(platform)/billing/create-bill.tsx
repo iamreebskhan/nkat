@@ -121,7 +121,7 @@ export function CreateBillDialog({
         </div>
 
         <div className="p-6 space-y-4">
-          <Field id="cb-patient" label="Client" hint="Who the bill is for.">
+          <Field id="cb-patient" label="Client" required hint="Who the bill is for.">
             <Select id="cb-patient" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
               <option value="">Select…</option>
               {patients.map((p) => (
@@ -136,6 +136,7 @@ export function CreateBillDialog({
           <Field
             id="cb-visit"
             label="Appointment"
+            required
             hint="Which visit this bill is against."
           >
             <Select

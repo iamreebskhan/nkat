@@ -197,6 +197,11 @@ export default function RulebookPage() {
   if (loading) return <div className="px-8 py-8 text-slate-500">Loading…</div>;
 
   const empty = !rb || rb.rows.length === 0;
+  const ORIGIN_LABEL: Record<string, string> = {
+    generated: "built from Pallio's reference library",
+    uploaded: "built from your uploaded rulebook",
+    merged: "your rulebook reconciled against Pallio's library",
+  };
 
   return (
     <div className="px-8 py-8">
@@ -208,10 +213,13 @@ export default function RulebookPage() {
             reference library or upload your own, reconcile the two, edit,
             and finalize. This is private to your organization.
           </p>
-          <p className="text-slate-500 mt-1 tabular text-xs">
+          {/* Was "v1 · 8 rules · origin: generated" — version/origin jargon
+              aimed at developers. Client walkthrough 04:43 asked for this
+              copy to be cleaned up. */}
+          <p className="text-slate-500 mt-1 text-xs">
             {rb && rb.id
-              ? `v${rb.currentVersion} · ${rb.rows.length} rules · origin: ${rb.origin}`
-              : "Not generated yet"}
+              ? `Version ${rb.currentVersion} · ${rb.rows.length} rule${rb.rows.length === 1 ? "" : "s"} · ${ORIGIN_LABEL[rb.origin] ?? rb.origin}`
+              : "Not built yet"}
             {canAttest && (
               <>
                 {" · "}

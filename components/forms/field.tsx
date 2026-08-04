@@ -11,14 +11,32 @@
 import { type InputHTMLAttributes, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import { InfoTip } from "@/components/ui/info-tip";
 
 type FieldProps = {
   id: string;
   label: ReactNode;
+  /**
+   * Terse format guidance shown inline (e.g. "YYYY-MM-DD"). Keep it short —
+   * anything that reads like a sentence belongs in `explain` instead.
+   */
   hint?: ReactNode;
+  /**
+   * Longer explanation, revealed from an ⓘ next to the label on hover / focus
+   * / click rather than sitting permanently under the field
+   * (client walkthrough 01:16 — "us pe jab click karo to details aa jaate hain").
+   */
+  explain?: ReactNode;
   error?: string;
   required?: boolean;
   optional?: boolean;
+  /**
+   * Not required to save, but the feature won't work without it — e.g. the
+   * insurance payer, which every coverage rule keys on. Marking these
+   * "(optional)" undersells them and leaving them unmarked is inconsistent
+   * (client walkthrough 00:34 — every field should carry a marker).
+   */
+  recommended?: boolean;
   children: ReactNode;
 };
 
@@ -26,9 +44,11 @@ export function Field({
   id,
   label,
   hint,
+  explain,
   error,
   required,
   optional,
+  recommended,
   children,
 }: FieldProps) {
   return (
@@ -45,6 +65,16 @@ export function Field({
         )}
         {optional && (
           <span className="text-slate-500 font-normal ml-1">(optional)</span>
+        )}
+        {recommended && !required && !optional && (
+          <span className="text-[var(--color-brand-700)] font-normal ml-1">
+            (recommended)
+          </span>
+        )}
+        {explain && (
+          <InfoTip label={typeof label === "string" ? `About ${label}` : "More information"}>
+            {explain}
+          </InfoTip>
         )}
       </label>
       {children}
