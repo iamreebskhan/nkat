@@ -54,6 +54,31 @@ export const SetVisitServicesSchema = z.object({
 });
 export type SetVisitServices = z.infer<typeof SetVisitServicesSchema>;
 
+/**
+ * Starter catalog for a brand-new org, so the picker isn't empty on day one.
+ * Mirrors the seed in 0060 — that migration covers orgs that already existed;
+ * this covers every org created after it. Orgs rename, deactivate and extend
+ * these freely.
+ */
+export const DEFAULT_VISIT_SERVICES: {
+  name: string;
+  description: string;
+  category: ServiceCategory;
+  cptHint: string | null;
+  sortOrder: number;
+}[] = [
+  { name: "Symptom management",        description: "Pain, dyspnea, nausea, or other symptom assessment and treatment", category: "clinical",          cptHint: null,    sortOrder: 10 },
+  { name: "Medication reconciliation", description: "Full medication review, deprescribing, adherence check",           category: "clinical",          cptHint: null,    sortOrder: 20 },
+  { name: "Wound care",                description: "Assessment and dressing of pressure injuries or wounds",           category: "clinical",          cptHint: null,    sortOrder: 30 },
+  { name: "Advance care planning",     description: "Goals-of-care discussion, POLST/MOLST, surrogate designation",     category: "psychosocial",      cptHint: "99497", sortOrder: 40 },
+  { name: "Psychosocial support",      description: "Emotional support for the patient; anxiety, depression, distress", category: "psychosocial",      cptHint: null,    sortOrder: 50 },
+  { name: "Caregiver education",       description: "Teaching the family how to provide care between visits",           category: "education",         cptHint: null,    sortOrder: 60 },
+  { name: "Equipment/DME assessment",  description: "Hospital bed, oxygen, mobility aids — need and ordering",          category: "care_coordination", cptHint: null,    sortOrder: 70 },
+  { name: "Referral coordination",     description: "Hospice, home health, specialist, or community-service referral",  category: "care_coordination", cptHint: null,    sortOrder: 80 },
+  { name: "Nutrition support",         description: "Appetite, intake, feeding decisions",                              category: "clinical",          cptHint: null,    sortOrder: 90 },
+  { name: "Spiritual care referral",   description: "Chaplaincy or the patient's own faith community",                  category: "psychosocial",      cptHint: null,    sortOrder: 100 },
+];
+
 export interface VisitServiceView {
   id: string;
   name: string;

@@ -16,8 +16,9 @@
  *   2. Create the app_user row (bcrypt hash).
  *   3. Insert org_member at role='admin', status='active'.
  *   4. Grant the org_admin default permission set.
- *   5. Stamp baa_signed_at on the org if BAA was accepted.
- *   6. Caller signs the session JWT for the new user.
+ *   5. Seed the starter visit-service catalog.
+ *   6. Stamp baa_signed_at on the org if BAA was accepted.
+ *   7. Caller signs the session JWT for the new user.
  */
 import bcrypt from "bcryptjs";
 
@@ -25,6 +26,7 @@ import { prisma, withBreakglass, withOrgContext } from "@/lib/db";
 import {
   ROLE_DEFAULT_PERMISSIONS,
 } from "@/lib/features/team/team.types";
+import { DEFAULT_VISIT_SERVICES } from "@/lib/features/visits/visit-services.service";
 import type { Session } from "@/lib/auth";
 
 const BCRYPT_ROUNDS = 12;
@@ -220,6 +222,16 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
       await tx.$executeRaw`
         INSERT INTO user_permission (org_id, user_id, permission, granted_by_user_id)
         VALUES (${orgId}::uuid, ${userId}::uuid, ${perm}, ${userId}::uuid)
+      `;
+    }
+
+    // Starter service catalog, so the document screen's picker isn't empty on
+    // day one. 0060 seeds orgs that already existed; this covers new ones.
+    for (const s of DEFAULT_VISIT_SERVICES) {
+      await tx.$executeRaw`
+        INSERT INTO visit_service (org_id, name, description, category, cpt_hint, sort_order)
+        VALUES (${orgId}::uuid, ${s.name}, ${s.description}, ${s.category}, ${s.cptHint}, ${s.sortOrder})
+        ON CONFLICT DO NOTHING
       `;
     }
 
