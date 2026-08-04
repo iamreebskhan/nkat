@@ -23,6 +23,7 @@ import type { JSONContent } from "@tiptap/react";
 import { RuleSidebar } from "@/components/billing/rule-sidebar";
 import { TipTapEditor } from "@/components/editor/tiptap-editor";
 import { EncounterRecorder } from "@/components/visits/encounter-recorder";
+import { VisitServicesPanel } from "@/components/visits/visit-services-panel";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -303,6 +304,8 @@ export default function VisitDocumentPage({
               />
             </CardContent>
           </Card>
+
+          <VisitServicesPanel visitId={id} />
 
           <EncounterRecorder
             visitId={id}

@@ -12,6 +12,8 @@ const SECTIONS = [
   { href: "/settings/billing",  title: "Billing",  desc: "Subscription tier, seats, invoice history." },
   // Was missing entirely — the page had zero inbound navigation paths.
   { href: "/settings/integrations", title: "Integrations", desc: "Google Calendar sync and other third-party connections." },
+  // Client walkthrough 02:32 — the org needs to extend the list itself.
+  { href: "/settings/visit-services", title: "Visit services", desc: "The services clinicians can record against a visit." },
   // Moved out of the primary nav into Settings (client walkthrough 05:29).
   { href: "/audit", title: "Audit log", desc: "Append-only record of every action. Rows under 6 years old cannot be deleted." },
   // Rulebook is now a top-level nav item ("Rulebook") — no duplicate door here.

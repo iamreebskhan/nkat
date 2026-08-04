@@ -532,8 +532,57 @@ export default function SuperbillPage({
         </Button>
       </div>
 
+      <ServicesProvided visitId={id} />
+
       {persistedId && <BillActivity superbillId={persistedId} />}
     </div>
+  );
+}
+
+/**
+ * What the clinician recorded as provided on the visit — read-only here.
+ * Client walkthrough [02:36–02:47]. Gives the biller the context behind the
+ * codes without opening the note.
+ */
+function ServicesProvided({ visitId }: { visitId: string }) {
+  const [rows, setRows] = useState<
+    { serviceId: string; name: string; cptHint: string | null; minutes: number | null }[] | null
+  >(null);
+
+  useEffect(() => {
+    fetch(`/api/visits/${visitId}/services`)
+      .then((r) => r.json())
+      .then((d) => setRows(d.success ? d.data.services : []))
+      .catch(() => setRows([]));
+  }, [visitId]);
+
+  if (!rows || rows.length === 0) return null;
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle>Services provided</CardTitle>
+        <CardDescription>Recorded by the clinician on this visit.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ul className="flex flex-wrap gap-2">
+          {rows.map((s) => (
+            <li
+              key={s.serviceId}
+              className="rounded-md bg-slate-50 px-2.5 py-1 text-sm text-slate-700 ring-1 ring-inset ring-slate-200"
+            >
+              {s.name}
+              {s.minutes !== null && (
+                <span className="ml-1.5 tabular text-xs text-slate-500">{s.minutes} min</span>
+              )}
+              {s.cptHint && (
+                <span className="ml-1.5 font-mono text-[11px] text-slate-500">{s.cptHint}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 
