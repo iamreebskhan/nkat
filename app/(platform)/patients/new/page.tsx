@@ -143,7 +143,9 @@ export default function NewPatientPage() {
                 autoComplete="family-name"
               />
             </Field>
-            <Field id="dob" label="Date of birth" required hint="YYYY-MM-DD">
+            {/* No format hint: it's a native date input, so the browser
+                already shows the format. */}
+            <Field id="dob" label="Date of birth" required>
               <TextInput
                 id="dob"
                 type="date"
@@ -194,7 +196,14 @@ export default function NewPatientPage() {
                 autoComplete="address-level2"
               />
             </Field>
-            <Field id="state" label="State" optional hint="USPS 2-letter">
+            {/* The specimen the client selected at [00:59] and told us to
+                delete. The guidance now lives behind the ⓘ. */}
+            <Field
+              id="state"
+              label="State"
+              optional
+              explain="Two-letter USPS abbreviation — Ohio is OH."
+            >
               <TextInput
                 id="state"
                 maxLength={2}
@@ -357,7 +366,7 @@ export default function NewPatientPage() {
                 }
               />
             </Field>
-            <Field id="eff" label="Coverage effective" optional hint="YYYY-MM-DD">
+            <Field id="eff" label="Coverage effective" optional>
               <TextInput
                 id="eff"
                 type="date"

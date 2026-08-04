@@ -29,6 +29,7 @@ interface VisitRow {
 
 interface SuperbillRow {
   id: string;
+  visitId: string;
   status: string;
   dateOfService: string;
   billedAmountCents: number;
@@ -71,8 +72,20 @@ export default function ClaimsQueuePage() {
         const failed = [...vRes, ...sRes].find((r) => !r.success);
         if (failed) setError(failed.error ?? "Could not load the queue.");
 
-        setVisits(vRes.filter((r) => r.success).flatMap((r) => r.data?.rows ?? []));
-        setSuperbills(sRes.filter((r) => r.success).flatMap((r) => r.data?.rows ?? []));
+        const bills: SuperbillRow[] = sRes
+          .filter((r) => r.success)
+          .flatMap((r) => r.data?.rows ?? []);
+        // Signing now raises the draft automatically, so nearly every
+        // pending_billing visit already has a bill. Without this the
+        // "awaiting superbill" table would list every signed visit forever.
+        const billedVisitIds = new Set(bills.map((b) => b.visitId));
+        setVisits(
+          vRes
+            .filter((r) => r.success)
+            .flatMap((r) => r.data?.rows ?? [])
+            .filter((v: VisitRow) => !billedVisitIds.has(v.id)),
+        );
+        setSuperbills(bills);
 
         // A full page per status means there may be more behind it.
         setTruncated(

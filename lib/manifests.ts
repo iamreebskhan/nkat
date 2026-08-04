@@ -96,6 +96,9 @@ export const MANIFESTS: Record<RoleKey, Manifest> = {
       // Billing lands on the dashboard (records + Create bill), not the
       // research tool — walkthrough 03:23.
       { label: "Billing", href: "/billing", icon: "Receipt", requires: "billing.superbills.view" },
+      // Was billing_agent-only, so an org_admin who signed a visit had no
+      // navigable way to watch it land (walkthrough 03:18).
+      { label: "Claims queue", href: "/billing/claims", icon: "FileStack", requires: "visits.view.all" },
       { label: "Rulebook", href: "/settings/rulebook", icon: "ScrollText", requires: "knowledge.view" },
       // Reports intentionally absent: it duplicated the Dashboard (client
       // walkthrough 04:51 — "Reports aur Dashboard same hain, filhaal remove

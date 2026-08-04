@@ -95,6 +95,9 @@ export default function BillingDashboardPage() {
           <Link href="/billing/lookup"><Button variant="secondary">Rule lookup</Button></Link>
           <Link href="/billing/superbills"><Button variant="secondary">All superbills</Button></Link>
           <Link href="/billing/denials"><Button variant="secondary">Denials</Button></Link>
+          <Link href="/billing/claims">
+            <Button variant="secondary">Claims queue</Button>
+          </Link>
           <Button onClick={() => setCreating(true)}>Create bill</Button>
         </div>
       </header>

@@ -17,14 +17,22 @@ type FieldProps = {
   id: string;
   label: ReactNode;
   /**
-   * Terse format guidance shown inline (e.g. "YYYY-MM-DD"). Keep it short —
-   * anything that reads like a sentence belongs in `explain` instead.
+   * Deprecated alias for `explain`, kept so existing call sites keep working.
+   * It no longer renders inline — see `explain`.
    */
   hint?: ReactNode;
   /**
-   * Longer explanation, revealed from an ⓘ next to the label on hover / focus
-   * / click rather than sitting permanently under the field
-   * (client walkthrough 01:16 — "us pe jab click karo to details aa jaate hain").
+   * Explanation, revealed from an ⓘ next to the label on hover / focus / click
+   * rather than sitting permanently under the field.
+   *
+   * Client walkthrough [00:59]–[01:04]: "yeh remove kar dena, khatam kar do —
+   * khatam kar dena. User experience ke according hai." Then [01:16]–[01:22]:
+   * "woh jo icon hai… us pe jab click karo to phir details aa jaate hain",
+   * and again at [02:06]: "hover kare to phir aayein."
+   *
+   * So there is exactly ONE channel for helper copy and it is behind the icon.
+   * A permanently-visible line under a field is the clutter he asked us to
+   * delete, which is why `hint` now routes here instead of rendering inline.
    */
   explain?: ReactNode;
   error?: string;
@@ -71,18 +79,13 @@ export function Field({
             (recommended)
           </span>
         )}
-        {explain && (
+        {(explain ?? hint) && (
           <InfoTip label={typeof label === "string" ? `About ${label}` : "More information"}>
-            {explain}
+            {explain ?? hint}
           </InfoTip>
         )}
       </label>
       {children}
-      {hint && !error && (
-        <p id={`${id}-hint`} className="text-xs text-slate-500">
-          {hint}
-        </p>
-      )}
       {error && (
         <p
           id={`${id}-error`}

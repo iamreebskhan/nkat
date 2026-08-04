@@ -41,7 +41,14 @@ const CATEGORY_LABEL: Record<ServiceCategory, string> = {
  */
 type Selection = { checked: boolean; minutes: string; note: string | null };
 
-export function VisitServicesPanel({ visitId }: { visitId: string }) {
+export function VisitServicesPanel({
+  visitId,
+  visitType,
+}: {
+  visitId: string;
+  /** Narrows the catalog to services scoped to this type (walkthrough 02:34). */
+  visitType?: string;
+}) {
   const [catalog, setCatalog] = useState<VisitServiceView[]>([]);
   const [selected, setSelected] = useState<Record<string, Selection>>({});
   const [loading, setLoading] = useState(true);
@@ -54,7 +61,9 @@ export function VisitServicesPanel({ visitId }: { visitId: string }) {
     (async () => {
       try {
         const [cRes, pRes] = await Promise.all([
-          fetch("/api/settings/visit-services").then((r) => r.json()),
+          fetch(
+            `/api/settings/visit-services${visitType ? `?visitType=${encodeURIComponent(visitType)}` : ""}`,
+          ).then((r) => r.json()),
           fetch(`/api/visits/${visitId}/services`).then((r) => r.json()),
         ]);
         if (abandoned) return;
@@ -79,7 +88,7 @@ export function VisitServicesPanel({ visitId }: { visitId: string }) {
     return () => {
       abandoned = true;
     };
-  }, [visitId]);
+  }, [visitId, visitType]);
 
   async function save() {
     setSaving(true);

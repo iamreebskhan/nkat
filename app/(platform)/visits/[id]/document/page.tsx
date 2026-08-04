@@ -146,7 +146,9 @@ export default function VisitDocumentPage({
     // prolonged service based on payer category, resolved from the
     // patient's primary payer (medicare_mac / medicare_advantage_org).
     return suggestCodes({
-      visitType: visit.visitType,
+      // codingBasis, never the raw slug: an org's custom type ("Bereavement
+      // follow-up") would fall through the suggester's switch and code nothing.
+      visitType: visit.codingBasis,
       totalMinutes,
       acpMinutes,
       providerType,
@@ -285,7 +287,7 @@ export default function VisitDocumentPage({
           ← Patient
         </Link>
         <h1 className="font-display text-2xl tracking-tight mt-1">
-          Document visit · {prettyVisitType(visit.visitType)}
+          Document visit · {visit.visitTypeLabel}
         </h1>
         <p className="text-slate-600 mt-1 tabular text-sm">
           {visit.status} · {totalMinutes} min documented
@@ -328,7 +330,7 @@ export default function VisitDocumentPage({
             </CardContent>
           </Card>
 
-          <VisitServicesPanel visitId={id} />
+          <VisitServicesPanel visitId={id} visitType={visit.visitType} />
         </div>
 
         <aside className="space-y-4">
@@ -602,6 +604,3 @@ function parseDoc(text: string | null): Doc {
   }
 }
 
-function prettyVisitType(t: VisitType): string {
-  return t.replace(/_/g, " ");
-}

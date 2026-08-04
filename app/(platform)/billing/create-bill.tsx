@@ -56,6 +56,12 @@ export function CreateBillDialog({
   const [visitId, setVisitId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Server-computed preview of what the bill will come out at.
+  const [preview, setPreview] = useState<{
+    billedAmountCents: number;
+    warnings: string[];
+  } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   // Clients with something to bill — not the patient list, which defaults to
   // active and so hid discharged and deceased clients whose claims are still
@@ -82,6 +88,33 @@ export function CreateBillDialog({
       .then((d) => setVisits(d.success ? (d.data?.rows ?? []) : []))
       .catch(() => setVisits([]));
   }, [patientId]);
+
+  // Appointment picked → preview the fee. Uses the same GET the visit page
+  // uses, so the number shown is the number persistDraft will write rather
+  // than a second, drifting calculation in the browser.
+  useEffect(() => {
+    setPreview(null);
+    const v = visits?.find((x) => x.visitId === visitId);
+    if (!visitId || !v || v.superbillId) return;
+    let abandoned = false;
+    setPreviewLoading(true);
+    fetch(`/api/visits/${visitId}/superbill`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (abandoned || !d.success || !d.data?.draft) return;
+        setPreview({
+          billedAmountCents: d.data.draft.billedAmountCents ?? 0,
+          warnings: d.data.draft.warnings ?? [],
+        });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!abandoned) setPreviewLoading(false);
+      });
+    return () => {
+      abandoned = true;
+    };
+  }, [visitId, visits]);
 
   const selected = visits?.find((v) => v.visitId === visitId) ?? null;
 
@@ -175,10 +208,21 @@ export function CreateBillDialog({
             <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-slate-600">Fee</span>
+                {/* Client walkthrough [04:16]–[04:22]: "automatically … visit ke
+                    against dikha de, ke us ki fee yeh hai." For a new bill the
+                    amount used to be a sentence, not a number — the preview
+                    comes from the same server path that will persist it, so
+                    what's shown is what gets raised. */}
                 <span className="tabular font-semibold">
                   {selected.billedAmountCents !== null
                     ? money(selected.billedAmountCents)
-                    : "Calculated from the visit's coded charges"}
+                    : previewLoading
+                      ? "Calculating…"
+                      : preview
+                        ? preview.billedAmountCents > 0
+                          ? `${money(preview.billedAmountCents)} (estimated)`
+                          : "$0.00 — no rated CPT codes on this visit"
+                        : "Calculated from the visit's coded charges"}
                 </span>
               </div>
               <div className="flex items-center justify-between mt-1">
@@ -187,6 +231,16 @@ export function CreateBillDialog({
                   {selected.superbillStatus ?? "will be created as draft"}
                 </span>
               </div>
+              {/* Warnings the superbill page shows after creation — surface
+                  them here so a $0 or uncoded bill is caught before it's
+                  raised, not after. */}
+              {!selected.superbillId && (preview?.warnings?.length ?? 0) > 0 && (
+                <ul className="mt-2 space-y-0.5 text-xs text-amber-800">
+                  {preview!.warnings.map((w) => (
+                    <li key={w}>· {w}</li>
+                  ))}
+                </ul>
+              )}
               {selected.superbillId && (
                 <p className="mt-2 text-xs text-amber-800">
                   This appointment already has a bill — continuing opens it instead of

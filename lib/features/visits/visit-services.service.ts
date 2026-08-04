@@ -28,6 +28,8 @@ export const CreateServiceSchema = z.object({
   // and output types diverge, and parseJson infers the input side.
   category: z.enum(SERVICE_CATEGORIES).optional(),
   cptHint: z.string().trim().max(10).optional(),
+  /** Visit-type slugs this applies to. Omitted/empty = every type. */
+  visitTypes: z.array(z.string().trim().min(2).max(64)).max(20).optional(),
 });
 export type CreateService = z.infer<typeof CreateServiceSchema>;
 
@@ -36,6 +38,7 @@ export const UpdateServiceSchema = z.object({
   description: z.string().trim().max(300).nullable().optional(),
   category: z.enum(SERVICE_CATEGORIES).optional(),
   cptHint: z.string().trim().max(10).nullable().optional(),
+  visitTypes: z.array(z.string().trim().min(2).max(64)).max(20).optional(),
   active: z.boolean().optional(),
 });
 export type UpdateService = z.infer<typeof UpdateServiceSchema>;
@@ -87,6 +90,8 @@ export interface VisitServiceView {
   cptHint: string | null;
   active: boolean;
   sortOrder: number;
+  /** Visit-type slugs it applies to; empty = every type. */
+  visitTypes: string[];
   /** How many visits reference it — deactivating is safe, deleting isn't. */
   usageCount?: number;
 }
@@ -108,6 +113,7 @@ interface CatalogRow {
   cpt_hint: string | null;
   active: boolean;
   sort_order: number;
+  visit_types: string[] | null;
   usage_count?: bigint;
 }
 
@@ -120,6 +126,7 @@ function toView(r: CatalogRow): VisitServiceView {
     cptHint: r.cpt_hint,
     active: r.active,
     sortOrder: r.sort_order,
+    visitTypes: r.visit_types ?? [],
     ...(r.usage_count === undefined ? {} : { usageCount: Number(r.usage_count) }),
   };
 }
@@ -127,14 +134,25 @@ function toView(r: CatalogRow): VisitServiceView {
 export async function listServiceCatalog(args: {
   orgId: string;
   includeInactive?: boolean;
+  /** Narrow to services that apply to this visit-type slug. */
+  visitType?: string;
 }): Promise<VisitServiceView[]> {
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<CatalogRow[]>`
-      SELECT s.id, s.name, s.description, s.category, s.cpt_hint, s.active, s.sort_order,
+      SELECT s.id, s.name, s.description, s.category, s.cpt_hint, s.active,
+             s.sort_order, s.visit_types,
              (SELECT COUNT(*)::bigint FROM visit_service_provided p WHERE p.service_id = s.id)
                AS usage_count
       FROM visit_service s
       WHERE (${args.includeInactive ?? false}::boolean OR s.active)
+        -- Empty visit_types = applies to every type, which is how everything
+        -- seeded by 0060 behaves. Client walkthrough 02:34: different visit
+        -- types carry different services.
+        AND (
+          ${args.visitType ?? null}::text IS NULL
+          OR cardinality(s.visit_types) = 0
+          OR ${args.visitType ?? null}::text = ANY(s.visit_types)
+        )
       ORDER BY s.sort_order, s.name
     `;
     return rows.map(toView);
@@ -155,10 +173,13 @@ export async function createService(args: {
     if (dupe[0]) throw new ValidationError(`"${p.name}" is already in the catalog.`);
 
     const rows = await tx.$queryRaw<{ id: string }[]>`
-      INSERT INTO visit_service (org_id, name, description, category, cpt_hint, sort_order)
+      INSERT INTO visit_service (
+        org_id, name, description, category, cpt_hint, visit_types, sort_order
+      )
       VALUES (
         ${args.orgId}::uuid, ${p.name}, ${p.description ?? null},
         ${p.category ?? "clinical"}, ${p.cptHint ?? null},
+        ${p.visitTypes ?? []}::text[],
         -- New entries land at the end of the picker.
         COALESCE((SELECT MAX(sort_order) + 10 FROM visit_service), 100)
       )
@@ -192,6 +213,7 @@ export async function updateService(args: {
         category = COALESCE(${p.category ?? null}, category),
         cpt_hint = CASE WHEN ${p.cptHint !== undefined}::boolean
                         THEN ${p.cptHint ?? null} ELSE cpt_hint END,
+        visit_types = COALESCE(${p.visitTypes ?? null}::text[], visit_types),
         active = COALESCE(${p.active ?? null}::boolean, active),
         updated_at = now()
       WHERE id = ${args.id}::uuid
@@ -256,7 +278,17 @@ export async function setVisitServices(args: {
       const ids = items.map((i) => i.serviceId);
       const known = await tx.$queryRaw<{ id: string }[]>`
         SELECT id FROM visit_service
-         WHERE id = ANY(${ids}::uuid[]) AND active
+         WHERE id = ANY(${ids}::uuid[])
+           AND (
+             active
+             -- A service deactivated after it was already recorded on this
+             -- visit must stay saveable, or every later save 422s and the
+             -- clinician can't even untick it.
+             OR id IN (
+               SELECT service_id FROM visit_service_provided
+                WHERE visit_id = ${args.visitId}::uuid
+             )
+           )
       `;
       const knownSet = new Set(known.map((k) => k.id));
       const unknown = ids.filter((i) => !knownSet.has(i));

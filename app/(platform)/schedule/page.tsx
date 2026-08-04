@@ -384,10 +384,13 @@ function NewVisitComposer({
 }) {
   const [patients, setPatients] = useState<PatientOption[]>([]);
   const [members, setMembers] = useState<MemberOption[]>([]);
+  // The org's own types, not the five built-in coding bands (client
+  // walkthrough 02:30 — "agar koi visit type ho raha hai jo hum ne add karna hai").
+  const [visitTypes, setVisitTypes] = useState<{ slug: string; label: string }[]>([]);
   const [form, setForm] = useState({
     patientId: defaultPatientId,
     clinicianUserId: "",
-    visitType: "established_patient_home" as (typeof VISIT_TYPES)[number],
+    visitType: "established_patient_home",
     scheduledStart: defaultDateTimeLocal(),
     isTelehealth: false,
     telehealthModality: "audio_video" as (typeof TELEHEALTH_MODALITIES)[number],
@@ -401,9 +404,23 @@ function NewVisitComposer({
       // patient dropdown empty and the composer unusable.
       fetch("/api/patients?limit=200").then((r) => r.json()),
       fetch("/api/team/members").then((r) => r.json()),
-    ]).then(([p, m]) => {
+      fetch("/api/settings/visit-types").then((r) => r.json()),
+    ]).then(([p, m, t]) => {
       if (p.success) setPatients(p.data?.rows ?? []);
       if (m.success) setMembers(m.data?.rows ?? []);
+      if (t.success) {
+        const types = t.data?.types ?? [];
+        setVisitTypes(types);
+        // Default to the org's first type — the previous hard-coded default
+        // may not even be one of theirs.
+        if (types.length > 0) {
+          setForm((f) =>
+            types.some((x: { slug: string }) => x.slug === f.visitType)
+              ? f
+              : { ...f, visitType: types[0].slug },
+          );
+        }
+      }
     });
   }, []);
 
@@ -499,11 +516,11 @@ function NewVisitComposer({
             <Field label="Visit type" required>
               <select
                 value={form.visitType}
-                onChange={(e) => setForm({ ...form, visitType: e.target.value as typeof form.visitType })}
+                onChange={(e) => setForm({ ...form, visitType: e.target.value })}
                 className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white"
               >
-                {VISIT_TYPES.map((t) => (
-                  <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
+                {visitTypes.map((t) => (
+                  <option key={t.slug} value={t.slug}>{t.label}</option>
                 ))}
               </select>
             </Field>

@@ -26,6 +26,8 @@ let calls: { sql: string; values: unknown[] }[] = [];
 let existingNames: string[] = [];
 /** Catalog ids that exist AND are active. */
 let activeIds: string[] = [];
+/** Ids already recorded on the visit — saveable even once deactivated. */
+let recordedIds: string[] = [];
 let visitExists = true;
 
 function fakeTx() {
@@ -43,9 +45,15 @@ function fakeTx() {
     if (sql.includes("SELECT id FROM visit WHERE id")) {
       return Promise.resolve(visitExists ? [{ id: VISIT }] : []);
     }
-    if (sql.includes("AND active")) {
+    // The catalog guard in setVisitServices: active OR already recorded here.
+    if (sql.includes("SELECT id FROM visit_service\n         WHERE id = ANY(") ||
+        sql.includes("visit_service_provided\n                WHERE visit_id")) {
       const asked = (values[0] as string[]) ?? [];
-      return Promise.resolve(asked.filter((i) => activeIds.includes(i)).map((id) => ({ id })));
+      return Promise.resolve(
+        asked
+          .filter((i) => activeIds.includes(i) || recordedIds.includes(i))
+          .map((id) => ({ id })),
+      );
     }
     if (sql.includes("INSERT INTO visit_service (")) {
       return Promise.resolve([{ id: SVC_B }]);
@@ -60,6 +68,7 @@ beforeEach(() => {
   calls = [];
   existingNames = [];
   activeIds = [SVC_A, SVC_B];
+  recordedIds = [];
   visitExists = true;
   vi.mocked(withOrgContext).mockImplementation(async (_orgId, fn) =>
     (fn as (tx: unknown) => Promise<unknown>)(fakeTx()),
@@ -135,6 +144,19 @@ describe("setVisitServices", () => {
       }),
     ).rejects.toThrow(/not in your catalog/);
     expect(calls.some((c) => c.sql.includes("DELETE FROM visit_service_provided"))).toBe(false);
+  });
+
+  // An admin deactivating a service used to break every later save on visits
+  // that already had it recorded — including the save that would remove it.
+  it("still accepts a service deactivated after it was recorded here", async () => {
+    activeIds = [SVC_A];
+    recordedIds = [SVC_B];
+    const r = await setVisitServices({
+      orgId: ORG,
+      visitId: VISIT,
+      payload: { services: [{ serviceId: SVC_A }, { serviceId: SVC_B }] },
+    });
+    expect(r).toEqual({ count: 2 });
   });
 
   it("404s on an unknown visit", async () => {

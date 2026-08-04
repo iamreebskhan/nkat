@@ -31,8 +31,14 @@ export async function GET(req: NextRequest): Promise<Response> {
   }
 
   const includeInactive = req.nextUrl.searchParams.get("includeInactive") === "1";
+  // Narrows to services scoped to this visit type (walkthrough 02:34).
+  const visitType = req.nextUrl.searchParams.get("visitType") ?? undefined;
   try {
-    const services = await listServiceCatalog({ orgId: session.orgId, includeInactive });
+    const services = await listServiceCatalog({
+      orgId: session.orgId,
+      includeInactive,
+      visitType,
+    });
     return ok({ services });
   } catch (err) {
     return handleServiceError(err);

@@ -27,6 +27,7 @@ import {
   ROLE_DEFAULT_PERMISSIONS,
 } from "@/lib/features/team/team.types";
 import { DEFAULT_VISIT_SERVICES } from "@/lib/features/visits/visit-services.service";
+import { DEFAULT_VISIT_TYPES } from "@/lib/features/visits/visit-types.service";
 import type { Session } from "@/lib/auth";
 
 const BCRYPT_ROUNDS = 12;
@@ -222,6 +223,16 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
       await tx.$executeRaw`
         INSERT INTO user_permission (org_id, user_id, permission, granted_by_user_id)
         VALUES (${orgId}::uuid, ${userId}::uuid, ${perm}, ${userId}::uuid)
+      `;
+    }
+
+    // Visit types must exist before anything can be scheduled — scheduleVisit
+    // validates the slug against this table. 0062 seeds pre-existing orgs.
+    for (const t of DEFAULT_VISIT_TYPES) {
+      await tx.$executeRaw`
+        INSERT INTO org_visit_type (org_id, slug, label, coding_basis, sort_order)
+        VALUES (${orgId}::uuid, ${t.slug}, ${t.label}, ${t.slug}, ${t.sortOrder})
+        ON CONFLICT DO NOTHING
       `;
     }
 
