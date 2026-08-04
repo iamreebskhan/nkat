@@ -23,6 +23,7 @@ import { Field, Select } from "@/components/forms/field";
 interface PatientOption {
   patientId: string;
   name: string;
+  dob: string | null;
   status: string;
   payerName: string | null;
   billableVisits: number;
@@ -95,7 +96,14 @@ export function CreateBillDialog({
   useEffect(() => {
     setPreview(null);
     const v = visits?.find((x) => x.visitId === visitId);
-    if (!visitId || !v || v.superbillId) return;
+    if (!visitId || !v || v.superbillId) {
+      // Must clear the flag here too. A re-run that bails (visit deselected,
+      // or `visits` refetched so the id no longer resolves) used to leave
+      // previewLoading stuck true from the previous run, and the Fee row read
+      // "Calculating…" forever even though the request had already returned.
+      setPreviewLoading(false);
+      return;
+    }
     let abandoned = false;
     setPreviewLoading(true);
     fetch(`/api/visits/${visitId}/superbill`)
@@ -165,6 +173,9 @@ export function CreateBillDialog({
               {patients.map((p) => (
                 <option key={p.patientId} value={p.patientId}>
                   {p.name}
+                  {/* DOB disambiguates same-named patients — two "John Smith"s
+                      are ordinary, and billing the wrong one is a real error. */}
+                  {p.dob ? ` · DOB ${p.dob}` : ""}
                   {p.status !== "active" ? ` · ${p.status}` : ""}
                   {p.unbilledVisits > 0 ? ` · ${p.unbilledVisits} unbilled` : ""}
                   {p.payerName ? "" : " · no payer on file"}

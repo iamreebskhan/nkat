@@ -210,6 +210,8 @@ export interface BillableVisit {
 export interface BillableClient {
   patientId: string;
   name: string;
+  /** Disambiguates same-named patients in the picker. */
+  dob: string | null;
   status: string;
   payerName: string | null;
   billableVisits: number;
@@ -235,6 +237,7 @@ export async function listBillableClients(args: {
       {
         patient_id: string;
         name: string;
+        dob: Date | null;
         status: string;
         payer_name: string | null;
         billable_visits: bigint;
@@ -243,6 +246,7 @@ export async function listBillableClients(args: {
     >`
       SELECT p.id AS patient_id,
              TRIM(p.first_name || ' ' || p.last_name) AS name,
+             p.date_of_birth AS dob,
              p.status,
              pay.name AS payer_name,
              COUNT(v.id)                                     AS billable_visits,
@@ -252,13 +256,14 @@ export async function listBillableClients(args: {
         AND v.status IN ('in_progress', 'documented', 'pending_billing', 'billed')
       LEFT JOIN superbill s ON s.visit_id = v.id
       LEFT JOIN payer pay ON pay.id = p.primary_payer_id
-      GROUP BY p.id, p.first_name, p.last_name, p.status, pay.name
+      GROUP BY p.id, p.first_name, p.last_name, p.date_of_birth, p.status, pay.name
       ORDER BY COUNT(v.id) FILTER (WHERE s.id IS NULL) DESC, name ASC
       LIMIT 500
     `;
     return rows.map((r) => ({
       patientId: r.patient_id,
       name: r.name,
+      dob: r.dob ? r.dob.toISOString().slice(0, 10) : null,
       status: r.status,
       payerName: r.payer_name,
       billableVisits: Number(r.billable_visits),

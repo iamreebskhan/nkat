@@ -94,14 +94,18 @@ export async function withBreakglass<T>(
   if (!reason || reason.length < 10) {
     throw new Error("withBreakglass requires a reason of at least 10 chars.");
   }
-  // Route through the admin (RLS-bypass) client in production; fall back to
-  // the app client in dev/staging without a separate admin URL. In
-  // production this fallback MUST NOT be taken — a missing ADMIN_DATABASE_URL
-  // means RLS isn't enforced.
-  const target =
-    process.env.NODE_ENV === "production" && process.env.ADMIN_DATABASE_URL
-      ? prismaAdmin
-      : prisma;
+  // Route through the admin (RLS-bypass) client whenever one is configured —
+  // in EVERY environment, not just production.
+  //
+  // This used to require NODE_ENV === "production", which quietly forced dev
+  // onto a single superuser DATABASE_URL: with a correct split config the
+  // pre-tenant login lookup ran as the `app` role with no org GUC, RLS
+  // returned nothing, and login failed with "Account is suspended". The only
+  // way to develop was to point DATABASE_URL at a superuser — which bypasses
+  // RLS entirely, so tenant-isolation bugs became invisible locally and could
+  // only ever surface in production. Gating on the URL instead of the
+  // environment lets dev mirror prod exactly.
+  const target = process.env.ADMIN_DATABASE_URL ? prismaAdmin : prisma;
 
   // Breakglass audit trail (migration 0052). Skip the routine pre-tenant
   // login/signup lookups (high-frequency, not security-relevant); record
