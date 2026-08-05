@@ -1,7 +1,7 @@
 /**
- * /settings/branding Ã¢â‚¬â€ org white-label settings.
+ * /settings/branding — org white-label settings.
  *
- * Source: pallio_complete_vision_v3 Ã‚Â§6.1. Org logo, primary color
+ * Source: pallio_complete_vision_v3 §6.1. Org logo, primary color
  * override, custom domain CNAME setup, email "from" identity.
  */
 "use client";
@@ -117,7 +117,7 @@ export default function BrandingPage() {
               <input
                 value={draft.logoUrl}
                 onChange={(e) => setDraft({ ...draft, logoUrl: e.target.value })}
-                placeholder="https://Ã¢â‚¬Â¦"
+                placeholder="https://…"
                 className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
               />
             </Field>
@@ -166,7 +166,7 @@ export default function BrandingPage() {
 
             <div className="flex justify-end">
               <Button type="submit" disabled={saving}>
-                {saving ? "SavingÃ¢â‚¬Â¦" : "Save"}
+                {saving ? "Saving…" : "Save"}
               </Button>
             </div>
           </form>

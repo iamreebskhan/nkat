@@ -1,5 +1,5 @@
 /**
- * /settings/account Ã¢â‚¬â€ your profile + password rotation.
+ * /settings/account — your profile + password rotation.
  */
 "use client";
 
@@ -78,7 +78,7 @@ export default function AccountPage() {
   }
 
   if (!me) {
-    return <div className="px-8 py-8 text-sm text-slate-500">LoadingÃ¢â‚¬Â¦</div>;
+    return <div className="px-8 py-8 text-sm text-slate-500">Loading…</div>;
   }
 
   return (
@@ -86,7 +86,7 @@ export default function AccountPage() {
       <header className="mb-6">
         <h1 className="font-display text-3xl tracking-tight">Account</h1>
         <p className="text-slate-600 mt-1">
-          Your profile, password, and security. <Link href="/settings/security" className="text-[var(--color-brand-700)] underline">MFA & recovery codes Ã¢â€ â€™</Link>
+          Your profile, password, and security. <Link href="/settings/security" className="text-[var(--color-brand-700)] underline">MFA & recovery codes →</Link>
         </p>
       </header>
 
@@ -107,13 +107,13 @@ export default function AccountPage() {
             </Field>
             <Field label="Email">
               <input value={me.email} readOnly disabled className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-slate-50 text-slate-500" />
-              <p className="text-xs text-slate-500 mt-1">Email changes need org admin approval Ã¢â‚¬â€ not yet self-serve.</p>
+              <p className="text-xs text-slate-500 mt-1">Email changes need org admin approval — not yet self-serve.</p>
             </Field>
             <Field label="Role">
               <input value={me.role.replace("_", " ")} readOnly disabled className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-slate-50 text-slate-500" />
             </Field>
             <Field label="Permissions">
-              <p className="text-xs text-slate-600">{me.permissions.length} grants Ã¢â‚¬â€ managed by org admin in <Link href="/team" className="underline">/team</Link>.</p>
+              <p className="text-xs text-slate-600">{me.permissions.length} grants — managed by org admin in <Link href="/team" className="underline">/team</Link>.</p>
             </Field>
             {me.lastLoginAt && (
               <Field label="Last login">
@@ -127,7 +127,7 @@ export default function AccountPage() {
             )}
             <div className="flex justify-end">
               <Button type="submit" disabled={savingName || name === (me.fullName ?? "")}>
-                {savingName ? "SavingÃ¢â‚¬Â¦" : "Save profile"}
+                {savingName ? "Saving…" : "Save profile"}
               </Button>
             </div>
           </form>
@@ -157,7 +157,7 @@ export default function AccountPage() {
             )}
             <div className="flex justify-end">
               <Button type="submit" disabled={savingPw || !cur || !pw1 || !pw2}>
-                {savingPw ? "RotatingÃ¢â‚¬Â¦" : "Rotate password"}
+                {savingPw ? "Rotating…" : "Rotate password"}
               </Button>
             </div>
           </form>
