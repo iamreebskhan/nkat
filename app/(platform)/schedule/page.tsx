@@ -138,7 +138,12 @@ export default function SchedulePage() {
         <div>
           <h1 className="font-display text-3xl tracking-tight">Schedule</h1>
           <p className="text-slate-600 mt-1">
-            Week of {weekStart.toLocaleDateString(undefined, { month: "long", day: "numeric" })}.
+            {/* Fixed locale on purpose. `undefined` uses the runtime's locale,
+                which differs between the Node server and the browser — the
+                server rendered "August 3" and the client "3 August", throwing
+                a hydration mismatch and forcing React to regenerate the tree
+                on every load of this page. */}
+            Week of {weekStart.toLocaleDateString("en-US", { month: "long", day: "numeric" })}.
             Drag a visit to another day to reschedule.
           </p>
         </div>

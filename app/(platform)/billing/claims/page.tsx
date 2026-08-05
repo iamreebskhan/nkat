@@ -55,18 +55,25 @@ export default function ClaimsQueuePage() {
         // newest rows and filtering here truncated BEFORE it filtered: any
         // work outside the 200 most recent rows vanished from the queue while
         // the KPI cards presented that truncated count as the total.
-        const [vRes, sRes] = await Promise.all([
-          Promise.all(
-            READY_VISIT_STATUS.map((st) =>
-              fetch(`/api/visits?status=${st}&limit=200`).then((r) => r.json()),
-            ),
-          ),
-          Promise.all(
-            ACTIONABLE_SUPERBILL_STATUS.map((st) =>
-              fetch(`/api/superbills?status=${st}&limit=200`).then((r) => r.json()),
-            ),
-          ),
-        ]);
+        //
+        // Sequential, NOT Promise.all. Every one of these opens a
+        // withOrgContext transaction to set the tenant GUC, and firing four at
+        // once exhausted the Prisma pool — the requests came back
+        // "Unable to start a transaction in the given time" (P2028) and the
+        // page rendered all-zero KPIs as if the queue were empty. A queue
+        // screen does not need the parallelism badly enough to risk that.
+        const seq = async (urls: string[]) => {
+          const out = [];
+          for (const u of urls) {
+            if (abandoned) return out;
+            out.push(await fetch(u).then((r) => r.json()).catch(() => ({ success: false })));
+          }
+          return out;
+        };
+        const vRes = await seq(READY_VISIT_STATUS.map((st) => `/api/visits?status=${st}&limit=200`));
+        const sRes = await seq(
+          ACTIONABLE_SUPERBILL_STATUS.map((st) => `/api/superbills?status=${st}&limit=200`),
+        );
         if (abandoned) return;
 
         const failed = [...vRes, ...sRes].find((r) => !r.success);
