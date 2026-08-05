@@ -6,6 +6,7 @@
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import {
+  VISIT_TYPES,
   type DocumentVisit,
   type ScheduleVisit,
   type VisitStatus,
@@ -18,7 +19,9 @@ interface VisitRow {
   id: string;
   patient_id: string;
   clinician_user_id: string;
-  visit_type: VisitType;
+  visit_type: string;
+  visit_type_label?: string | null;
+  coding_basis?: VisitType | null;
   scheduled_start: Date | null;
   scheduled_end: Date | null;
   start_time: Date | null;
@@ -43,12 +46,29 @@ interface VisitRow {
   clinician_name?: string | null;
 }
 
+function prettySlug(slug: string): string {
+  const s = slug.replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Last-resort band for a slug with no org_visit_type row (pre-0062 data). */
+function coerceCodingBasis(slug: string): VisitType {
+  return (VISIT_TYPES as readonly string[]).includes(slug)
+    ? (slug as VisitType)
+    : "established_patient_home";
+}
+
 function rowToView(row: VisitRow): VisitView {
   return {
     id: row.id,
     patientId: row.patient_id,
     clinicianUserId: row.clinician_user_id,
     visitType: row.visit_type,
+    // Fall back to the slug for rows written before 0062, and treat an
+    // unresolved slug as an established home visit — the commonest band —
+    // rather than crashing the coder.
+    visitTypeLabel: row.visit_type_label ?? prettySlug(row.visit_type),
+    codingBasis: row.coding_basis ?? coerceCodingBasis(row.visit_type),
     scheduledStart: row.scheduled_start?.toISOString() ?? null,
     scheduledEnd: row.scheduled_end?.toISOString() ?? null,
     startTime: row.start_time?.toISOString() ?? null,
@@ -80,6 +100,17 @@ export async function scheduleVisit(args: {
 }): Promise<{ id: string }> {
   const { orgId, payload } = args;
   return withOrgContext(orgId, async (tx) => {
+    // visit.visit_type lost its DB CHECK in 0062 so orgs can define their own
+    // types. This is what replaces it: the slug must be one of THIS org's
+    // active types, or visit_type stops being trustworthy.
+    const known = await tx.$queryRaw<{ slug: string }[]>`
+      SELECT slug FROM org_visit_type
+       WHERE slug = ${payload.visitType} AND active
+       LIMIT 1
+    `;
+    if (!known[0]) {
+      throw new ValidationError(`"${payload.visitType}" is not one of your visit types.`);
+    }
     const rows = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO visit (
         org_id, patient_id, clinician_user_id, visit_type,
@@ -108,14 +139,16 @@ export async function getVisit(args: {
 }): Promise<VisitView | null> {
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<VisitRow[]>`
-      SELECT id, patient_id, clinician_user_id, visit_type,
-             scheduled_start, scheduled_end, start_time, stop_time,
-             total_minutes, acp_minutes, prolonged_minutes,
-             is_telehealth, telehealth_modality, telehealth_consent_documented,
-             document_text, cpt_codes_assigned, icd10_codes, modifiers,
-             status, signed_at, created_at, updated_at
-      FROM visit
-      WHERE id = ${args.id}::uuid
+      SELECT v.id, v.patient_id, v.clinician_user_id, v.visit_type,
+             t.label AS visit_type_label, t.coding_basis,
+             v.scheduled_start, v.scheduled_end, v.start_time, v.stop_time,
+             v.total_minutes, v.acp_minutes, v.prolonged_minutes,
+             v.is_telehealth, v.telehealth_modality, v.telehealth_consent_documented,
+             v.document_text, v.cpt_codes_assigned, v.icd10_codes, v.modifiers,
+             v.status, v.signed_at, v.created_at, v.updated_at
+      FROM visit v
+      LEFT JOIN org_visit_type t ON t.slug = v.visit_type
+      WHERE v.id = ${args.id}::uuid
       LIMIT 1
     `;
     return rows[0] ? rowToView(rows[0]) : null;
@@ -180,6 +213,7 @@ export async function listVisits(args: {
     // Filter pattern: parameterize each filter, NULL-out the unused ones.
     const rows = await tx.$queryRaw<VisitRow[]>`
       SELECT v.id, v.patient_id, v.clinician_user_id, v.visit_type,
+             t.label AS visit_type_label, t.coding_basis,
              v.scheduled_start, v.scheduled_end, v.start_time, v.stop_time,
              v.total_minutes, v.acp_minutes, v.prolonged_minutes,
              v.is_telehealth, v.telehealth_modality, v.telehealth_consent_documented,
@@ -191,6 +225,7 @@ export async function listVisits(args: {
       FROM visit v
       LEFT JOIN patient p ON p.id = v.patient_id
       LEFT JOIN app_user u ON u.id = v.clinician_user_id
+      LEFT JOIN org_visit_type t ON t.slug = v.visit_type
       WHERE
         (${args.patientId ?? null}::uuid IS NULL OR v.patient_id = ${args.patientId ?? null}::uuid)
         AND (${args.status ?? null}::text IS NULL OR v.status = ${args.status ?? null})
@@ -203,8 +238,15 @@ export async function listVisits(args: {
 }
 
 /**
+ * Statuses at or past sign-off. `documented` stamps signed_at, so from that
+ * point the note is attested and frozen.
+ */
+const LOCKED_AFTER_SIGNING: VisitStatus[] = ["documented", "pending_billing", "billed"];
+
+/**
  * Save the clinician's documentation. Recomputes total_minutes from
- * start/stop on every save so the cached value can't drift.
+ * start/stop on every save so the cached value can't drift. Refuses once the
+ * visit has been signed.
  */
 export async function documentVisit(args: {
   orgId: string;
@@ -213,10 +255,19 @@ export async function documentVisit(args: {
 }): Promise<{ updated: boolean }> {
   const p = args.payload;
   return withOrgContext(args.orgId, async (tx) => {
-    const exists = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM visit WHERE id = ${args.id}::uuid LIMIT 1
+    const exists = await tx.$queryRaw<{ id: string; status: VisitStatus }[]>`
+      SELECT id, status FROM visit WHERE id = ${args.id}::uuid LIMIT 1
     `;
     if (exists.length === 0) throw new NotFoundError("Visit not found.");
+    // Signing is an attestation. Once the note is signed and on its way to
+    // billing, silently rewriting it — which the editor's autosave-on-blur
+    // did happily — leaves a claim supported by documentation nobody attested
+    // to. Amendments belong in a follow-up addendum, not an invisible edit.
+    if (LOCKED_AFTER_SIGNING.includes(exists[0]!.status)) {
+      throw new ValidationError(
+        "This visit is signed and submitted for billing — its documentation can no longer be edited.",
+      );
+    }
     const startTs = p.startTime ? new Date(p.startTime) : null;
     const stopTs = p.stopTime ? new Date(p.stopTime) : null;
     const computed = computeTotalMinutes(startTs, stopTs);

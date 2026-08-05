@@ -49,6 +49,7 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
       id,
       to: body.to,
       paidAmountCents: body.paidAmountCents,
+      actorUserId: session.userId,
     });
     return ok(r);
   } catch (err) {

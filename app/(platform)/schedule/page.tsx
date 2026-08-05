@@ -1,7 +1,7 @@
 /**
- * /schedule — upcoming + recently-scheduled visits.
+ * /schedule â€” upcoming + recently-scheduled visits.
  *
- * Source: pallio_complete_vision_v3 §6.3.
+ * Source: pallio_complete_vision_v3 Â§6.3.
  *
  * MVP: grouped-by-day list + inline new-visit composer that posts to
  * /api/visits. A real week-grid + drag-to-reschedule lands in a
@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
+import { FieldMarker } from "@/components/forms/field-marker";
 import {
   Card,
   CardContent,
@@ -37,7 +38,7 @@ interface TimeOffEntry { id: string; clinicianUserId: string; clinicianName: str
 // That hook forces the component under a Suspense boundary and defers it to
 // the client; on a cold load the boundary could stall on its fallback, leaving
 // the page blank. The only query param we need (?patientId=) is read from
-// window.location in a mount effect below — purely to pre-open the composer —
+// window.location in a mount effect below â€” purely to pre-open the composer â€”
 // so the page renders its full chrome server-side/immediately, every time.
 export default function SchedulePage() {
   const [visits, setVisits] = useState<VisitView[]>([]);
@@ -137,14 +138,19 @@ export default function SchedulePage() {
         <div>
           <h1 className="font-display text-3xl tracking-tight">Schedule</h1>
           <p className="text-slate-600 mt-1">
-            Week of {weekStart.toLocaleDateString(undefined, { month: "long", day: "numeric" })}.
+            {/* Fixed locale on purpose. `undefined` uses the runtime's locale,
+                which differs between the Node server and the browser — the
+                server rendered "August 3" and the client "3 August", throwing
+                a hydration mismatch and forcing React to regenerate the tree
+                on every load of this page. */}
+            Week of {weekStart.toLocaleDateString("en-US", { month: "long", day: "numeric" })}.
             Drag a visit to another day to reschedule.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>← Prev</Button>
+          <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>â† Prev</Button>
           <Button variant="secondary" onClick={() => setWeekStart(mondayOf(new Date()))}>This week</Button>
-          <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, 7))}>Next →</Button>
+          <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, 7))}>Next â†’</Button>
           <Link
             href={`/schedule/print?date=${isoDay(days[0]!)}`}
             target="_blank"
@@ -185,7 +191,7 @@ export default function SchedulePage() {
         />
       )}
 
-      {loading && <p className="text-slate-500">Loading…</p>}
+      {loading && <p className="text-slate-500">Loadingâ€¦</p>}
       {error && <p role="alert" className="text-red-700">{error}</p>}
 
       <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
@@ -215,7 +221,7 @@ export default function SchedulePage() {
               {/* PTO badges */}
               {dayPto.map((t) => (
                 <div key={t.id} className="mx-1 mt-1 rounded bg-slate-200/70 text-slate-700 text-[10px] px-1.5 py-0.5">
-                  PTO · {t.clinicianName ?? t.clinicianUserId.slice(0, 6)}
+                  PTO Â· {t.clinicianName ?? t.clinicianUserId.slice(0, 6)}
                 </div>
               ))}
               <ul className="flex-1 p-1 space-y-1">
@@ -229,16 +235,16 @@ export default function SchedulePage() {
                       }}
                       title={[
                         v.patientName ?? "Patient",
-                        v.patientCity ? `· ${v.patientCity}` : "",
-                        `· ${v.visitType.replace(/_/g, " ")}`,
-                        v.totalMinutes ? `· ${v.totalMinutes} min` : "",
-                        v.clinicianName ? `· ${v.clinicianName}` : "",
+                        v.patientCity ? `Â· ${v.patientCity}` : "",
+                        `Â· ${v.visitType.replace(/_/g, " ")}`,
+                        v.totalMinutes ? `Â· ${v.totalMinutes} min` : "",
+                        v.clinicianName ? `Â· ${v.clinicianName}` : "",
                       ].filter(Boolean).join(" ")}
                       className={`rounded px-1.5 py-1 text-[11px] cursor-grab active:cursor-grabbing ring-1 ring-inset ${providerColor(v.clinicianUserId)}`}
                     >
                       <div className="flex items-center justify-between gap-1">
                         <span className="tabular font-medium">{timeOf(v.scheduledStart ?? v.startTime)}</span>
-                        {v.isTelehealth && <span className="text-[9px]">📹</span>}
+                        {v.isTelehealth && <span className="text-[9px]">ðŸ“¹</span>}
                       </div>
                       <div className="truncate">{v.patientName ?? v.visitType.replace(/_/g, " ")}</div>
                       {v.patientCity && <div className="truncate text-[10px] opacity-70">{v.patientCity}</div>}
@@ -259,12 +265,12 @@ export default function SchedulePage() {
                       title={`External: ${b.summary}`}
                       className="rounded px-1.5 py-1 text-[10px] bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-300/50 border-dashed"
                     >
-                      <span className="tabular">{timeOf(b.start)}</span> · {b.summary}
+                      <span className="tabular">{timeOf(b.start)}</span> Â· {b.summary}
                     </div>
                   </li>
                 ))}
                 {dayVisits.length === 0 && dayBusy.length === 0 && (
-                  <li className="text-[10px] text-slate-300 px-1.5 py-2">—</li>
+                  <li className="text-[10px] text-slate-300 px-1.5 py-2">â€”</li>
                 )}
               </ul>
             </div>
@@ -341,7 +347,7 @@ function PtoComposer({ onCreated, onCancel }: { onCreated: () => void; onCancel:
             <select required value={form.clinicianUserId}
               onChange={(e) => setForm({ ...form, clinicianUserId: e.target.value })}
               className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white">
-              <option value="">Select…</option>
+              <option value="">Selectâ€¦</option>
               {members.map((m) => <option key={m.userId} value={m.userId}>{m.fullName ?? m.email}</option>)}
             </select>
           </Field>
@@ -384,10 +390,13 @@ function NewVisitComposer({
 }) {
   const [patients, setPatients] = useState<PatientOption[]>([]);
   const [members, setMembers] = useState<MemberOption[]>([]);
+  // The org's own types, not the five built-in coding bands (client
+  // walkthrough 02:30 â€” "agar koi visit type ho raha hai jo hum ne add karna hai").
+  const [visitTypes, setVisitTypes] = useState<{ slug: string; label: string }[]>([]);
   const [form, setForm] = useState({
     patientId: defaultPatientId,
     clinicianUserId: "",
-    visitType: "established_patient_home" as (typeof VISIT_TYPES)[number],
+    visitType: "established_patient_home",
     scheduledStart: defaultDateTimeLocal(),
     isTelehealth: false,
     telehealthModality: "audio_video" as (typeof TELEHEALTH_MODALITIES)[number],
@@ -397,13 +406,27 @@ function NewVisitComposer({
 
   useEffect(() => {
     void Promise.all([
-      // 200 is the API's max limit — 500 was rejected with a 400, leaving the
+      // 200 is the API's max limit â€” 500 was rejected with a 400, leaving the
       // patient dropdown empty and the composer unusable.
       fetch("/api/patients?limit=200").then((r) => r.json()),
       fetch("/api/team/members").then((r) => r.json()),
-    ]).then(([p, m]) => {
+      fetch("/api/settings/visit-types").then((r) => r.json()),
+    ]).then(([p, m, t]) => {
       if (p.success) setPatients(p.data?.rows ?? []);
       if (m.success) setMembers(m.data?.rows ?? []);
+      if (t.success) {
+        const types = t.data?.types ?? [];
+        setVisitTypes(types);
+        // Default to the org's first type â€” the previous hard-coded default
+        // may not even be one of theirs.
+        if (types.length > 0) {
+          setForm((f) =>
+            types.some((x: { slug: string }) => x.slug === f.visitType)
+              ? f
+              : { ...f, visitType: types[0].slug },
+          );
+        }
+      }
     });
   }, []);
 
@@ -425,7 +448,7 @@ function NewVisitComposer({
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    // Phase E — 409 means Google Calendar reports overlap. Offer to
+    // Phase E â€” 409 means Google Calendar reports overlap. Offer to
     // override and resubmit with confirmDoubleBook=true.
     if (res.status === 409) {
       const ok = window.confirm(
@@ -475,7 +498,7 @@ function NewVisitComposer({
                 onChange={(e) => setForm({ ...form, patientId: e.target.value })}
                 className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white"
               >
-                <option value="">Select…</option>
+                <option value="">Selectâ€¦</option>
                 {patients.map((p) => (
                   <option key={p.id} value={p.id}>{p.firstName} {p.lastName}</option>
                 ))}
@@ -488,7 +511,7 @@ function NewVisitComposer({
                 onChange={(e) => setForm({ ...form, clinicianUserId: e.target.value })}
                 className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white"
               >
-                <option value="">Select…</option>
+                <option value="">Selectâ€¦</option>
                 {members.map((m) => (
                   <option key={m.userId} value={m.userId}>{m.fullName ?? m.email}</option>
                 ))}
@@ -499,11 +522,11 @@ function NewVisitComposer({
             <Field label="Visit type" required>
               <select
                 value={form.visitType}
-                onChange={(e) => setForm({ ...form, visitType: e.target.value as typeof form.visitType })}
+                onChange={(e) => setForm({ ...form, visitType: e.target.value })}
                 className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white"
               >
-                {VISIT_TYPES.map((t) => (
-                  <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
+                {visitTypes.map((t) => (
+                  <option key={t.slug} value={t.slug}>{t.label}</option>
                 ))}
               </select>
             </Field>
@@ -551,7 +574,7 @@ function NewVisitComposer({
               type="submit"
               disabled={submitting || !form.patientId || !form.clinicianUserId}
             >
-              {submitting ? "Scheduling…" : "Schedule visit"}
+              {submitting ? "Schedulingâ€¦" : "Schedule visit"}
             </Button>
           </div>
         </form>
@@ -560,12 +583,22 @@ function NewVisitComposer({
   );
 }
 
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+function Field({
+  label,
+  required,
+  optional,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  optional?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
       <span className="block text-xs font-medium text-slate-700 mb-1">
         {label}
-        {required && <span className="text-red-600 ml-0.5">*</span>}
+        <FieldMarker required={required} optional={optional} />
       </span>
       {children}
     </label>
@@ -581,7 +614,7 @@ function defaultDateTimeLocal(): string {
 }
 
 function timeOf(iso: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "â€”";
   const d = new Date(iso);
   return d.toLocaleTimeString(undefined, {
     hour: "numeric",

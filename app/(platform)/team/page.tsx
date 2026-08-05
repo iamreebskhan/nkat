@@ -82,6 +82,8 @@ export default function TeamPage() {
             {invites.length} pending invite{invites.length === 1 ? "" : "s"}
           </p>
         </div>
+        {/* Primary action up top, not buried in a tab (walkthrough 05:16). */}
+        <Button onClick={() => setTab("new")}>Invite new member</Button>
       </header>
 
       <div className="flex gap-2 mb-4 border-b border-slate-200">

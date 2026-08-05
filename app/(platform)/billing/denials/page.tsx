@@ -12,7 +12,13 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { computeDenialMetrics, lookupCarc } from "@/lib/features/denials/denial-pure";
 import {
   DENIAL_DECISIONS,
@@ -52,6 +58,21 @@ export default function DenialsPage() {
       abandoned = true;
     };
   }, [decision]);
+
+  // payer id → name, so the by-payer table reads like a report and not a
+  // list of UUIDs.
+  const [payerNames, setPayerNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    fetch("/api/billing/payers")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.success) return;
+        const map: Record<string, string> = {};
+        for (const p of d.data?.payers ?? []) map[p.id] = p.name;
+        setPayerNames(map);
+      })
+      .catch(() => undefined);
+  }, []);
 
   const metrics = useMemo(
     () =>
@@ -99,6 +120,48 @@ export default function DenialsPage() {
           }
         />
       </div>
+
+      {/* Client walkthrough [04:53]: "yeh Reports aur yeh Dashboard same hain
+          — filhaal is ko remove kar do." Mostly true, but Reports carried two
+          panels the Dashboard never had. This is one of them; losing it with
+          the nav entry would have been a silent regression, so it moves here
+          — where a billing agent chasing denials would actually look for it. */}
+      {metrics.byPayerId.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Denials by payer</CardTitle>
+            <CardDescription>Where the denied money is concentrated.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <table className="w-full text-sm">
+              <thead className="text-xs text-slate-500">
+                <tr>
+                  <th className="text-left font-semibold py-1">Payer</th>
+                  <th className="text-right font-semibold py-1">Count</th>
+                  <th className="text-right font-semibold py-1">$ denied</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {metrics.byPayerId.slice(0, 8).map((p) => (
+                  <tr key={p.payerId ?? "unknown"}>
+                    {/* DenialView carries no payer name; resolve it from the
+                        payer list rather than printing a raw UUID. */}
+                    <td className="py-2 text-slate-700">
+                      {p.payerId
+                        ? (payerNames[p.payerId] ?? p.payerId.slice(0, 8))
+                        : "Unknown payer"}
+                    </td>
+                    <td className="py-2 text-right tabular">{p.count}</td>
+                    <td className="py-2 text-right tabular font-medium">
+                      ${(p.deniedCents / 100).toFixed(0)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-3 flex-wrap">

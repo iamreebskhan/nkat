@@ -29,6 +29,7 @@ interface VisitRow {
 
 interface SuperbillRow {
   id: string;
+  visitId: string;
   status: string;
   dateOfService: string;
   billedAmountCents: number;
@@ -43,33 +44,60 @@ export default function ClaimsQueuePage() {
   const [superbills, setSuperbills] = useState<SuperbillRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Never present a capped list as if it were the whole queue.
+  const [truncated, setTruncated] = useState(false);
 
   useEffect(() => {
     let abandoned = false;
     (async () => {
       try {
-        const [v, s] = await Promise.all([
-          fetch("/api/visits?limit=200").then((r) => r.json()),
-          fetch("/api/superbills?limit=200").then((r) => r.json()),
-        ]);
+        // One request per status, filtered server-side. Fetching the 200
+        // newest rows and filtering here truncated BEFORE it filtered: any
+        // work outside the 200 most recent rows vanished from the queue while
+        // the KPI cards presented that truncated count as the total.
+        //
+        // Sequential, NOT Promise.all. Every one of these opens a
+        // withOrgContext transaction to set the tenant GUC, and firing four at
+        // once exhausted the Prisma pool — the requests came back
+        // "Unable to start a transaction in the given time" (P2028) and the
+        // page rendered all-zero KPIs as if the queue were empty. A queue
+        // screen does not need the parallelism badly enough to risk that.
+        const seq = async (urls: string[]) => {
+          const out = [];
+          for (const u of urls) {
+            if (abandoned) return out;
+            out.push(await fetch(u).then((r) => r.json()).catch(() => ({ success: false })));
+          }
+          return out;
+        };
+        const vRes = await seq(READY_VISIT_STATUS.map((st) => `/api/visits?status=${st}&limit=200`));
+        const sRes = await seq(
+          ACTIONABLE_SUPERBILL_STATUS.map((st) => `/api/superbills?status=${st}&limit=200`),
+        );
         if (abandoned) return;
-        if (v.success) {
-          setVisits(
-            (v.data?.rows ?? []).filter((row: VisitRow) =>
-              (READY_VISIT_STATUS as readonly string[]).includes(row.status),
-            ),
-          );
-        }
-        if (s.success) {
-          setSuperbills(
-            (s.data?.rows ?? []).filter((row: SuperbillRow) =>
-              ACTIONABLE_SUPERBILL_STATUS.includes(row.status),
-            ),
-          );
-        }
-        if (!v.success || !s.success) {
-          setError((v.error ?? s.error) ?? null);
-        }
+
+        const failed = [...vRes, ...sRes].find((r) => !r.success);
+        if (failed) setError(failed.error ?? "Could not load the queue.");
+
+        const bills: SuperbillRow[] = sRes
+          .filter((r) => r.success)
+          .flatMap((r) => r.data?.rows ?? []);
+        // Signing now raises the draft automatically, so nearly every
+        // pending_billing visit already has a bill. Without this the
+        // "awaiting superbill" table would list every signed visit forever.
+        const billedVisitIds = new Set(bills.map((b) => b.visitId));
+        setVisits(
+          vRes
+            .filter((r) => r.success)
+            .flatMap((r) => r.data?.rows ?? [])
+            .filter((v: VisitRow) => !billedVisitIds.has(v.id)),
+        );
+        setSuperbills(bills);
+
+        // A full page per status means there may be more behind it.
+        setTruncated(
+          [...vRes, ...sRes].some((r) => r.success && (r.data?.rows ?? []).length >= 200),
+        );
       } catch {
         if (!abandoned) setError("Network error.");
       } finally {
@@ -101,6 +129,13 @@ export default function ClaimsQueuePage() {
       {error && (
         <div role="alert" className="text-sm text-red-700 bg-red-50 px-3 py-2 rounded mb-4">
           {error}
+        </div>
+      )}
+
+      {truncated && (
+        <div className="text-sm text-amber-900 bg-amber-50 ring-1 ring-inset ring-amber-600/30 px-3 py-2 rounded mb-4">
+          Showing the first 200 per status — there is more in the queue than the
+          counts below. Work through these and reload.
         </div>
       )}
 

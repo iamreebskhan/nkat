@@ -199,7 +199,7 @@ export default function NewAttestationPage() {
                   className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
                 />
               </Field>
-              <Field label="Rep ID">
+              <Field label="Rep ID" optional>
                 <input
                   value={form.payerRepId}
                   onChange={(e) => setForm({ ...form, payerRepId: e.target.value })}
@@ -218,7 +218,7 @@ export default function NewAttestationPage() {
                 />
               </Field>
               {/* callTime was in state + the POST body but had no input */}
-              <Field label="Call time">
+              <Field label="Call time" optional>
                 <input
                   type="time"
                   value={form.callTime}
@@ -226,7 +226,7 @@ export default function NewAttestationPage() {
                   className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
                 />
               </Field>
-              <Field label="Phone number">
+              <Field label="Phone number" optional>
                 <input
                   value={form.callPhoneNumber}
                   onChange={(e) => setForm({ ...form, callPhoneNumber: e.target.value })}
@@ -234,7 +234,7 @@ export default function NewAttestationPage() {
                 />
               </Field>
             </Row>
-            <Field label="Confirmed quote (verbatim)">
+            <Field label="Confirmed quote (verbatim)" optional>
               <textarea
                 value={form.confirmedQuote}
                 onChange={(e) => setForm({ ...form, confirmedQuote: e.target.value })}
@@ -243,7 +243,7 @@ export default function NewAttestationPage() {
                 placeholder='"99349 telehealth covered when…"'
               />
             </Field>
-            <Field label="Notes">
+            <Field label="Notes" optional>
               <textarea
                 value={form.callNotes}
                 onChange={(e) => setForm({ ...form, callNotes: e.target.value })}
@@ -277,12 +277,30 @@ function Row({ children }: { children: React.ReactNode }) {
   return <div className="grid grid-cols-1 md:grid-cols-3 gap-4">{children}</div>;
 }
 
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+function Field({
+  label,
+  required,
+  optional,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  // Every field carries a marker so the form reads consistently
+  // (client walkthrough 00:34).
+  optional?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
       <span className="block text-xs font-medium text-slate-700 mb-1">
         {label}
-        {required && <span className="text-red-600 ml-0.5">*</span>}
+        {required && (
+          <>
+            <span className="text-red-600 ml-0.5" aria-hidden>*</span>
+            <span className="sr-only"> required</span>
+          </>
+        )}
+        {optional && <span className="text-slate-500 font-normal ml-1">(optional)</span>}
       </span>
       {children}
     </label>

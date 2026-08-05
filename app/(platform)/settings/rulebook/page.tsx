@@ -197,6 +197,11 @@ export default function RulebookPage() {
   if (loading) return <div className="px-8 py-8 text-slate-500">Loading…</div>;
 
   const empty = !rb || rb.rows.length === 0;
+  const ORIGIN_LABEL: Record<string, string> = {
+    generated: "built from Pallio's reference library",
+    uploaded: "built from your uploaded rulebook",
+    merged: "your rulebook reconciled against Pallio's library",
+  };
 
   return (
     <div className="px-8 py-8">
@@ -208,10 +213,13 @@ export default function RulebookPage() {
             reference library or upload your own, reconcile the two, edit,
             and finalize. This is private to your organization.
           </p>
-          <p className="text-slate-500 mt-1 tabular text-xs">
+          {/* Was "v1 · 8 rules · origin: generated" — version/origin jargon
+              aimed at developers. Client walkthrough 04:43 asked for this
+              copy to be cleaned up. */}
+          <p className="text-slate-500 mt-1 text-xs">
             {rb && rb.id
-              ? `v${rb.currentVersion} · ${rb.rows.length} rules · origin: ${rb.origin}`
-              : "Not generated yet"}
+              ? `Version ${rb.currentVersion} · ${rb.rows.length} rule${rb.rows.length === 1 ? "" : "s"} · ${ORIGIN_LABEL[rb.origin] ?? rb.origin}`
+              : "Not built yet"}
             {canAttest && (
               <>
                 {" · "}
@@ -446,7 +454,20 @@ function CptRows(props: {
         </td>
         <td className="px-4 py-2 font-mono tabular text-xs text-slate-900">{cpt.cptCode}</td>
         <td className="px-4 py-2 text-slate-700">
-          {cpt.cptDescription ?? <span className="text-slate-400 italic">no descriptor</span>}
+          {/* The service bakes "[AMA license required]" into this column for
+              CPT codes when the org has no AMA licence, so the table showed a
+              raw developer token next to real HCPCS descriptions. Say what it
+              actually means. Client walkthrough [04:44]. */}
+          {cpt.cptDescription === "[AMA license required]" ? (
+            <span
+              className="text-slate-400 italic"
+              title="CPT descriptors are licensed by the AMA. Add your licence under Settings → Billing to show them."
+            >
+              Descriptor licensed by the AMA
+            </span>
+          ) : (
+            cpt.cptDescription ?? <span className="text-slate-400 italic">no descriptor</span>
+          )}
         </td>
         <td className="px-4 py-2">
           <CoverageBadge status={primaryStatus} size="sm" />
@@ -737,11 +758,16 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
   return (
     <Card className="mb-6" id="path-b-upload">
       <CardHeader>
-        <CardTitle>Path B — upload your existing rulebook</CardTitle>
+        {/* Was "Path B — upload your existing rulebook". "Path A" renders
+            nowhere, so the screen showed a B with no A — an internal spec
+            label (vision §9.4) leaking into the UI. Client walkthrough
+            [04:44]: "yeh cheezein kuch kuch likhi hain; in ko dekhna hai." */}
+        <CardTitle>Upload your existing rulebook</CardTitle>
         <CardDescription>
-          CSV with columns: payer, state, cpt, attribute, coverage, value.
-          We reconcile it against the Pallio source library so you can
-          accept ours or keep yours per row.
+          Already keep your payer rules in a spreadsheet? Upload it as a CSV
+          with columns: payer, state, cpt, attribute, coverage, value. We line
+          it up against Pallio&rsquo;s own library and show you every
+          difference, so you decide row by row which version to keep.
         </CardDescription>
       </CardHeader>
       <CardContent>

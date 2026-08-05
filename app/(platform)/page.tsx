@@ -53,14 +53,19 @@ export default async function PlatformHome() {
           subtitle="Currently under care"
           value={activePatients.toLocaleString()}
         />
+        {/* Subtitle matches the query, which also counts 'documented' visits —
+            work that's done but not yet billed. The old "Scheduled or in
+            progress" under-described it. */}
         <KPI
           title="Open visits"
-          subtitle="Scheduled or in progress"
+          subtitle="Scheduled, in progress, or awaiting billing"
           value={openVisits.toLocaleString()}
         />
+        {/* This is charges RAISED, not money received — calling it "Revenue"
+            overstated it. Collected sits in the next tile. */}
         <KPI
-          title="Revenue (30d)"
-          subtitle="Billed"
+          title="Billed (30d)"
+          subtitle="Charges raised"
           value={overview ? `$${(overview.revenue.billedCents / 100).toFixed(0)}` : "—"}
         />
         <KPI
@@ -158,7 +163,11 @@ async function countOpenVisits(orgId: string): Promise<number> {
   return withOrgContext(orgId, async (tx) => {
     const r = await tx.$queryRaw<{ n: bigint }[]>`
       SELECT COUNT(*)::bigint AS n FROM visit
-       WHERE status IN ('scheduled', 'in_progress', 'documented')
+       -- 'pending_billing' belongs here: it's the mandatory waypoint between
+       -- documented and billed, so it IS the "awaiting billing" the subtitle
+       -- promises. Omitting it made this KPI lower than the same buckets on
+       -- /visits, which is exactly the mismatch the client asked us to check.
+       WHERE status IN ('scheduled', 'in_progress', 'documented', 'pending_billing')
     `;
     return Number(r[0]?.n ?? 0);
   }).catch(() => 0);

@@ -5,6 +5,12 @@
  */
 import { z } from "zod";
 
+/**
+ * The five CPT coding bands. NOT the list a user picks from — since 0062 an
+ * org defines its own visit types (org_visit_type), and each declares which of
+ * these bands it bills as. Keep this closed: cpt-suggester branches on it, so
+ * adding a member here changes what gets billed.
+ */
 export const VISIT_TYPES = [
   "new_patient_home",
   "established_patient_home",
@@ -34,7 +40,9 @@ const IsoLoose = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
 export const ScheduleVisitSchema = z.object({
   patientId: z.string().uuid(),
   clinicianUserId: z.string().uuid(),
-  visitType: z.enum(VISIT_TYPES),
+  // An org-defined slug, validated against org_visit_type at schedule time —
+  // a closed enum here would reject the org's own custom types.
+  visitType: z.string().trim().min(2).max(64),
   scheduledStart: Iso.or(IsoLoose),
   scheduledEnd: Iso.or(IsoLoose).optional(),
   isTelehealth: z.boolean(),
@@ -71,7 +79,15 @@ export interface VisitView {
   id: string;
   patientId: string;
   clinicianUserId: string;
-  visitType: VisitType;
+  /** The org's own slug (org_visit_type.slug), not necessarily a VisitType. */
+  visitType: string;
+  /** Human label for that slug — what the UI shows. */
+  visitTypeLabel: string;
+  /**
+   * The CPT band the slug bills as. Feed THIS to the code suggester, never the
+   * raw slug, or a custom type would fall through the coder's switch.
+   */
+  codingBasis: VisitType;
   scheduledStart: string | null;
   scheduledEnd: string | null;
   startTime: string | null;

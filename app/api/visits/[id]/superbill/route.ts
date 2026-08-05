@@ -66,7 +66,7 @@ export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
       orgId: session.orgId,
       visitId: id,
     });
-    const r = await persistDraft({ orgId: session.orgId, draft });
+    const r = await persistDraft({ orgId: session.orgId, draft, actorUserId: session.userId });
     return ok({ id: r.id, draft }, { status: 201 });
   } catch (err) {
     return handleServiceError(err);

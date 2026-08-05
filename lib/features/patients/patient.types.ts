@@ -63,6 +63,15 @@ export const InsuranceSchema = z.object({
   primaryPayerId: z.string().uuid().optional(),
   primaryMemberId: z.string().min(1).max(120).optional(),
   primaryGroupNumber: z.string().max(100).optional(),
+  /**
+   * State the POLICY is issued in — drives payer-rule lookups together with
+   * primaryPayerId. Falls back to the patient's address state when absent.
+   */
+  insuranceState: z
+    .string()
+    .regex(/^[A-Za-z]{2}$/, "Use the 2-letter USPS code")
+    .transform((s) => s.toUpperCase())
+    .optional(),
   insuranceEffectiveDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -157,7 +166,11 @@ export interface PatientView {
   zip: string | null;
   phone: string | null;
   primaryPayerId: string | null;
+  /** Payer display name — resolved on detail reads (list reads carry the id only). */
+  primaryPayerName: string | null;
   primaryMemberId: string | null;
+  /** Policy state; falls back to the address state for rule lookups. */
+  insuranceState: string | null;
   primaryDiagnosisIcd10: string | null;
   acuity: PatientAcuity | null;
   /** Most recent completed/started visit (ISO date) — caseload column. */

@@ -96,6 +96,7 @@ export async function createPatient(args: {
         address_line_1, address_line_2, city, state, zip,
         phone, emergency_contact_name, emergency_contact_phone,
         primary_payer_id, primary_member_id, primary_member_id_enc, primary_group_number,
+        insurance_state,
         insurance_effective_date, insurance_termination_date,
         primary_diagnosis_icd10, referring_physician_npi,
         referring_physician_name, palliative_referral_reason,
@@ -110,6 +111,7 @@ export async function createPatient(args: {
         ${i.primaryPayerId ?? null}::uuid, ${i.primaryMemberId ?? null},
         CASE WHEN ${phi} THEN encrypt_phi(${i.primaryMemberId ?? null}) ELSE NULL END,
         ${i.primaryGroupNumber ?? null},
+        ${i.insuranceState ?? d.state ?? null},
         ${i.insuranceEffectiveDate ?? null}::date, ${i.insuranceTerminationDate ?? null}::date,
         ${c.primaryDiagnosisIcd10 ?? null}, ${c.referringPhysicianNpi ?? null},
         ${c.referringPhysicianName ?? null}, ${c.palliativeReferralReason ?? null},
@@ -139,7 +141,10 @@ interface PatientRow {
   zip: string | null;
   phone: string | null;
   primary_payer_id: string | null;
+  /** Only the detail read (getPatient) joins the payer name. */
+  primary_payer_name?: string | null;
   primary_member_id: string | null;
+  insurance_state: string | null;
   primary_diagnosis_icd10: string | null;
   acuity: PatientView["acuity"];
   last_visit_date: Date | null;
@@ -171,7 +176,9 @@ function rowToView(row: PatientRow): PatientView {
     zip: row.zip,
     phone: row.phone,
     primaryPayerId: row.primary_payer_id,
+    primaryPayerName: row.primary_payer_name ?? null,
     primaryMemberId: row.primary_member_id,
+    insuranceState: row.insurance_state,
     primaryDiagnosisIcd10: row.primary_diagnosis_icd10,
     acuity: row.acuity,
     lastVisitDate: row.last_visit_date ? row.last_visit_date.toISOString().slice(0, 10) : null,
@@ -196,7 +203,8 @@ export async function getPatient(args: {
     const rows = await tx.$queryRaw<PatientRow[]>`
       SELECT patient.id, first_name, last_name, date_of_birth,
              sex_assigned_at_birth, address_line_1, city, patient.state, zip, phone,
-             primary_payer_id, primary_member_id,
+             primary_payer_id, primary_member_id, insurance_state,
+             pay.name AS primary_payer_name,
              primary_diagnosis_icd10, acuity,
              (SELECT MAX(COALESCE(v.start_time, v.scheduled_start)) FROM visit v
                WHERE v.patient_id = patient.id
@@ -226,6 +234,7 @@ export async function getPatient(args: {
                   ELSE COALESCE(ba.full_name, ba.email) || ' (inactive)' END AS billing_agent_name,
              patient.status, patient.created_at, patient.updated_at
       FROM patient
+      LEFT JOIN payer pay ON pay.id = patient.primary_payer_id
       LEFT JOIN app_user np ON np.id = patient.primary_np_user_id
       LEFT JOIN app_user rn ON rn.id = patient.rn_user_id
       LEFT JOIN app_user sw ON sw.id = patient.social_worker_user_id
@@ -266,7 +275,7 @@ export async function listPatients(
       ? await tx.$queryRaw<PatientRow[]>`
           SELECT id, first_name, last_name, date_of_birth,
                  sex_assigned_at_birth, address_line_1, city, state, zip, phone,
-                 primary_payer_id, primary_member_id,
+                 primary_payer_id, primary_member_id, insurance_state,
                  primary_diagnosis_icd10, acuity,
              (SELECT MAX(COALESCE(v.start_time, v.scheduled_start)) FROM visit v
                WHERE v.patient_id = patient.id
@@ -292,7 +301,7 @@ export async function listPatients(
       : await tx.$queryRaw<PatientRow[]>`
           SELECT id, first_name, last_name, date_of_birth,
                  sex_assigned_at_birth, address_line_1, city, state, zip, phone,
-                 primary_payer_id, primary_member_id,
+                 primary_payer_id, primary_member_id, insurance_state,
                  primary_diagnosis_icd10, acuity,
              (SELECT MAX(COALESCE(v.start_time, v.scheduled_start)) FROM visit v
                WHERE v.patient_id = patient.id
@@ -333,7 +342,7 @@ export async function searchPatients(args: {
     const rows = await tx.$queryRaw<PatientRow[]>`
       SELECT id, first_name, last_name, date_of_birth,
              sex_assigned_at_birth, address_line_1, city, state, zip, phone,
-             primary_payer_id, primary_member_id,
+             primary_payer_id, primary_member_id, insurance_state,
              primary_diagnosis_icd10, acuity,
              (SELECT MAX(COALESCE(v.start_time, v.scheduled_start)) FROM visit v
                WHERE v.patient_id = patient.id
@@ -409,6 +418,7 @@ export async function updatePatient(args: {
             ELSE NULL
           END,
           primary_group_number = COALESCE(${i.primaryGroupNumber ?? null}, primary_group_number),
+          insurance_state = COALESCE(${i.insuranceState ?? null}, insurance_state),
           insurance_effective_date  = COALESCE(${i.insuranceEffectiveDate ?? null}::date, insurance_effective_date),
           insurance_termination_date = COALESCE(${i.insuranceTerminationDate ?? null}::date, insurance_termination_date),
           updated_at = now()

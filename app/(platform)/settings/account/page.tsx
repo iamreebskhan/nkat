@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { FieldMarker } from "@/components/forms/field-marker";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface Me {
@@ -96,7 +97,7 @@ export default function AccountPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={saveName} className="space-y-4">
-            <Field label="Full name">
+            <Field label="Full name" required>
               <input
                 required
                 value={name}
@@ -140,13 +141,13 @@ export default function AccountPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={savePw} className="space-y-4">
-            <Field label="Current password">
+            <Field label="Current password" required>
               <input required type="password" value={cur} onChange={(e) => setCur(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
             </Field>
-            <Field label="New password (min 12 chars)">
+            <Field label="New password (min 12 chars)" required>
               <input required type="password" minLength={12} value={pw1} onChange={(e) => setPw1(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
             </Field>
-            <Field label="Confirm new password">
+            <Field label="Confirm new password" required>
               <input required type="password" minLength={12} value={pw2} onChange={(e) => setPw2(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
             </Field>
             {pwMsg && (
@@ -166,10 +167,23 @@ export default function AccountPage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  required,
+  optional,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  optional?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-slate-700 mb-1">{label}</span>
+      <span className="block text-xs font-medium text-slate-700 mb-1">
+        {label}
+        <FieldMarker required={required} optional={optional} />
+      </span>
       {children}
     </label>
   );

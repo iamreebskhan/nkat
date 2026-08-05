@@ -38,9 +38,15 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleTemplate, string[]> = {
   ],
   clinician: [
     "patients.list", "patients.view", "patients.edit",
-    "visits.view.own", "visits.create", "visits.edit",
+    // "visits.submit" is what "Sign + submit for billing" needs — the primary
+    // button on the clinician's primary screen. Without it every invited
+    // clinician got a 403 on sign-off. Signing your own documentation is the
+    // clinician's job by definition; billing.* deliberately stays out.
+    "visits.view.own", "visits.create", "visits.edit", "visits.submit",
     "careplans.view", "careplans.edit",
-    "schedule.view", "schedule.create",
+    // schedule.edit so they can move their own visits on the week grid; without
+    // it drag-to-reschedule fails after the drop.
+    "schedule.view", "schedule.create", "schedule.edit",
     "messaging.read", "messaging.send",
     "patient.acuity.edit",
   ],

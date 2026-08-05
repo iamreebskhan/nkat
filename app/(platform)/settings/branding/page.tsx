@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { FieldMarker } from "@/components/forms/field-marker";
 import { Card, CardContent } from "@/components/ui/card";
 import type { BrandingView } from "@/lib/features/branding/branding.service";
 
@@ -88,14 +89,14 @@ export default function BrandingPage() {
         <CardContent className="p-6">
           <form onSubmit={save} className="space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Field label="Display name">
+              <Field label="Display name" optional>
                 <input
                   value={draft.displayName}
                   onChange={(e) => setDraft({ ...draft, displayName: e.target.value })}
                   className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
                 />
               </Field>
-              <Field label="Primary color">
+              <Field label="Primary color" optional>
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
@@ -112,7 +113,7 @@ export default function BrandingPage() {
                 </div>
               </Field>
             </div>
-            <Field label="Logo URL">
+            <Field label="Logo URL" optional>
               <input
                 value={draft.logoUrl}
                 onChange={(e) => setDraft({ ...draft, logoUrl: e.target.value })}
@@ -120,7 +121,7 @@ export default function BrandingPage() {
                 className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
               />
             </Field>
-            <Field label="Custom domain">
+            <Field label="Custom domain" optional>
               <input
                 value={draft.customDomain}
                 onChange={(e) => setDraft({ ...draft, customDomain: e.target.value })}
@@ -135,14 +136,14 @@ export default function BrandingPage() {
               )}
             </Field>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Field label="Email from name">
+              <Field label="Email from name" optional>
                 <input
                   value={draft.emailFromName}
                   onChange={(e) => setDraft({ ...draft, emailFromName: e.target.value })}
                   className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
                 />
               </Field>
-              <Field label="Email from address">
+              <Field label="Email from address" optional>
                 <input
                   type="email"
                   value={draft.emailFromAddress}
@@ -175,10 +176,23 @@ export default function BrandingPage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  required,
+  optional,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  optional?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-slate-700 mb-1">{label}</span>
+      <span className="block text-xs font-medium text-slate-700 mb-1">
+        {label}
+        <FieldMarker required={required} optional={optional} />
+      </span>
       {children}
     </label>
   );
