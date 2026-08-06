@@ -30,6 +30,8 @@ APP_DIR="${APP_DIR:-/opt/pallio/app}"
 PG_DB="${PG_DB:-pallio}"
 PM2_APP="${PM2_APP:-pallio}"
 BASE_URL="${BASE_URL:-https://app.pallio.io}"
+APP_PORT="${APP_PORT:-3000}"
+LOCAL_URL="${LOCAL_URL:-http://127.0.0.1:$APP_PORT}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/pallio}"
 MIGRATION_BASELINE="${MIGRATION_BASELINE:-0063}"
 REF="main"
@@ -238,18 +240,32 @@ say "7/7  Restart + health check"
 run "pm2 reload '$PM2_APP' --update-env"
 
 if [ "$DRY_RUN" != "1" ]; then
+  # Check the LOCAL app port, not the public URL. Curling our own public
+  # domain from this box needs NAT hairpin, which this VPS does not do —
+  # it returns 000 even when the site is perfectly healthy externally.
+  # The local port is also the thing we actually want to assert: that
+  # pm2 brought the Next.js process back up.
   # --retry-connrefused rides out the reload window without a sleep.
   code="$(curl -s -o /dev/null -w '%{http_code}' \
-          --retry 30 --retry-delay 2 --retry-connrefused \
-          --max-time 180 "$BASE_URL/login" || echo 000)"
+          --retry 30 --retry-delay 2 --retry-connrefused --retry-all-errors \
+          --max-time 180 "$LOCAL_URL/login" || echo 000)"
   if [ "$code" = "200" ]; then
-    info "health check OK — $BASE_URL/login returned 200"
+    info "health check OK — $LOCAL_URL/login returned 200"
   else
     echo ""
-    echo "HEALTH CHECK FAILED: $BASE_URL/login returned $code"
+    echo "HEALTH CHECK FAILED: $LOCAL_URL/login returned $code"
     echo "  logs:     pm2 logs $PM2_APP --lines 80"
     echo "  rollback: cd $APP_DIR && git checkout $PREV_SHA && npm ci && npm run build && pm2 reload $PM2_APP"
     exit 1
+  fi
+
+  # Public edge (Nginx + TLS) is informational only — see the hairpin
+  # note above. A failure here does NOT mean the site is down.
+  edge="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$BASE_URL/login" || echo 000)"
+  if [ "$edge" = "200" ]; then
+    info "public edge OK — $BASE_URL/login returned 200"
+  else
+    info "public edge returned $edge from this host (expected: no NAT hairpin). Verify externally."
   fi
 fi
 
