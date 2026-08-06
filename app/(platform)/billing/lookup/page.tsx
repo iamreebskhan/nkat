@@ -29,19 +29,34 @@ import {
   type CoverageStatus,
 } from "@/components/ui/coverage-badge";
 
+type LookupCitation = {
+  documentName: string;
+  documentUrl: string | null;
+  effectiveDate: string | null;
+  verbatimQuote: string;
+  page: number | null;
+};
+
 type LookupResult = {
   status: "ok" | "needs_clarification" | "unknown";
-  source: "structured_rule" | "ai_synthesized" | "unknown";
+  source: "org_rulebook" | "structured_rule" | "ai_synthesized" | "unknown";
   answer: string;
   coverageStatus: CoverageStatus;
   confidence: number;
-  citation: {
-    documentName: string;
-    documentUrl: string | null;
-    effectiveDate: string | null;
-    verbatimQuote: string;
-    page: number | null;
+  citation: LookupCitation | null;
+  /**
+   * The other library's position on the same cell. The org's rulebook
+   * decides the answer; this is what Pallio's reference library says
+   * about it, so the biller can see both.
+   */
+  comparison: {
+    scope: "org_rulebook" | "global_library";
+    coverageStatus: CoverageStatus;
+    answer: string;
+    confidence: number;
+    citation: LookupCitation | null;
   } | null;
+  conflict: boolean;
   missing?: string[];
   resolved: {
     payerId: string | null;
@@ -279,14 +294,20 @@ export default function LookupPage() {
               <div className="flex items-center gap-2">
                 <CoverageBadge status={result.coverageStatus} />
                 <span
-                  className="text-xs px-2 py-1 rounded-md bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-300 tabular"
+                  className={`text-xs px-2 py-1 rounded-md ring-1 ring-inset tabular ${
+                    result.source === "org_rulebook"
+                      ? "bg-teal-50 text-teal-800 ring-teal-300"
+                      : "bg-slate-100 text-slate-700 ring-slate-300"
+                  }`}
                   title={`Source: ${result.source}`}
                 >
-                  {result.source === "ai_synthesized"
-                    ? "AI synthesized"
-                    : result.source === "structured_rule"
-                      ? "Confirmed rule"
-                      : "Unknown"}
+                  {result.source === "org_rulebook"
+                    ? "Your rulebook"
+                    : result.source === "ai_synthesized"
+                      ? "AI synthesized"
+                      : result.source === "structured_rule"
+                        ? "Pallio library"
+                        : "Unknown"}
                 </span>
                 {result.confidence > 0 && (
                   <span className="text-xs px-2 py-1 rounded-md bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-300 tabular">
@@ -305,6 +326,62 @@ export default function LookupPage() {
             <p className="text-base text-slate-900 whitespace-pre-wrap">
               {result.answer}
             </p>
+
+            {/*
+              Side-by-side: the answer above is authoritative, this is
+              what the other library says about the same cell. Rendered
+              whenever a comparison exists — agreement is reassuring, and
+              a conflict gets the amber treatment rather than being
+              silently resolved in favour of one side.
+            */}
+            {result.comparison && (
+              <div
+                className={`mt-4 rounded-md p-3 ring-1 ring-inset ${
+                  result.conflict
+                    ? "bg-amber-50 ring-amber-300"
+                    : "bg-slate-50 ring-slate-200"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3 mb-1.5">
+                  <span className="text-xs font-semibold text-slate-700">
+                    {result.conflict
+                      ? "⚠ Pallio's rule library disagrees"
+                      : "Pallio's rule library"}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <CoverageBadge
+                      status={result.comparison.coverageStatus}
+                      size="sm"
+                    />
+                    {result.comparison.confidence > 0 && (
+                      <span className="text-[11px] text-slate-500 tabular">
+                        {(result.comparison.confidence * 100).toFixed(0)}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <p className="text-sm text-slate-700 whitespace-pre-wrap">
+                  {result.comparison.answer}
+                </p>
+                {result.comparison.citation?.verbatimQuote && (
+                  <p className="mt-1.5 text-xs text-slate-500 italic">
+                    &ldquo;{result.comparison.citation.verbatimQuote}&rdquo;
+                    {result.comparison.citation.effectiveDate && (
+                      <span className="not-italic">
+                        {" "}
+                        (effective {result.comparison.citation.effectiveDate})
+                      </span>
+                    )}
+                  </p>
+                )}
+                {result.conflict && (
+                  <p className="mt-2 text-xs text-amber-800">
+                    Your rulebook is the answer above. Re-confirm with the
+                    payer if this gap matters for the claim.
+                  </p>
+                )}
+              </div>
+            )}
 
             {result.citation && (
               <div className="mt-5 border-t border-slate-100 pt-4">

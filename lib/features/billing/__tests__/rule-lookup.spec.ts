@@ -39,6 +39,12 @@ vi.mock("../payer-rule.repository", () => ({
   listPayers: vi.fn(),
 }));
 
+const mockFetchOrgRule = vi.fn();
+vi.mock("@/lib/features/rulebook/org-rule.repository", () => ({
+  fetchOrgRule: (...a: unknown[]) => mockFetchOrgRule(...a),
+  upsertOrgRule: vi.fn(),
+}));
+
 const mockHybridSearch = vi.fn();
 vi.mock("@/lib/ai/vector-search", () => ({
   hybridSearch: (...a: unknown[]) => mockHybridSearch(...a),
@@ -198,5 +204,225 @@ describe("lookupRule decision flow (vision §18.6)", () => {
 
     expect(r.status).toBe("unknown");
     expect(r.source).toBe("unknown");
+  });
+});
+
+/**
+ * Option 3 — the org's own rulebook answers first, with the global
+ * library shown alongside for comparison.
+ *
+ * The bug these lock down: the lookup used to read the global
+ * `payer_rule` library ONLY, so an org that had documented a payer in
+ * their own rulebook still got "Unknown" at the point of care.
+ */
+describe("lookupRule org-first resolution", () => {
+  const PAYER = "22222222-2222-4222-8222-222222222222";
+  const CALLER_ORG = "33333333-3333-4333-8333-333333333333";
+
+  const orgRow = (over: Record<string, unknown> = {}) => ({
+    rowId: "org-row-1",
+    attribute: "covered",
+    value: { answer: "Covered — confirmed with Humana rep 2026-07-14." },
+    coverageStatus: "covered",
+    confidence: 0.6,
+    origin: "analyst",
+    sourceQuote: "Rep confirmed 99350 pays under the home-visit benefit.",
+    expiresAt: null,
+    lastEditedAt: new Date("2026-07-14"),
+    sourceAttestationId: "att-1",
+    sourcePayerRuleId: null,
+    ...over,
+  });
+
+  const globalRow = (over: Record<string, unknown> = {}) => ({
+    ruleId: "r-global",
+    attribute: "covered",
+    value: { answer: "Not covered per published policy." },
+    coverageStatus: "not_covered",
+    confidence: 0.9,
+    effectiveDate: new Date("2026-01-01"),
+    expirationDate: null,
+    sourceDocId: "d-global",
+    sourceUrl: "https://cms.example.gov/pfs.pdf",
+    sourceQuote: "Home visit codes are not separately payable.",
+    sourcePage: 4,
+    ...over,
+  });
+
+  const req = {
+    orgId: CALLER_ORG,
+    payerId: PAYER,
+    state: "OH",
+    cptCode: "99350",
+    attribute: "covered" as const,
+  };
+
+  it("prefers the org rulebook over the global library", async () => {
+    mockFetchOrgRule.mockResolvedValue(orgRow());
+    mockFetchPayerRule.mockResolvedValue(globalRow());
+
+    const r = await lookupRule(req);
+
+    expect(r.status).toBe("ok");
+    expect(r.source).toBe("org_rulebook");
+    expect(r.coverageStatus).toBe("covered");
+    expect(r.answer).toContain("your rulebook");
+    // Never reaches the AI tier when a library answered.
+    expect(mockSynthesize).not.toHaveBeenCalled();
+  });
+
+  it("scopes the org read to the CALLER's org", async () => {
+    mockFetchOrgRule.mockResolvedValue(orgRow());
+    mockFetchPayerRule.mockResolvedValue(null);
+
+    await lookupRule(req);
+
+    expect(mockFetchOrgRule).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: CALLER_ORG, code: "99350" }),
+    );
+  });
+
+  it("carries the global library alongside as comparison", async () => {
+    mockFetchOrgRule.mockResolvedValue(orgRow());
+    mockFetchPayerRule.mockResolvedValue(globalRow());
+
+    const r = await lookupRule(req);
+
+    expect(r.comparison).not.toBeNull();
+    expect(r.comparison?.scope).toBe("global_library");
+    expect(r.comparison?.coverageStatus).toBe("not_covered");
+    expect(r.comparison?.citation?.verbatimQuote).toContain("not separately payable");
+  });
+
+  it("flags a conflict when the two libraries disagree", async () => {
+    mockFetchOrgRule.mockResolvedValue(orgRow({ coverageStatus: "covered" }));
+    mockFetchPayerRule.mockResolvedValue(
+      globalRow({ coverageStatus: "not_covered" }),
+    );
+
+    const r = await lookupRule(req);
+
+    expect(r.conflict).toBe(true);
+    // The org still wins — the flag surfaces the divergence, it
+    // doesn't override the answer.
+    expect(r.coverageStatus).toBe("covered");
+  });
+
+  it("does not flag a conflict when they agree", async () => {
+    mockFetchOrgRule.mockResolvedValue(orgRow({ coverageStatus: "covered" }));
+    mockFetchPayerRule.mockResolvedValue(globalRow({ coverageStatus: "covered" }));
+
+    const r = await lookupRule(req);
+
+    expect(r.conflict).toBe(false);
+  });
+
+  it("does not flag a conflict against a sub-threshold global row", async () => {
+    mockFetchOrgRule.mockResolvedValue(orgRow({ coverageStatus: "covered" }));
+    mockFetchPayerRule.mockResolvedValue(
+      globalRow({ coverageStatus: "not_covered", confidence: 0.2 }),
+    );
+
+    const r = await lookupRule(req);
+
+    // A 0.2-confidence row isn't a position worth contradicting, but
+    // it's still shown so the biller can chase it down.
+    expect(r.conflict).toBe(false);
+    expect(r.comparison?.coverageStatus).toBe("not_covered");
+  });
+
+  it("falls back to the global library when the org has no row", async () => {
+    mockFetchOrgRule.mockResolvedValue(null);
+    mockFetchPayerRule.mockResolvedValue(globalRow());
+
+    const r = await lookupRule(req);
+
+    expect(r.source).toBe("structured_rule");
+    expect(r.coverageStatus).toBe("not_covered");
+    expect(r.comparison).toBeNull();
+    expect(r.conflict).toBe(false);
+  });
+
+  it("never reads an org rulebook when no orgId is supplied", async () => {
+    mockFetchOrgRule.mockResolvedValue(orgRow());
+    mockFetchPayerRule.mockResolvedValue(globalRow());
+
+    const r = await lookupRule({ ...req, orgId: undefined });
+
+    expect(mockFetchOrgRule).not.toHaveBeenCalled();
+    expect(r.source).toBe("structured_rule");
+  });
+
+  it("surfaces a weak global rule as comparison even when the answer is unknown", async () => {
+    mockFetchOrgRule.mockResolvedValue(null);
+    mockFetchPayerRule.mockResolvedValue(globalRow({ confidence: 0.1 }));
+    mockHybridSearch.mockResolvedValue([]);
+    mockSynthesize.mockResolvedValue({ refused: true, citation: null, answer: "", raw: "" });
+
+    const r = await lookupRule(req);
+
+    expect(r.status).toBe("unknown");
+    expect(r.comparison?.coverageStatus).toBe("not_covered");
+    expect(r.comparison?.confidence).toBe(0.1);
+  });
+});
+
+/**
+ * Answer prose. The JSONB payload shape varies by attribute, and the
+ * old renderer just JSON.stringify'd it, so billers saw answers like
+ * `covered. {"covered":true}` in the result panel.
+ */
+describe("lookupRule answer rendering", () => {
+  const base = {
+    payerId: "22222222-2222-4222-8222-222222222222",
+    state: "OH",
+    cptCode: "99349",
+    attribute: "covered" as const,
+  };
+
+  const globalWith = (value: Record<string, unknown>) => ({
+    ruleId: "r", attribute: "covered", value, coverageStatus: "covered",
+    confidence: 0.9, effectiveDate: new Date("2026-01-01"), expirationDate: null,
+    sourceDocId: "d", sourceUrl: null, sourceQuote: null, sourcePage: null,
+  });
+
+  it("drops the redundant covered flag instead of dumping JSON", async () => {
+    mockFetchOrgRule.mockResolvedValue(null);
+    mockFetchPayerRule.mockResolvedValue(globalWith({ covered: true }));
+
+    const r = await lookupRule(base);
+
+    expect(r.answer).toBe("For CPT 99349: covered.");
+    expect(r.answer).not.toContain("{");
+  });
+
+  it("prefers an explicit answer string", async () => {
+    mockFetchOrgRule.mockResolvedValue(null);
+    mockFetchPayerRule.mockResolvedValue(
+      globalWith({ covered: true, answer: "Covered with modifier 95." }),
+    );
+
+    const r = await lookupRule(base);
+
+    expect(r.answer).toBe("For CPT 99349: covered. Covered with modifier 95.");
+  });
+
+  it("renders remaining keys as readable pairs, notes unlabelled", async () => {
+    mockFetchOrgRule.mockResolvedValue(null);
+    mockFetchPayerRule.mockResolvedValue(
+      globalWith({
+        covered: false,
+        note: "Prior authorization required.",
+        units_per_year: 12,
+        modifier_required: true,
+      }),
+    );
+
+    const r = await lookupRule(base);
+
+    expect(r.answer).toContain("Prior authorization required.");
+    expect(r.answer).toContain("Units per year: 12");
+    expect(r.answer).toContain("Modifier required: yes");
+    expect(r.answer).not.toContain("{");
   });
 });

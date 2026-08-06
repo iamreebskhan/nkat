@@ -24,19 +24,62 @@ import {
   type CoverageStatus,
 } from "@/components/ui/coverage-badge";
 
+interface Citation {
+  documentName: string;
+  documentUrl: string | null;
+  effectiveDate: string | null;
+  verbatimQuote: string;
+  page: number | null;
+}
+
 interface RuleResult {
   status: "ok" | "needs_clarification" | "unknown";
-  source: "structured_rule" | "ai_synthesized" | "unknown";
+  source: "org_rulebook" | "structured_rule" | "ai_synthesized" | "unknown";
   answer: string;
   coverageStatus: CoverageStatus;
   confidence: number;
-  citation: {
-    documentName: string;
-    documentUrl: string | null;
-    effectiveDate: string | null;
-    verbatimQuote: string;
-    page: number | null;
+  citation: Citation | null;
+  /** The other library's position on the same cell — see §18.6 step 2b. */
+  comparison: {
+    scope: "org_rulebook" | "global_library";
+    coverageStatus: CoverageStatus;
+    answer: string;
+    confidence: number;
+    citation: Citation | null;
   } | null;
+  /** Both libraries answered and disagree. */
+  conflict: boolean;
+}
+
+/**
+ * Where the answer came from. The clinician needs this at a glance:
+ * "our own rulebook says so" carries different weight from "the
+ * platform's reference library says so".
+ */
+function SourceChip({ source }: { source: RuleResult["source"] }) {
+  const label =
+    source === "org_rulebook"
+      ? "Your rulebook"
+      : source === "structured_rule"
+        ? "Pallio library"
+        : source === "ai_synthesized"
+          ? "AI — unverified"
+          : "No rule";
+  const tone =
+    source === "org_rulebook"
+      ? "bg-teal-50 text-teal-700 ring-teal-200"
+      : source === "structured_rule"
+        ? "bg-slate-100 text-slate-600 ring-slate-200"
+        : source === "ai_synthesized"
+          ? "bg-amber-50 text-amber-700 ring-amber-200"
+          : "bg-slate-100 text-slate-500 ring-slate-200";
+  return (
+    <span
+      className={`text-[10px] px-1.5 py-0.5 rounded ring-1 ring-inset ${tone}`}
+    >
+      {label}
+    </span>
+  );
 }
 
 type Props = {
@@ -146,6 +189,22 @@ export function RuleSidebar({ payerId, state, cptCodes, attribute = "covered" }:
               >
                 &ldquo;{r.citation.verbatimQuote}&rdquo;
               </p>
+            )}
+            {r && (
+              <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                <SourceChip source={r.source} />
+                {/* Only worth the pixels when the two libraries differ —
+                    agreement is the expected case and needs no callout. */}
+                {r.conflict && r.comparison && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded ring-1 ring-inset bg-amber-50 text-amber-800 ring-amber-200"
+                    title={r.comparison.answer}
+                  >
+                    Pallio library says:{" "}
+                    {r.comparison.coverageStatus.replace("_", " ")}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         );

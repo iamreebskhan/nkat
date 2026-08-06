@@ -24,6 +24,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { withTransientRetry } from "@/lib/ai/anthropic.client";
 import { assertNoPhi } from "@/lib/ai/phi-guard";
 import { fetchPayerRule } from "@/lib/features/billing/payer-rule.repository";
+import { fetchOrgRule } from "@/lib/features/rulebook/org-rule.repository";
 import { describeDenialHeuristic, lookupCarc } from "@/lib/features/denials/denial-pure";
 import type { AiRecommendation } from "@/lib/features/denials/denial.types";
 import { env } from "@/lib/env";
@@ -51,6 +52,13 @@ export interface DenialAnalysisInput {
   cptCode: string;
   payerId: string | null;
   state: string | null;
+  /**
+   * The org whose denial this is. Their own rulebook is consulted
+   * before the global library — the same precedence the point-of-care
+   * lookup uses, so an explanation can't contradict the rule the
+   * biller was shown when they coded the visit.
+   */
+  orgId?: string | null;
   carcCode: string;
   rarcCode?: string | null;
   denialReason?: string | null;
@@ -111,23 +119,48 @@ export async function analyzeDenial(
   // Fetch the rule that was effective at DOS. If absent we still call
   // Claude — the system prompt instructs it to refuse without context,
   // which is the correct behavior.
-  const rule = await fetchPayerRule({
-    payerId: input.payerId,
-    state: input.state,
-    productLine: "commercial",
-    code: input.cptCode,
-    attribute: "covered",
-    dos: input.dateOfService,
-  });
-  const ruleSummary = rule
+  // Org rulebook first, global library second — mirrors
+  // rule-lookup.service.ts §18.6 step 2.
+  const orgRule = input.orgId
+    ? await fetchOrgRule({
+        orgId: input.orgId,
+        payerId: input.payerId,
+        state: input.state,
+        code: input.cptCode,
+        attribute: "covered",
+        dos: input.dateOfService,
+      })
+    : null;
+
+  const rule = orgRule
+    ? null
+    : await fetchPayerRule({
+        payerId: input.payerId,
+        state: input.state,
+        productLine: "commercial",
+        code: input.cptCode,
+        attribute: "covered",
+        dos: input.dateOfService,
+      });
+
+  const ruleSummary = orgRule
     ? [
-        `Coverage status: ${rule.coverageStatus}`,
-        rule.sourceQuote ? `Source quote: "${rule.sourceQuote}"` : null,
-        `Effective: ${rule.effectiveDate.toISOString().slice(0, 10)}`,
+        `Rule source: this practice's own rulebook (${orgRule.origin})`,
+        `Coverage status: ${orgRule.coverageStatus}`,
+        orgRule.sourceQuote ? `Source quote: "${orgRule.sourceQuote}"` : null,
       ]
         .filter(Boolean)
         .join("\n")
-    : null;
+    : rule
+      ? [
+          "Rule source: Pallio reference library",
+          `Coverage status: ${rule.coverageStatus}`,
+          rule.sourceQuote ? `Source quote: "${rule.sourceQuote}"` : null,
+          `Effective: ${rule.effectiveDate.toISOString().slice(0, 10)}`,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : null;
 
   const userMsg = [
     `Denial signal:`,
@@ -198,7 +231,7 @@ export async function analyzeDenial(
 
   // Hallucination guard #2: a non-unknown recommendation REQUIRES a
   // citation when a rule was provided. Without one, fall back.
-  if (recommendation !== "unknown" && rule && !parsed.citation) {
+  if (recommendation !== "unknown" && (rule || orgRule) && !parsed.citation) {
     return heuristicFallback(heuristic.heuristic, heuristic.recommendation);
   }
 

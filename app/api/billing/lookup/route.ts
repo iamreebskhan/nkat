@@ -16,10 +16,8 @@ import { z } from "zod";
 import { ok, fail, parseJson } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { pushAttestationRequest } from "@/lib/features/attestations/attestation.service";
-import { ATTRIBUTE_DB_MAP } from "@/lib/features/billing/payer-rule.repository";
 import { lookupRule } from "@/lib/features/billing/rule-lookup.service";
-import { refreshOrgRulebookRowsForRule } from "@/lib/features/rulebook/rulebook.service";
-import { prisma } from "@/lib/db";
+import { upsertOrgRule } from "@/lib/features/rulebook/org-rule.repository";
 
 const Schema = z.object({
   query: z.string().max(500).optional(),
@@ -55,7 +53,10 @@ export async function POST(req: NextRequest): Promise<Response> {
   // The lookupRule service handles its own PHI guard, missing-fields,
   // and AI-availability fallbacks. The route is just plumbing + audit.
   try {
-    const result = await lookupRule(body);
+    // orgId is taken from the SESSION, never from the request body —
+    // it selects which tenant's rulebook answers the lookup, so a
+    // client-supplied value would be a cross-tenant read.
+    const result = await lookupRule({ ...body, orgId: session.orgId });
 
     // Self-reinforcing corpus (closes the long-standing phase-6 TODO):
     // when the engine synthesizes an answer from RAG, persist it as a
@@ -78,10 +79,18 @@ export async function POST(req: NextRequest): Promise<Response> {
 }
 
 /**
- * Side-effect: write a payer_rule (confidence=0.4, created_by='ai')
- * referencing the citation's source_document, and push the same key
- * to the analyst attestation queue so a human verifies before it gets
- * promoted to higher confidence.
+ * Side-effect: cache the synthesized answer in THIS ORG'S rulebook
+ * (confidence=0.4, origin='source') and push the same key to the
+ * analyst attestation queue so a human verifies it.
+ *
+ * Why the org's rulebook and not the global `payer_rule` library:
+ * this row is an unreviewed 0.4-confidence AI answer produced by one
+ * tenant's query. Writing it globally — which is what this function
+ * used to do — silently made it the platform's answer for every other
+ * tenant too. The org keeps the benefit (next identical lookup hits
+ * the org-rulebook step, no AI cost, same answer) without exporting an
+ * unverified rule to 100+ other practices. `payer_rule` is now written
+ * only by platform ingestion.
  *
  * Best-effort: failures are logged but don't surface to the caller —
  * the user already has their answer.
@@ -94,84 +103,24 @@ async function persistSynthesizedRule(
   if (!result.citation) return;
   if (!result.resolved.payerId || !result.resolved.state || !result.resolved.cptCode) return;
 
-  // Prefer the source_doc_id the engine carried from the top RAG
-  // chunk; fall back to a URL lookup if (legacy) callers don't carry
-  // it. Without one, we can't satisfy payer_rule.source_doc_id NOT
-  // NULL, so we skip the persist rather than write a dangling row.
-  let sourceDocId = result.sourceDocId ?? null;
-  if (!sourceDocId) {
-    const url = result.citation.documentUrl;
-    if (!url) return;
-    const docs = await prisma.$queryRaw<{ id: string }[]>`
-      SELECT id FROM source_document WHERE url = ${url} LIMIT 1
-    `;
-    if (docs.length === 0) return;
-    sourceDocId = docs[0]!.id;
-  }
+  await upsertOrgRule({
+    orgId,
+    payerId: result.resolved.payerId,
+    state: result.resolved.state,
+    code: result.resolved.cptCode,
+    attribute: result.resolved.attribute ?? "covered",
+    coverageStatus: result.coverageStatus,
+    ruleValue: { answer: result.answer },
+    confidence: 0.4,
+    origin: "source",
+    sourceQuote: result.citation.verbatimQuote,
+    // A machine guess must never overwrite what a human in this org
+    // deliberately set.
+    preserveOverride: true,
+  });
 
-  const dbAttr =
-    ATTRIBUTE_DB_MAP[result.resolved.attribute as keyof typeof ATTRIBUTE_DB_MAP] ??
-    result.resolved.attribute;
-
-  // Don't double-insert the global payer_rule if we've already
-  // persisted for this exact key. We still queue an attestation
-  // request for THIS org below — each tenant gets their own gap
-  // flagged even when the global rule already exists.
-  const dup = await prisma.$queryRaw<{ id: string }[]>`
-    SELECT id FROM payer_rule
-     WHERE payer_id = ${result.resolved.payerId}::uuid
-       AND state    = ${result.resolved.state}
-       AND code     = ${result.resolved.cptCode}
-       AND attribute = ${dbAttr}
-       AND created_by = 'ai'
-       AND expiration_date IS NULL
-     LIMIT 1
-  `;
-  const alreadyPersisted = dup.length > 0;
-
-  if (!alreadyPersisted) {
-    const ins = await prisma.$queryRaw<{ id: string }[]>`
-    INSERT INTO payer_rule (
-      payer_id, state, product_line, code, attribute,
-      value, coverage_status, confidence,
-      effective_date, expiration_date,
-      source_doc_id, source_quote,
-      created_by
-    ) VALUES (
-      ${result.resolved.payerId}::uuid, ${result.resolved.state}, 'commercial',
-      ${result.resolved.cptCode}, ${dbAttr},
-      ${JSON.stringify({ answer: result.answer })}::jsonb,
-      ${result.coverageStatus}, 0.40,
-      CURRENT_DATE, NULL,
-      ${sourceDocId}::uuid,
-      ${result.citation.verbatimQuote},
-      'ai'
-    )
-    RETURNING id
-  `;
-
-    // Cross-org rulebook refresh — every org with this (payer/state/code)
-    // cell now reflects the AI-synthesized data instead of an "unknown"
-    // placeholder. Lookups already query payer_rule directly so they
-    // would see the new row; this keeps the rulebook display in sync.
-    await refreshOrgRulebookRowsForRule({
-      ruleId: ins[0]!.id,
-      payerId: result.resolved.payerId,
-      state: result.resolved.state,
-      cptCode: result.resolved.cptCode,
-      dbAttribute: dbAttr,
-      coverageStatus: result.coverageStatus,
-      ruleValue: { answer: result.answer },
-      confidence: 0.4,
-      sourceQuote: result.citation.verbatimQuote,
-    });
-  }
-
-  // Queue an attestation request FOR THIS ORG (even when the global
-  // rule was already persisted by a prior session). Every tenant
-  // should see the gap in their queue and be able to confirm or
-  // re-confirm it independently. analyst_attestation_request is
-  // tenant-scoped via RLS so no leak across orgs.
+  // Queue an attestation request FOR THIS ORG so a human confirms the
+  // guess. analyst_attestation_request is tenant-scoped via RLS.
   await pushAttestationRequest({
     orgId,
     payerId: result.resolved.payerId,

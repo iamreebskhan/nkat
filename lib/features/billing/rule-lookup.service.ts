@@ -7,10 +7,19 @@
  *
  *   1. Validate payer + state + cptCode + attribute. If any missing,
  *      try parsing the natural-language query (haiku) to fill in.
- *   2. Structured SQL lookup against `payer_rule` for an exact match
- *      effective on the date-of-service. If hit + confidence ≥ 0.5,
- *      return immediately with citation from `source_document`.
- *   3. If no SQL hit OR confidence < 0.5, run hybrid retrieval over
+ *   2. ORG FIRST. Look the cell up in the caller's own rulebook
+ *      (`org_rulebook_row`). If they have it, that IS the answer — an
+ *      org's documented position outranks the platform's reference
+ *      library, because they're the ones who called the payer.
+ *   2b. Structured SQL lookup against the global `payer_rule` library
+ *      for an exact match effective on the date-of-service. This is
+ *      the fallback when the org's rulebook doesn't cover the cell —
+ *      and it is ALWAYS fetched regardless, so the answer can carry
+ *      the other library's position as `comparison` ("your rulebook
+ *      says X, Pallio's library says Y"). Disagreement sets
+ *      `conflict`, which the UI surfaces rather than silently
+ *      preferring one side.
+ *   3. If neither library hits, run hybrid retrieval over
  *      `document_chunk` (dense + sparse) filtered to the same payer
  *      and state.
  *   4. Pass the structured rule (if any) + retrieved chunks to
@@ -37,9 +46,16 @@ import { isEmbedderConfigured } from "@/lib/ai/embedder";
 import { hybridSearch } from "@/lib/ai/vector-search";
 
 import {
+  fetchOrgRule,
+  type OrgRuleHit,
+  type OrgRuleOrigin,
+} from "@/lib/features/rulebook/org-rule.repository";
+
+import {
   fetchPayerRule,
   type CoverageStatus,
   type PayerRuleAttribute,
+  type PayerRuleHit,
 } from "./payer-rule.repository";
 
 export interface LookupRequest {
@@ -51,12 +67,23 @@ export interface LookupRequest {
   attribute?: PayerRuleAttribute;
   /** ISO date; defaults to today if omitted. */
   dos?: string;
+  /**
+   * The caller's org. Required for the org-rulebook step — without it
+   * the lookup silently degrades to the global library only, which is
+   * exactly the bug this parameter exists to prevent. Callers that
+   * genuinely have no tenant (platform tooling) may omit it.
+   */
+  orgId?: string;
 }
 
 export type LookupSource =
+  | "org_rulebook"
   | "structured_rule"
   | "ai_synthesized"
   | "unknown";
+
+/** Which library an answer came from. */
+export type LookupScope = "org_rulebook" | "global_library";
 
 export interface LookupCitation {
   documentName: string;
@@ -84,6 +111,29 @@ export interface LookupResult {
    * chunk content, not URLs).
    */
   sourceDocId?: string | null;
+  /**
+   * The OTHER library's position on the same cell, for side-by-side
+   * display. When the answer came from the org's rulebook this holds
+   * the global library's rule; when the answer came from the global
+   * library this holds the org's row (normally null, since an org hit
+   * would have won). Null when the other side has nothing to say.
+   */
+  comparison: {
+    scope: LookupScope;
+    coverageStatus: CoverageStatus;
+    answer: string;
+    confidence: number;
+    citation: LookupCitation | null;
+    /** Only for scope='org_rulebook' — how the org got this value. */
+    origin?: OrgRuleOrigin;
+  } | null;
+  /**
+   * True when both libraries answered and their coverage_status
+   * disagrees. The org answer still wins; this flags the divergence so
+   * the biller can see it instead of unknowingly billing against a
+   * stale rulebook.
+   */
+  conflict: boolean;
   /** Fields the caller should ask the user to fill in (if any). */
   missing?: ("payer" | "state" | "cptCode" | "attribute")[];
   /** Echoes back the resolved parameters for the UI to show. */
@@ -158,6 +208,8 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
       coverageStatus: "unknown",
       confidence: 0,
       citation: null,
+      comparison: null,
+      conflict: false,
       missing,
       resolved: { payerId, state, cptCode, attribute },
     };
@@ -169,50 +221,113 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
   const fullCptCode = cptCode!;
   const fullAttribute = attribute!;
 
-  // Step 2 — structured SQL lookup. Default product_line=commercial; the
-  // route handler can override per resolved payer_type.
-  const structuredHit = await fetchPayerRule({
+  const resolved = {
     payerId: fullPayerId,
     state: fullState,
-    productLine: "commercial",
-    code: fullCptCode,
+    cptCode: fullCptCode,
     attribute: fullAttribute,
-    dos,
-  });
+  };
 
-  if (structuredHit && structuredHit.confidence >= MIN_SQL_CONFIDENCE) {
+  // Steps 2 + 2b — query BOTH libraries. The org's rulebook decides the
+  // answer; the global library rides along as `comparison` so the
+  // biller always sees both positions. Run them concurrently: they hit
+  // different tables and neither depends on the other.
+  const [orgHit, structuredHit] = await Promise.all([
+    // No orgId (platform tooling) → skip the org library entirely
+    // rather than leak another tenant's rulebook.
+    req.orgId
+      ? fetchOrgRule({
+          orgId: req.orgId,
+          payerId: fullPayerId,
+          state: fullState,
+          code: fullCptCode,
+          attribute: fullAttribute,
+          dos,
+        })
+      : Promise.resolve(null),
+    // Default product_line=commercial; the route handler can override
+    // per resolved payer_type.
+    fetchPayerRule({
+      payerId: fullPayerId,
+      state: fullState,
+      productLine: "commercial",
+      code: fullCptCode,
+      attribute: fullAttribute,
+      dos,
+    }),
+  ]);
+
+  const globalUsable =
+    structuredHit !== null && structuredHit.confidence >= MIN_SQL_CONFIDENCE;
+
+  // Step 2 — the org's own rulebook wins when it covers the cell.
+  if (orgHit) {
     return {
       status: "ok",
-      source: "structured_rule",
-      answer: renderStructuredAnswer(structuredHit, fullCptCode),
-      coverageStatus: structuredHit.coverageStatus,
-      confidence: structuredHit.confidence,
-      citation: structuredHit.sourceQuote
+      source: "org_rulebook",
+      answer: renderOrgAnswer(orgHit, fullCptCode),
+      coverageStatus: orgHit.coverageStatus,
+      confidence: orgHit.confidence,
+      citation: orgHit.sourceQuote
         ? {
-            documentName: "Payer policy document",
-            documentUrl: structuredHit.sourceUrl,
-            effectiveDate: structuredHit.effectiveDate.toISOString().slice(0, 10),
-            verbatimQuote: structuredHit.sourceQuote,
-            page: structuredHit.sourcePage,
+            documentName: orgRuleCitationName(orgHit),
+            documentUrl: null,
+            effectiveDate: orgHit.lastEditedAt
+              ? orgHit.lastEditedAt.toISOString().slice(0, 10)
+              : null,
+            verbatimQuote: orgHit.sourceQuote,
+            page: null,
           }
         : null,
-      resolved: {
-        payerId: fullPayerId,
-        state: fullState,
-        cptCode: fullCptCode,
-        attribute: fullAttribute,
-      },
+      comparison: structuredHit
+        ? globalComparison(structuredHit, fullCptCode)
+        : null,
+      // Only a usable global rule counts as a real disagreement — a
+      // sub-threshold row isn't a position worth contradicting.
+      conflict:
+        globalUsable && structuredHit!.coverageStatus !== orgHit.coverageStatus,
+      resolved,
     };
   }
 
+  // Step 2b — fall back to the global reference library.
+  if (globalUsable) {
+    return {
+      status: "ok",
+      source: "structured_rule",
+      answer: renderStructuredAnswer(structuredHit!, fullCptCode),
+      coverageStatus: structuredHit!.coverageStatus,
+      confidence: structuredHit!.confidence,
+      citation: structuredHit!.sourceQuote
+        ? {
+            documentName: "Payer policy document",
+            documentUrl: structuredHit!.sourceUrl,
+            effectiveDate: structuredHit!.effectiveDate
+              .toISOString()
+              .slice(0, 10),
+            verbatimQuote: structuredHit!.sourceQuote,
+            page: structuredHit!.sourcePage,
+          }
+        : null,
+      // The org had nothing for this cell — say so explicitly rather
+      // than leaving the UI to guess why there's no second column.
+      comparison: null,
+      conflict: false,
+      resolved,
+    };
+  }
+
+  // A structured row below MIN_SQL_CONFIDENCE can't be the answer, but
+  // it's still the global library's stated position — carry it into the
+  // fallback paths so "unknown" doesn't hide a low-confidence rule the
+  // biller might want to chase down.
+  const weakGlobal = structuredHit
+    ? globalComparison(structuredHit, fullCptCode)
+    : null;
+
   // Step 3+4 — RAG fallback. Skip if AI providers aren't configured.
   if (!isAnthropicConfigured() || !isEmbedderConfigured()) {
-    return unknownResult({
-      payerId: fullPayerId,
-      state: fullState,
-      cptCode: fullCptCode,
-      attribute: fullAttribute,
-    });
+    return unknownResult(resolved, weakGlobal);
   }
 
   const queryText =
@@ -237,12 +352,7 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
   // Step 5 — refusal path. NEVER swap in a synthesized rule without a
   // verbatim citation.
   if (synth.refused || !synth.citation) {
-    return unknownResult({
-      payerId: fullPayerId,
-      state: fullState,
-      cptCode: fullCptCode,
-      attribute: fullAttribute,
-    });
+    return unknownResult(resolved, weakGlobal);
   }
 
   // Step 6 — caller persists the synthesized rule for analyst review.
@@ -264,13 +374,44 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
       page: null,
     },
     sourceDocId: chunks[0]?.docId ?? null,
-    resolved: {
-      payerId: fullPayerId,
-      state: fullState,
-      cptCode: fullCptCode,
-      attribute: fullAttribute,
-    },
+    comparison: weakGlobal,
+    conflict: false,
+    resolved,
   };
+}
+
+/**
+ * Turn a rule's JSONB payload into a sentence a biller can read.
+ *
+ * The payload shape varies by attribute, so there's no fixed template.
+ * Prefer an explicit `answer` string; otherwise flatten the remaining
+ * keys into "Label: value" pairs. `covered` is dropped because the
+ * coverage status already says it — printing both gave us answers like
+ * "covered. {"covered":true}".
+ */
+function describeRuleValue(value: Record<string, unknown>): string {
+  if (typeof value.answer === "string" && value.answer.trim()) {
+    return value.answer.trim();
+  }
+  const parts: string[] = [];
+  for (const [key, raw] of Object.entries(value)) {
+    if (key === "answer" || key === "covered") continue;
+    if (raw === null || raw === undefined || raw === "") continue;
+    const label = key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+    const rendered =
+      typeof raw === "boolean"
+        ? raw
+          ? "yes"
+          : "no"
+        : Array.isArray(raw)
+          ? raw.join(", ")
+          : typeof raw === "object"
+            ? JSON.stringify(raw)
+            : String(raw);
+    // A note/detail field is already a sentence — don't label it.
+    parts.push(/^(note|notes|detail|details)$/i.test(key) ? rendered : `${label}: ${rendered}`);
+  }
+  return parts.join(". ");
 }
 
 function renderStructuredAnswer(
@@ -278,19 +419,64 @@ function renderStructuredAnswer(
   code: string,
 ): string {
   const status = hit.coverageStatus.replace("_", " ");
-  const detail =
-    typeof hit.value.answer === "string"
-      ? hit.value.answer
-      : JSON.stringify(hit.value);
-  return `For CPT ${code}: ${status}. ${detail}`;
+  const detail = describeRuleValue(hit.value);
+  return detail
+    ? `For CPT ${code}: ${status}. ${detail}`
+    : `For CPT ${code}: ${status}.`;
 }
 
-function unknownResult(resolved: {
-  payerId: string;
-  state: string;
-  cptCode: string;
-  attribute: PayerRuleAttribute;
-}): LookupResult {
+/** Human label for where an org rulebook value came from. */
+function orgRuleCitationName(hit: OrgRuleHit): string {
+  switch (hit.origin) {
+    case "analyst":
+      return "Your analyst attestation (payer call)";
+    case "org_override":
+      return "Your rulebook (manual override)";
+    case "org_upload":
+      return "Your uploaded rulebook";
+    default:
+      return "Your rulebook";
+  }
+}
+
+function renderOrgAnswer(hit: OrgRuleHit, code: string): string {
+  const status = hit.coverageStatus.replace("_", " ");
+  const detail = describeRuleValue(hit.value);
+  const prefix = `Per your rulebook, CPT ${code}: ${status}.`;
+  return detail ? `${prefix} ${detail}` : prefix;
+}
+
+/** Package a global-library hit for the side-by-side comparison slot. */
+function globalComparison(
+  hit: PayerRuleHit,
+  code: string,
+): NonNullable<LookupResult["comparison"]> {
+  return {
+    scope: "global_library",
+    coverageStatus: hit.coverageStatus,
+    answer: renderStructuredAnswer(hit, code),
+    confidence: hit.confidence,
+    citation: hit.sourceQuote
+      ? {
+          documentName: "Pallio rule library",
+          documentUrl: hit.sourceUrl,
+          effectiveDate: hit.effectiveDate.toISOString().slice(0, 10),
+          verbatimQuote: hit.sourceQuote,
+          page: hit.sourcePage,
+        }
+      : null,
+  };
+}
+
+function unknownResult(
+  resolved: {
+    payerId: string;
+    state: string;
+    cptCode: string;
+    attribute: PayerRuleAttribute;
+  },
+  comparison: LookupResult["comparison"] = null,
+): LookupResult {
   return {
     status: "unknown",
     source: "unknown",
@@ -298,6 +484,8 @@ function unknownResult(resolved: {
     coverageStatus: "unknown",
     confidence: 0,
     citation: null,
+    comparison,
+    conflict: false,
     resolved,
   };
 }
