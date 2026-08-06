@@ -4,15 +4,10 @@
  *
  * Multi-tenant via withOrgContext.
  */
-import { createHash } from "node:crypto";
-
 import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
-import {
-  ATTRIBUTE_DB_MAP,
-  type CoverageStatus,
-} from "@/lib/features/billing/payer-rule.repository";
-import { refreshOrgRulebookRowsForRule } from "@/lib/features/rulebook/rulebook.service";
+import { type CoverageStatus } from "@/lib/features/billing/payer-rule.repository";
+import { upsertOrgRule } from "@/lib/features/rulebook/org-rule.repository";
 import { defaultExpiry } from "./attestation-pure";
 import type {
   AttestationLifecycle,
@@ -138,158 +133,50 @@ export async function createAttestation(args: {
     `;
     const attestationId = rows[0]!.id;
 
-    // Source 3 — bridge into the lookup corpus. Every confirmed
-    // attestation also writes a payer_rule row so it actually surfaces
-    // in rule lookups (without this, attested rules sat in
-    // analyst_attestation forever and the engine never saw them).
-    // Returns the metadata createAttestation needs to refresh the
-    // org_rulebook_row in a separate (post-commit) transaction so the
-    // FK from org_rulebook_row.source_payer_rule_id → payer_rule.id
-    // is satisfied (the rule has to be COMMITTED before the
-    // cross-org breakglass UPDATE can see it).
-    const mirror = await mirrorAttestationToPayerRule(tx, {
-      attestationId,
+    return { id: attestationId };
+  }).then(async ({ id }) => {
+    // POST-COMMIT — Source 3: bridge the attestation into the lookup
+    // corpus so it actually surfaces in rule lookups (without this,
+    // attested rules sit in analyst_attestation forever and the engine
+    // never sees them).
+    //
+    // This writes THIS ORG'S rulebook row, not the global payer_rule
+    // library. It used to do the opposite, and the consequences were
+    // real: one org's phone call inserted a global rule every other
+    // tenant then read, and the insert was preceded by an unfiltered
+    // `UPDATE payer_rule SET expiration_date = CURRENT_DATE` that
+    // expired CMS-seeded rules for all of them.
+    //
+    // The lookup engine reads org_rulebook_row first (rule-lookup
+    // .service.ts step 2), so the attestation still reaches the
+    // engine — for the org that made the call, and only them.
+    //
+    // Runs post-commit so a mirror failure can't roll back a
+    // successfully recorded attestation; the attestation is the
+    // system of record, the rulebook row is derived.
+    await upsertOrgRule({
+      orgId,
       payerId: payload.payerId,
       state: payload.state,
-      cptCode: payload.cptCode,
-      attributeApi: payload.attribute,
-      coverageStatus: payload.coverageStatus,
+      code: payload.cptCode,
+      attribute: payload.attribute,
+      coverageStatus: payload.coverageStatus as CoverageStatus,
       ruleValue: payload.ruleValue ?? {},
-      sourceQuote: payload.confirmedQuote ?? "",
-      payerRepName: payload.payerRepName,
-      callDate: payload.callDate,
-      expiresAt,
-      attestedByUserId,
+      // Verbal confirmation, per the documented confidence ladder.
+      confidence: 0.6,
+      origin: "analyst",
+      sourceQuote: payload.confirmedQuote || null,
+      expiresAt: expiresAt,
+      sourceAttestationId: id,
+      byUserId: attestedByUserId,
+      // An analyst confirming a rule by phone IS the deliberate human
+      // decision, so it supersedes an earlier manual override.
+      preserveOverride: false,
+    }).catch((e) => {
+      console.warn("attestation → org rulebook mirror failed (non-fatal):", e);
     });
-
-    return { id: attestationId, mirror };
-  }).then(async ({ id, mirror }) => {
-    // POST-COMMIT: now the new payer_rule row is visible to other
-    // connections. Run the cross-org rulebook refresh via its own
-    // breakglass tx — FK to payer_rule.id is satisfied.
-    if (mirror) {
-      await refreshOrgRulebookRowsForRule(mirror);
-    }
     return { id };
   });
-}
-
-/**
- * Mirror an active analyst attestation into the global payer_rule
- * corpus so the lookup engine picks it up. payer_rule + source_document
- * are global (no RLS) — fine to write from inside the org-scoped tx.
- *
- * - Creates a source_document of document_type='analyst_call' as the
- *   citation anchor (payer_rule requires a non-null source_doc_id).
- * - Expires any existing active payer_rule for the same key.
- * - Inserts a new payer_rule with confidence=0.6 (verbal confirmation,
- *   per the documented confidence ladder), product_line='commercial'
- *   (the lookup query ranks an exact match first but falls back to any
- *   product line, so this is the safe canonical pick).
- */
-async function mirrorAttestationToPayerRule(
-  tx: Parameters<Parameters<typeof withOrgContext<unknown>>[1]>[0],
-  args: {
-    attestationId: string;
-    payerId: string;
-    state: string;
-    cptCode: string;
-    attributeApi: string;
-    coverageStatus: string;
-    ruleValue: Record<string, unknown>;
-    sourceQuote: string;
-    payerRepName: string;
-    callDate: string;
-    expiresAt: string;
-    attestedByUserId: string;
-  },
-): Promise<{
-  ruleId: string;
-  payerId: string;
-  state: string;
-  cptCode: string;
-  dbAttribute: string;
-  coverageStatus: CoverageStatus;
-  ruleValue: Record<string, unknown>;
-  confidence: number;
-  sourceQuote: string | null;
-}> {
-  const dbAttribute =
-    ATTRIBUTE_DB_MAP[args.attributeApi as keyof typeof ATTRIBUTE_DB_MAP] ??
-    args.attributeApi;
-  const hash =
-    "sha256:" +
-    createHash("sha256")
-      .update(args.sourceQuote || args.attestationId)
-      .digest("hex");
-
-  const docs = await tx.$queryRaw<{ id: string }[]>`
-    INSERT INTO source_document (
-      payer_id, url, document_type, title, effective_date,
-      retrieved_at, content_hash, cms_license_token_used, source_metadata
-    ) VALUES (
-      ${args.payerId}::uuid,
-      ${"attestation://" + args.attestationId},
-      'analyst_call',
-      ${`Analyst call ${args.callDate} with ${args.payerRepName}`},
-      ${args.callDate}::date,
-      now(),
-      ${hash},
-      FALSE,
-      ${JSON.stringify({
-        attestation_id: args.attestationId,
-        payer_rep: args.payerRepName,
-      })}::jsonb
-    )
-    RETURNING id
-  `;
-  const sourceDocId = docs[0]!.id;
-
-  // Expire any prior active rule for this same key. Don't filter on
-  // product_line — there should be at most one active rule per key
-  // regardless of how it was originally classified.
-  await tx.$executeRaw`
-    UPDATE payer_rule SET expiration_date = CURRENT_DATE
-     WHERE payer_id = ${args.payerId}::uuid
-       AND state = ${args.state}
-       AND code = ${args.cptCode}
-       AND attribute = ${dbAttribute}
-       AND expiration_date IS NULL
-  `;
-
-  const inserted = await tx.$queryRaw<{ id: string }[]>`
-    INSERT INTO payer_rule (
-      payer_id, state, product_line, code, attribute,
-      value, coverage_status, confidence,
-      effective_date, expiration_date,
-      source_doc_id, source_quote,
-      created_by
-    ) VALUES (
-      ${args.payerId}::uuid, ${args.state}, 'commercial',
-      ${args.cptCode}, ${dbAttribute},
-      ${JSON.stringify(args.ruleValue)}::jsonb,
-      ${args.coverageStatus as CoverageStatus}, 0.60,
-      ${args.callDate}::date, ${args.expiresAt}::date,
-      ${sourceDocId}::uuid,
-      ${args.sourceQuote || null},
-      ${"analyst:" + args.attestedByUserId}
-    )
-    RETURNING id
-  `;
-
-  // Return the metadata the caller needs to run the cross-org
-  // rulebook refresh AFTER this withOrgContext tx commits.
-  return {
-    ruleId: inserted[0]!.id,
-    payerId: args.payerId,
-    state: args.state,
-    cptCode: args.cptCode,
-    dbAttribute,
-    coverageStatus: args.coverageStatus as CoverageStatus,
-    ruleValue: args.ruleValue,
-    confidence: 0.6,
-    sourceQuote: args.sourceQuote || null,
-  };
 }
 
 export async function getAttestation(args: {
@@ -347,16 +234,20 @@ export async function voidAttestation(args: {
        WHERE id = ${args.id}::uuid
          AND status = 'active'
     `;
-    // Also expire the mirrored payer_rule row so the void actually
-    // removes the rule from lookups (otherwise voiding leaves the
-    // attested rule active in the corpus).
+    // Also drop the mirrored rulebook row so the void actually removes
+    // the rule from lookups (otherwise voiding leaves the attested rule
+    // answering). Voiding means "that confirmation was wrong", so the
+    // derived row goes entirely and the lookup falls back to the global
+    // library — same net effect as the old payer_rule expiry, minus the
+    // cross-tenant blast radius.
+    //
+    // Scoped by org_id as well as source_attestation_id: RLS already
+    // confines this tx, but the predicate makes the tenant boundary
+    // legible at the call site.
     await tx.$executeRaw`
-      UPDATE payer_rule SET expiration_date = CURRENT_DATE
-       WHERE source_doc_id IN (
-         SELECT id FROM source_document
-          WHERE url = ${"attestation://" + args.id}
-       )
-         AND expiration_date IS NULL
+      DELETE FROM org_rulebook_row
+       WHERE org_id = ${args.orgId}::uuid
+         AND source_attestation_id = ${args.id}::uuid
     `;
   });
 }

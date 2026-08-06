@@ -390,17 +390,29 @@ export async function applyEdits(args: {
 /**
  * Auto-refresh every org's rulebook_row that points at the same
  * (payer, state, code, attribute) key as a freshly-written
- * payer_rule. CROSS-ORG by design — payer_rule is global, so when a
- * new rule lands (analyst attestation, ingestion engine, AI persist)
- * every org's rulebook should pick up the change without a manual
- * Re-generate. Uses breakglass to bypass tenant RLS.
+ * payer_rule. CROSS-ORG by design — it writes rows that 100+ other
+ * tenants read — so it uses breakglass to bypass tenant RLS.
+ *
+ * ⚠️ PLATFORM INGESTION ONLY. The only legitimate caller is
+ * `document-ingestion.service.ts`, where a platform admin has ingested
+ * a payer/CMS document into the global library and every org's mirror
+ * of that library should follow. It is NOT for org-triggered actions.
+ *
+ * It used to be called from two org-triggered paths — analyst
+ * attestations and the AI-synthesized persist in
+ * `app/api/billing/lookup/route.ts`. Both meant one tenant's action
+ * rewrote every other tenant's rulebook, and the attestation path also
+ * expired the underlying global payer_rule for everyone. Those now
+ * write to the acting org's own rulebook via
+ * `org-rule.repository.ts#upsertOrgRule`. Do not reintroduce a call
+ * from an org-scoped code path; if you need one, you want upsertOrgRule.
  *
  * Skipped for rows with origin='org_override' (the user explicitly
  * customized that cell; we never silently overwrite local edits).
  *
  * Returns the number of org rulebook rows refreshed across all orgs.
  */
-export async function refreshOrgRulebookRowsForRule(args: {
+export async function propagateGlobalRuleToAllOrgRulebooks(args: {
   ruleId: string;
   payerId: string;
   state: string;
@@ -426,10 +438,12 @@ export async function refreshOrgRulebookRowsForRule(args: {
          AND state = ${args.state}
          AND cpt_code = ${args.cptCode}
          AND attribute = ${args.dbAttribute}
-         AND origin <> 'org_override'
+         -- Never clobber a tenant's own position: an explicit override
+         -- or an analyst's payer call outranks a library refresh.
+         AND origin NOT IN ('org_override', 'analyst')
     `;
     return Number(updated);
-  }, "refresh org_rulebook_row from payer_rule change");
+  }, "propagate global payer_rule change to org rulebook mirrors");
 }
 
 /**

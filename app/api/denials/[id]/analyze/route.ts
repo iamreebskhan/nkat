@@ -39,6 +39,7 @@ export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
     cptCode: denial.cptCode,
     payerId: denial.payerId,
     state: null,
+    orgId: session.orgId,
     carcCode: denial.carcCode,
     rarcCode: denial.rarcCode,
     denialReason: denial.denialReason,

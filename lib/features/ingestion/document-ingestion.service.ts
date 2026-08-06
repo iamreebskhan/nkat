@@ -31,7 +31,7 @@ import {
   type CoverageStatus,
 } from "@/lib/features/billing/payer-rule.repository";
 import { chunkText } from "@/lib/features/documents/extractor";
-import { refreshOrgRulebookRowsForRule } from "@/lib/features/rulebook/rulebook.service";
+import { propagateGlobalRuleToAllOrgRulebooks } from "@/lib/features/rulebook/rulebook.service";
 
 /**
  * source_document.document_type values that map to a confidence band
@@ -273,7 +273,7 @@ export async function ingestDocumentFromUrl(
     // Done outside the breakglass loop because refresh uses its own
     // breakglass session — keeps the writes scoped.
     for (const n of newPayerRuleIds) {
-      await refreshOrgRulebookRowsForRule({
+      await propagateGlobalRuleToAllOrgRulebooks({
         ruleId: n.ruleId,
         payerId: args.payerId!,
         state: args.state!,
