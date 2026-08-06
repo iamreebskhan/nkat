@@ -81,20 +81,33 @@ info "deploying ref  : $REF"
 # ---------------------------------------------------------------------
 say "2/7  Database backup"
 
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+DUMP="$BACKUP_DIR/pallio-predeploy-$STAMP.dump"
+
 if [ "$SKIP_BACKUP" = "1" ]; then
   info "skipped (--skip-backup)"
+elif [ "$DRY_RUN" = "1" ]; then
+  info "[dry-run] would dump '$PG_DB' -> $DUMP"
 else
-  run "mkdir -p '$BACKUP_DIR'"
-  STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-  DUMP="$BACKUP_DIR/pallio-predeploy-$STAMP.dump"
-  run "sudo -u postgres pg_dump --format=custom --no-owner --no-privileges -d '$PG_DB' -f '$DUMP'"
-  run "chmod 600 '$DUMP'"
-  if [ "$DRY_RUN" != "1" ]; then
-    info "backup: $DUMP ($(du -h "$DUMP" | cut -f1))"
-    info "restore with: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '$DUMP'"
+  # 0700 / 0600: these dumps contain PHI.
+  mkdir -p "$BACKUP_DIR"
+  chmod 700 "$BACKUP_DIR"
+
+  # pg_dump writes to STDOUT and THIS (root) shell owns the redirect.
+  # Passing -f instead would make the `postgres` user create the file,
+  # and it has no write access to a root-owned backup directory —
+  # "could not open output file: Permission denied".
+  if ! sudo -u postgres pg_dump --format=custom --no-owner --no-privileges \
+        -d "$PG_DB" > "$DUMP"; then
+    rm -f "$DUMP"
+    die "pg_dump failed — nothing has been changed"
   fi
+  chmod 600 "$DUMP"
+
+  info "backup: $DUMP ($(du -h "$DUMP" | cut -f1))"
+  info "restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '$DUMP'"
   # Keep a fortnight of pre-deploy snapshots.
-  run "find '$BACKUP_DIR' -name 'pallio-predeploy-*.dump' -mtime +14 -delete"
+  find "$BACKUP_DIR" -name 'pallio-predeploy-*.dump' -mtime +14 -delete
 fi
 
 # ---------------------------------------------------------------------
@@ -111,13 +124,45 @@ fi
 # ---------------------------------------------------------------------
 say "4/7  Dependencies"
 
-# npm ci, not install: reproducible and it fails loudly if the lockfile
+# npm ci, not install: reproducible, and it fails loudly if the lockfile
 # and package.json disagree. Dev deps are required — next build needs
 # typescript and the tailwind toolchain.
-run "npm ci --no-audit --no-fund"
+#
+# But npm ci DELETES node_modules before reinstalling, and the live app
+# is still serving from it. If the build then failed we would have taken
+# production down for a deploy that never shipped. So only reinstall when
+# the dependency set actually changed.
+if [ ! -d node_modules ]; then
+  info "node_modules missing — installing"
+  run "npm ci --no-audit --no-fund"
+elif [ "$DRY_RUN" = "1" ]; then
+  if git diff --quiet "$PREV_SHA" HEAD -- package.json package-lock.json 2>/dev/null; then
+    info "[dry-run] deps unchanged since $PREV_SHA — would skip npm ci"
+  else
+    info "[dry-run] deps changed — would run npm ci"
+  fi
+elif git diff --quiet "$PREV_SHA" HEAD -- package.json package-lock.json 2>/dev/null; then
+  info "deps unchanged since ${PREV_SHA:0:7} — skipping npm ci"
+else
+  info "package.json/lock changed — reinstalling"
+  npm ci --no-audit --no-fund
+fi
 
 # ---------------------------------------------------------------------
 say "5/7  Migrations"
+
+# Everything at or below the baseline counts as already applied. This
+# database was migrated by hand up to MIGRATION_BASELINE, so replaying
+# 0001.. would be destructive.
+baseline_set() {
+  for f in db/migrations/*.sql; do
+    base="$(basename "$f")"
+    num="${base%%_*}"
+    if [ "$num" \< "$MIGRATION_BASELINE" ] || [ "$num" = "$MIGRATION_BASELINE" ]; then
+      echo "$base"
+    fi
+  done
+}
 
 if [ "$DRY_RUN" != "1" ]; then
   psql_db <<SQL
@@ -126,34 +171,39 @@ CREATE TABLE IF NOT EXISTS schema_migration (
   applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 SQL
-fi
-
-# First run: treat everything at or below the baseline as already applied.
-if [ "$DRY_RUN" != "1" ]; then
-  LEDGER_ROWS="$(psql_db -tAc "SELECT count(*) FROM schema_migration")"
-  if [ "$LEDGER_ROWS" = "0" ]; then
+  if [ "$(psql_db -tAc 'SELECT count(*) FROM schema_migration')" = "0" ]; then
     info "ledger empty — back-filling migrations <= $MIGRATION_BASELINE as applied"
-    for f in db/migrations/*.sql; do
-      base="$(basename "$f")"
-      num="${base%%_*}"
-      if [ "$num" \< "$MIGRATION_BASELINE" ] || [ "$num" = "$MIGRATION_BASELINE" ]; then
-        psql_db -c "INSERT INTO schema_migration (filename) VALUES ('$base') ON CONFLICT DO NOTHING"
-      fi
+    baseline_set | while read -r base; do
+      psql_db -c "INSERT INTO schema_migration (filename) VALUES ('$base') ON CONFLICT DO NOTHING" >/dev/null
     done
     info "back-filled $(psql_db -tAc 'SELECT count(*) FROM schema_migration') entries"
   fi
 fi
 
+# Read the applied set ONCE (not one psql per file), and — crucially —
+# when the ledger does not exist yet, PREDICT what the back-fill above
+# will insert. Without that prediction a --dry-run before the first real
+# run reports all 65 migrations as pending, which reads like the script
+# is about to replay the whole schema from 0001. It is not, but a dry run
+# nobody can trust is worse than no dry run at all.
+LEDGER_EXISTS="$(sudo -u postgres psql -X -tAq -d "$PG_DB" \
+  -c "SELECT to_regclass('public.schema_migration') IS NOT NULL" 2>/dev/null \
+  | tr -d '[:space:]')"
+
+if [ "$LEDGER_EXISTS" = "t" ]; then
+  APPLIED="$(sudo -u postgres psql -X -tAq -d "$PG_DB" \
+    -c 'SELECT filename FROM schema_migration' 2>/dev/null)"
+else
+  APPLIED="$(baseline_set)"
+  info "ledger not created yet — predicting back-fill <= $MIGRATION_BASELINE"
+fi
+
 PENDING=""
 for f in db/migrations/*.sql; do
   base="$(basename "$f")"
-  if [ "$DRY_RUN" = "1" ]; then
-    applied="$(sudo -u postgres psql -X -tAq -d "$PG_DB" \
-      -c "SELECT 1 FROM schema_migration WHERE filename='$base'" 2>/dev/null || echo "")"
-  else
-    applied="$(psql_db -tAc "SELECT 1 FROM schema_migration WHERE filename='$base'")"
+  if ! printf '%s\n' "$APPLIED" | grep -qxF "$base"; then
+    PENDING="$PENDING $base"
   fi
-  [ -z "$applied" ] && PENDING="$PENDING $base"
 done
 
 if [ -z "$PENDING" ]; then
