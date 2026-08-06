@@ -68,11 +68,16 @@ END $$;
 -- would make the migration unrunnable on a database that is already
 -- dirty. We must not make it worse; we are not obliged to fix it here.
 -- ---------------------------------------------------------------------
+-- NB: this is a CURRENCY test (in force today), deliberately different
+-- from the collapsed-window sentinel used to pick retraction candidates
+-- below. Using the sentinel here would make the check inert: reviving a
+-- rule flips expiration_date from a past date to NULL, and the sentinel
+-- counts both as live, so the number could never move.
 CREATE TEMP TABLE dupe_baseline ON COMMIT DROP AS
 SELECT count(*)::int AS n FROM (
   SELECT payer_id, state, code, attribute
     FROM payer_rule
-   WHERE expiration_date IS NULL OR expiration_date > effective_date
+   WHERE expiration_date IS NULL OR expiration_date > CURRENT_DATE
    GROUP BY 1,2,3,4
   HAVING count(*) > 1
 ) d;
@@ -160,14 +165,18 @@ SELECT DISTINCT org_id, 'generated', 1
 FROM retract_attestation
 ON CONFLICT (org_id) DO UPDATE SET updated_at = now();
 
--- Voided attestations are not re-homed — the org already retracted
--- them. Expired ones ARE, carrying their past expires_at, so they show
--- in the rulebook with correct provenance but never answer a lookup.
+-- Excluded statuses:
+--   'voided'      — the org already retracted it.
+--   're_verified' — a LATER call for the same cell superseded it
+--                   (attestation.service.ts:91-112 sets this on the
+--                   prior row). Its data is stale by construction.
+-- 'expired' rows ARE re-homed, carrying their past expires_at, so they
+-- show in the rulebook with correct provenance but never answer.
 --
 -- DISTINCT ON is load-bearing: an org can hold several attestations for
--- one key (re-verifications). Without it, ON CONFLICT DO UPDATE would
--- try to touch the same row twice in one statement, which Postgres
--- rejects with "cannot affect row a second time". Newest call wins.
+-- one key. Without it, ON CONFLICT DO UPDATE would try to touch the same
+-- row twice in one statement, which Postgres rejects with "cannot affect
+-- row a second time". Newest call wins.
 INSERT INTO org_rulebook_row (
   org_id, rulebook_id, payer_id, state, cpt_code, attribute,
   rule_value, coverage_status, origin, confidence,
@@ -181,7 +190,7 @@ SELECT DISTINCT ON (r.org_id, r.payer_id, r.state, r.cpt_code, r.db_attribute)
   r.attested_by_user_id, now()
 FROM retract_attestation r
 JOIN org_rulebook rb ON rb.org_id = r.org_id
-WHERE r.attestation_status <> 'voided'
+WHERE r.attestation_status NOT IN ('voided', 're_verified')
 ORDER BY r.org_id, r.payer_id, r.state, r.cpt_code, r.db_attribute,
          r.attested_at DESC
 ON CONFLICT (rulebook_id, payer_id, state, cpt_code, attribute)
@@ -196,8 +205,14 @@ DO UPDATE SET
   last_edited_by_user_id = EXCLUDED.last_edited_by_user_id,
   last_edited_at        = now(),
   updated_at            = now()
--- Never clobber a cell the tenant deliberately customised.
-WHERE org_rulebook_row.origin <> 'org_override';
+-- Never clobber a cell the tenant deliberately customised, and never
+-- overwrite a cell that ALREADY carries an analyst answer. The latter
+-- matters because the fixed application writes attestations straight to
+-- org_rulebook_row and no longer to payer_rule — such an attestation is
+-- invisible to retract_attestation, so without this guard a stale
+-- pre-fix call could overwrite the org's current phone confirmation.
+-- It also makes this migration safe to run before OR after the deploy.
+WHERE org_rulebook_row.origin NOT IN ('org_override', 'analyst');
 
 -- ---------------------------------------------------------------------
 -- 4. (C) Retract the global rules.
@@ -218,34 +233,76 @@ UPDATE payer_rule pr
 -- date, so a victim is: same key, NOT org-written, and expiring exactly
 -- on the day an attestation for that key was recorded.
 --
--- Guard: only revive when no OTHER live rule holds the key. If document
--- ingestion legitimately superseded the row (its supersession also
--- stamps CURRENT_DATE), a newer live rule exists and reviving would
--- create two active rules for one key.
+-- Distinguishing a MIRROR kill from a LEGITIMATE supersession is the
+-- whole difficulty, because both stamp CURRENT_DATE:
+--   document-ingestion.service.ts:222  UPDATE ... = CURRENT_DATE
+--   db/seed/retire-cms-short-docs.sql:39, and
+--   db/seed/payer-rules-cy2026-full-rule.sql:624
+--                                      UPDATE ... = GREATEST(CURRENT_DATE, effective_date)
+--
+-- The discriminator is the SUCCESSOR, not the neighbours. A legitimate
+-- supersession always inserts a platform-written replacement that takes
+-- effect on or after the day it retired the old row
+-- (document-ingestion.service.ts:241 inserts effective_date =
+-- CURRENT_DATE, created_by = 'crawler:…'). The mirror inserted no such
+-- thing — only an 'analyst:<uid>' row. So: revive when no platform
+-- successor exists.
+--
+-- An earlier version of this guard asked "is any OTHER rule for this key
+-- live?", defining live as (expiration_date IS NULL OR expiration_date >
+-- effective_date). That is the collapsed-window sentinel this migration
+-- uses elsewhere — since 0053 widened the CHECK to `>=`, the only rows
+-- failing it are ones step 4 just collapsed. Every long-dead historical
+-- version therefore counted as "live" and blocked revival, which on a
+-- key that had ever been re-ingested left NO answerable rule at all for
+-- any tenant — strictly worse than the contamination being cleaned up.
 -- ---------------------------------------------------------------------
+
+-- Journal first: this is the one irreversible step, and re-running
+-- cannot retry it (step 4 already emptied retract_attestation for the
+-- next run). Keep the pre-image so a mistake is correctable.
+CREATE TABLE IF NOT EXISTS migration_0065_expiry_journal (
+  rule_id          UUID        PRIMARY KEY REFERENCES payer_rule(id),
+  prior_expiration DATE        NOT NULL,
+  journaled_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE migration_0065_expiry_journal IS
+  'Pre-images for rules migration 0065 revived. To undo a specific '
+  'revival: UPDATE payer_rule p SET expiration_date = j.prior_expiration '
+  'FROM migration_0065_expiry_journal j WHERE p.id = j.rule_id;';
+
+INSERT INTO migration_0065_expiry_journal (rule_id, prior_expiration)
+SELECT victim.id, victim.expiration_date
+FROM payer_rule victim
+WHERE victim.expiration_date IS NOT NULL
+  AND victim.created_by NOT LIKE 'analyst:%'
+  AND victim.created_by <> 'ai'
+  AND EXISTS (
+    SELECT 1 FROM retract_attestation r
+     WHERE r.payer_id     = victim.payer_id
+       AND r.state        = victim.state
+       AND r.cpt_code     = victim.code
+       AND r.db_attribute = victim.attribute
+       AND r.attested_at::date = victim.expiration_date
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM payer_rule succ
+     WHERE succ.payer_id  = victim.payer_id
+       AND succ.state     = victim.state
+       AND succ.code      = victim.code
+       AND succ.attribute = victim.attribute
+       AND succ.id       <> victim.id
+       AND succ.created_by NOT LIKE 'analyst:%'
+       AND succ.created_by <> 'ai'
+       AND succ.effective_date >= victim.expiration_date
+  )
+ON CONFLICT (rule_id) DO NOTHING;
+
 UPDATE payer_rule victim
    SET expiration_date = NULL
- WHERE victim.expiration_date IS NOT NULL
-   AND victim.created_by NOT LIKE 'analyst:%'
-   AND victim.created_by <> 'ai'
-   AND EXISTS (
-     SELECT 1 FROM retract_attestation r
-      WHERE r.payer_id     = victim.payer_id
-        AND r.state        = victim.state
-        AND r.cpt_code     = victim.code
-        AND r.db_attribute = victim.attribute
-        AND r.attested_at::date = victim.expiration_date
-   )
-   AND NOT EXISTS (
-     SELECT 1 FROM payer_rule live
-      WHERE live.payer_id  = victim.payer_id
-        AND live.state     = victim.state
-        AND live.code      = victim.code
-        AND live.attribute = victim.attribute
-        AND live.id       <> victim.id
-        AND (live.expiration_date IS NULL
-             OR live.expiration_date > live.effective_date)
-   );
+ WHERE victim.id IN (SELECT rule_id FROM migration_0065_expiry_journal)
+   AND victim.expiration_date IS NOT NULL;
 
 -- ---------------------------------------------------------------------
 -- 6. Report + invariant check.
@@ -255,8 +312,9 @@ DECLARE
   n_att    INT;
   n_ai     INT;
   n_orgs   INT;
-  n_dupes  INT;
-  n_before INT;
+  n_dupes   INT;
+  n_before  INT;
+  n_revived INT;
 BEGIN
   SELECT count(*) INTO n_att  FROM retract_attestation;
   SELECT count(*) INTO n_ai   FROM retract_ai;
@@ -267,6 +325,12 @@ BEGIN
   RAISE NOTICE '  AI-synthesized global rules retracted:      %', n_ai;
   RAISE NOTICE '  orgs whose attestations were re-homed:      %', n_orgs;
 
+  SELECT count(*) INTO n_revived FROM migration_0065_expiry_journal;
+  RAISE NOTICE '  platform rules revived (pre-images journaled): %', n_revived;
+  IF n_att > 0 AND n_revived = 0 THEN
+    RAISE WARNING 'Retracted % rule(s) but revived none. If those keys now read Unknown, check migration_0065_expiry_journal and the successor guard in step 5.', n_att;
+  END IF;
+
   -- One live rule per (payer,state,code,attribute) is the library's
   -- intended invariant. Step 5 revives rows, so it could make things
   -- worse — prove it did not, against the pre-migration baseline.
@@ -274,7 +338,7 @@ BEGIN
   SELECT count(*) INTO n_dupes FROM (
     SELECT payer_id, state, code, attribute
       FROM payer_rule
-     WHERE expiration_date IS NULL OR expiration_date > effective_date
+     WHERE expiration_date IS NULL OR expiration_date > CURRENT_DATE
      GROUP BY 1,2,3,4
     HAVING count(*) > 1
   ) d;
