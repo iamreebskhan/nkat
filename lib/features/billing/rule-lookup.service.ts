@@ -300,7 +300,9 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
       confidence: structuredHit!.confidence,
       citation: structuredHit!.sourceQuote
         ? {
-            documentName: "Payer policy document",
+            documentName: structuredHit!.isStatewide
+              ? "State Medicaid policy"
+              : "Payer policy document",
             documentUrl: structuredHit!.sourceUrl,
             effectiveDate: structuredHit!.effectiveDate
               .toISOString()
@@ -458,7 +460,9 @@ function globalComparison(
     confidence: hit.confidence,
     citation: hit.sourceQuote
       ? {
-          documentName: "Pallio rule library",
+          documentName: hit.isStatewide
+            ? "Pallio rule library — state Medicaid policy"
+            : "Pallio rule library",
           documentUrl: hit.sourceUrl,
           effectiveDate: hit.effectiveDate.toISOString().slice(0, 10),
           verbatimQuote: hit.sourceQuote,

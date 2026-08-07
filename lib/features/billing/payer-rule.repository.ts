@@ -82,6 +82,13 @@ export interface PayerRuleHit {
   sourceUrl: string | null;
   sourceQuote: string | null;
   sourcePage: number | null;
+  /**
+   * True when this rule came from a STATE Medicaid policy
+   * (`payer_rule.payer_id IS NULL`) rather than the plan's own document.
+   * The answer is still correct — state policy governs the MCOs — but
+   * the UI should say so rather than implying the plan published it.
+   */
+  isStatewide: boolean;
 }
 
 interface RuleRow {
@@ -98,6 +105,7 @@ interface RuleRow {
   source_quote: string | null;
   source_page: number | null;
   source_url: string | null;
+  is_statewide: boolean;
 }
 
 /**
@@ -130,16 +138,38 @@ export async function fetchPayerRule(
       pr.source_doc_id   AS source_doc_id,
       pr.source_quote    AS source_quote,
       pr.source_page     AS source_page,
-      sd.url             AS source_url
+      sd.url             AS source_url,
+      (pr.payer_id IS NULL) AS is_statewide
     FROM payer_rule pr
     LEFT JOIN source_document sd ON sd.id = pr.source_doc_id
-    WHERE pr.payer_id     = ${input.payerId}::uuid
-      AND pr.state        = ${input.state}
+    WHERE pr.state        = ${input.state}
       AND pr.code         = ${input.code}
       AND pr.attribute    = ${dbAttribute}
       AND pr.effective_date <= ${input.dos}
       AND (pr.expiration_date IS NULL OR pr.expiration_date > ${input.dos})
+      AND (
+        pr.payer_id = ${input.payerId}::uuid
+        -- State Medicaid fallback. A state's clinical coverage policy
+        -- (e.g. NC Medicaid CCP 1H) governs every Medicaid MCO in that
+        -- state, so one ingestion answers for all of them. Ingesting the
+        -- same PDF once per plan would be wasteful and, because the
+        -- content-hash dedupe is global, would silently yield zero rules
+        -- for every plan after the first.
+        --
+        -- Deliberately NOT applied to commercial payers: North Carolina
+        -- Medicaid policy has no authority over an Aetna commercial plan.
+        OR (
+          pr.payer_id IS NULL
+          AND EXISTS (
+            SELECT 1 FROM payer p
+             WHERE p.id = ${input.payerId}::uuid
+               AND p.payer_type IN ('medicaid_mco', 'medicaid_state', 'tribal')
+          )
+        )
+      )
     ORDER BY
+      -- The plan's own policy always outranks the state fallback.
+      (pr.payer_id IS NOT NULL) DESC,
       (pr.product_line = ${input.productLine}) DESC,
       pr.effective_date DESC
     LIMIT 1
@@ -160,6 +190,7 @@ export async function fetchPayerRule(
     sourceUrl: row.source_url,
     sourceQuote: row.source_quote,
     sourcePage: row.source_page,
+    isStatewide: row.is_statewide,
   };
 }
 

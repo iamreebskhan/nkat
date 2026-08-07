@@ -124,10 +124,25 @@ export async function ingestDocumentFromUrl(
   const contentHash =
     "sha256:" + createHash("sha256").update(fetched.bytes).digest("hex");
 
-  // 2. Idempotency check.
+  // 2. Idempotency check — scoped to (content_hash, payer_id).
+  //
+  // It used to match on content_hash alone, across all payers. That is
+  // wrong for the documents that matter most here: one state Medicaid
+  // clinical coverage policy governs every MCO in the state, and a
+  // multi-plan payer publishes the identical PDF under several plans.
+  // Under the old check, the first plan ingested and every subsequent
+  // plan silently returned `alreadyIngested: true, ruleCount: 0` — no
+  // rules, no error, no signal.
+  //
+  // IS NOT DISTINCT FROM (not `=`) so a payer-agnostic re-ingest of the
+  // same statewide document still dedupes against itself; NULL = NULL
+  // would be NULL, i.e. never a match.
   const dupe = await withBreakglass(async (tx) => {
     const rows = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM source_document WHERE content_hash = ${contentHash} LIMIT 1
+      SELECT id FROM source_document
+       WHERE content_hash = ${contentHash}
+         AND payer_id IS NOT DISTINCT FROM ${args.payerId ?? null}::uuid
+       LIMIT 1
     `;
     return rows[0]?.id ?? null;
   }, "ingestion idempotency lookup");
