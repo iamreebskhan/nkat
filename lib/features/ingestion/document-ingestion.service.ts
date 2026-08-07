@@ -104,6 +104,19 @@ export interface IngestionInput {
    *  fetch cap and the native-PDF page limit by processing one chunk at a
    *  time. `url` still carries the citation target (e.g. the full-rule URL). */
   inlinePdfBase64?: string;
+  /**
+   * Fetch and hash the document, then STOP — write nothing, call no AI.
+   *
+   * Lets the cron answer "has this changed?" without letting an
+   * unreviewed extraction into a library that 111 practices bill
+   * against. Sources with `auto_extract = FALSE` are checked this way;
+   * a detected change raises `review_pending` for a human-run grounded
+   * extraction instead of writing rules.
+   *
+   * Cost of a detect-only pass is one HTTP fetch — no Claude, no
+   * embeddings — so it is cheap enough to run often.
+   */
+  detectOnly?: boolean;
 }
 
 /**
@@ -123,6 +136,15 @@ export async function ingestDocumentFromUrl(
 
   const contentHash =
     "sha256:" + createHash("sha256").update(fetched.bytes).digest("hex");
+
+  // Detect-only: the caller wants the hash, nothing else. Return before
+  // touching source_document, Claude, or the embedder.
+  if (args.detectOnly) {
+    return {
+      sourceDocId: "", ruleCount: 0, chunkCount: 0, embedded: false,
+      contentHash, alreadyIngested: false, skipped: 0, extractError: null,
+    };
+  }
 
   // 2. Idempotency check — scoped to (content_hash, payer_id).
   //

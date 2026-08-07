@@ -75,6 +75,12 @@ interface Row {
   last_error: string | null;
   active: boolean;
   notes: string | null;
+  // Added in migration 0066 — see runIngestionCron for how these drive
+  // the review gate and the source-health view.
+  auto_extract: boolean;
+  review_pending: boolean;
+  last_rule_count: number | null;
+  consecutive_failures: number;
 }
 
 function toView(r: Row): IngestionSourceView {
@@ -142,6 +148,8 @@ export async function runIngestionCron(): Promise<{
   ingested: number;
   unchanged: number;
   errors: number;
+  /** Sources whose content moved but which are gated on human review. */
+  flaggedForReview: number;
 }> {
   const due = await withBreakglass(async (tx) => {
     return tx.$queryRaw<Row[]>`
@@ -162,27 +170,55 @@ export async function runIngestionCron(): Promise<{
   let unchanged = 0;
   let errors = 0;
 
+  let flaggedForReview = 0;
+
   for (const src of due) {
     try {
+      // auto_extract = FALSE: detect the change, write nothing. One HTTP
+      // fetch, no Claude call. A change raises review_pending so the
+      // grounded offline extraction can run against it before anything
+      // reaches the shared library.
+      const detectOnly = src.auto_extract === false;
+
       const r = await ingestDocumentFromUrl({
         url: src.url,
         payerId: src.payer_id,
         state: src.state,
         documentType: src.document_type as IngestableDocumentType,
         title: src.name,
+        detectOnly,
       });
+
       const changed = r.contentHash !== src.last_content_hash;
-      if (r.alreadyIngested) unchanged++;
+      if (detectOnly) {
+        if (changed) flaggedForReview++;
+        else unchanged++;
+      } else if (r.alreadyIngested) unchanged++;
       else if (changed) ingested++;
       else unchanged++;
+
       await withBreakglass(async (tx) => {
         await tx.$executeRaw`
           UPDATE ingestion_source SET
-            last_check_at     = now(),
-            last_content_hash = ${r.contentHash},
-            last_ingested_at  = CASE WHEN ${changed} THEN now() ELSE last_ingested_at END,
-            last_error        = NULL,
-            updated_at        = now()
+            last_check_at           = now(),
+            last_content_hash       = ${r.contentHash},
+            last_ingested_at        = CASE WHEN ${changed} AND NOT ${detectOnly}
+                                            THEN now() ELSE last_ingested_at END,
+            -- Distinguishes "checked, genuinely unchanged" from "not
+            -- looked at in a year" — the health view needs both.
+            last_change_detected_at = CASE WHEN ${changed}
+                                            THEN now() ELSE last_change_detected_at END,
+            -- A fall to 0 on a source that used to yield rules means the
+            -- document was restructured; without this it looks identical
+            -- to a healthy no-op. Not recorded on a detect-only pass,
+            -- which never extracts.
+            last_rule_count         = CASE WHEN ${detectOnly}
+                                            THEN last_rule_count ELSE ${r.ruleCount} END,
+            review_pending          = CASE WHEN ${detectOnly} AND ${changed}
+                                            THEN TRUE ELSE review_pending END,
+            consecutive_failures    = 0,
+            last_error              = NULL,
+            updated_at              = now()
           WHERE id = ${src.id}::uuid
         `;
       }, "ingestion-cron: update bookkeeping");
@@ -192,14 +228,18 @@ export async function runIngestionCron(): Promise<{
       await withBreakglass(async (tx) => {
         await tx.$executeRaw`
           UPDATE ingestion_source SET
-            last_check_at = now(),
-            last_error    = ${msg.slice(0, 500)},
-            updated_at    = now()
+            last_check_at        = now(),
+            last_error           = ${msg.slice(0, 500)},
+            -- Counts up so a dead source (moved, 404, TLS failure) can be
+            -- told apart from a flaky one and surfaced rather than
+            -- retried in silence forever.
+            consecutive_failures = consecutive_failures + 1,
+            updated_at           = now()
           WHERE id = ${src.id}::uuid
         `;
       }, "ingestion-cron: record error");
     }
   }
 
-  return { checked: due.length, ingested, unchanged, errors };
+  return { checked: due.length, ingested, unchanged, errors, flaggedForReview };
 }
