@@ -16,12 +16,21 @@
 #   3. git fetch + checkout the ref
 #   4. npm ci
 #   5. Apply PENDING migrations only, tracked in a schema_migration ledger
-#   6. npm run build
-#   7. pm2 reload + health check, with the rollback command printed
+#   6. Apply CHANGED seeds from db/seed/MANIFEST, tracked by content hash,
+#      then assert the rule library still has one live rule per key
+#   7. npm run build
+#   8. pm2 reload + health check, with the rollback command printed
 #
-# The ledger is created on first run and back-filled so that everything
-# up to MIGRATION_BASELINE is treated as already applied — this database
-# was migrated by hand up to 0063, so nothing before that is re-run.
+# Both ledgers are created on first run and back-filled, so nothing that
+# was already applied by hand gets replayed over live data: migrations up
+# to MIGRATION_BASELINE (this database was migrated by hand to 0063), and
+# every seed currently checked in.
+#
+# Seeds are keyed on CONTENT, not name — edit a seed and the next deploy
+# re-applies it. They are all idempotent (deterministic ids + ON CONFLICT
+# DO UPDATE), which is what makes that safe. A seed missing from the
+# manifest is never applied; that is how the test fixtures stay out.
+#
 # After this, every future deploy is just: sudo bash scripts/deploy.sh
 
 set -euo pipefail
@@ -45,7 +54,7 @@ while [ $# -gt 0 ]; do
     --dry-run)      DRY_RUN=1; shift ;;
     --skip-backup)  SKIP_BACKUP=1; shift ;;
     --skip-build)   SKIP_BUILD=1; shift ;;
-    -h|--help)      sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help)      sed -n '2,34p' "$0"; exit 0 ;;
     *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -58,7 +67,7 @@ run()  { if [ "$DRY_RUN" = "1" ]; then echo "    [dry-run] $*"; else eval "$@"; 
 psql_db() { sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -d "$PG_DB" "$@"; }
 
 # ---------------------------------------------------------------------
-say "1/7  Preconditions"
+say "1/8  Preconditions"
 
 [ "$(id -u)" = "0" ] || die "run with sudo (needs postgres + pm2 + /var/backups)"
 [ -d "$APP_DIR/.git" ] || die "$APP_DIR is not a git checkout"
@@ -81,7 +90,7 @@ info "deploying ref  : $REF"
 [ "$DRY_RUN" = "1" ] && info "DRY RUN — nothing will change"
 
 # ---------------------------------------------------------------------
-say "2/7  Database backup"
+say "2/8  Database backup"
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DUMP="$BACKUP_DIR/pallio-predeploy-$STAMP.dump"
@@ -113,7 +122,7 @@ else
 fi
 
 # ---------------------------------------------------------------------
-say "3/7  Fetch + checkout"
+say "3/8  Fetch + checkout"
 
 run "git fetch origin --prune --tags"
 run "git checkout '$REF'"
@@ -124,7 +133,7 @@ fi
 [ "$DRY_RUN" != "1" ] && info "now at: $(git rev-parse HEAD)  $(git log -1 --pretty=%s)"
 
 # ---------------------------------------------------------------------
-say "4/7  Dependencies"
+say "4/8  Dependencies"
 
 # npm ci, not install: reproducible, and it fails loudly if the lockfile
 # and package.json disagree. Dev deps are required — next build needs
@@ -151,7 +160,7 @@ else
 fi
 
 # ---------------------------------------------------------------------
-say "5/7  Migrations"
+say "5/8  Migrations"
 
 # Everything at or below the baseline counts as already applied. This
 # database was migrated by hand up to MIGRATION_BASELINE, so replaying
@@ -226,7 +235,125 @@ else
 fi
 
 # ---------------------------------------------------------------------
-say "6/7  Build"
+say "6/8  Seeds"
+
+# Reference data and the rule library live in db/seed/, and until now the
+# deploy never touched them — every rule seed reached production by hand.
+# That is how a database ends up quietly missing a seed nobody remembers
+# skipping, which has already happened once.
+#
+# Applied by CONTENT HASH, not just by name: these files are idempotent
+# (deterministic ids + ON CONFLICT DO UPDATE), so re-applying an edited
+# seed is both safe and the point — a corrected rule reaches production
+# on the next deploy instead of needing a hand-run.
+#
+# Order comes from db/seed/MANIFEST. Files absent from the manifest are
+# never applied, which is what keeps the test fixtures out.
+SEED_MANIFEST="db/seed/MANIFEST"
+
+if [ ! -f "$SEED_MANIFEST" ]; then
+  info "no $SEED_MANIFEST — skipping seeds"
+else
+  seed_list() {
+    sed 's/#.*//' "$SEED_MANIFEST" | while read -r line; do
+      [ -n "$line" ] && echo "$line"
+    done
+  }
+
+  # NO BASELINE BACK-FILL HERE, unlike migrations, and the difference is
+  # deliberate. Migrations are forward-only and destructive to replay, so
+  # the ones already applied by hand must be marked applied. Seeds are the
+  # opposite: idempotent by construction, and applied in an order the
+  # manifest fixes, so replaying the whole set converges on the correct
+  # end state no matter what the database currently holds.
+  #
+  # That matters because nobody knows exactly which seeds this database
+  # received by hand — and a back-fill would have to guess. Guessing wrong
+  # in the safe-looking direction marks an unapplied seed as applied and
+  # the rules never arrive, which is the failure this step exists to end.
+  # So the first run applies everything, behind the pre-deploy backup and
+  # the invariant check below.
+  if [ "$DRY_RUN" != "1" ]; then
+    psql_db <<SQL
+CREATE TABLE IF NOT EXISTS seed_application (
+  filename       TEXT PRIMARY KEY,
+  content_sha256 TEXT NOT NULL,
+  applied_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+SQL
+  fi
+
+  SEED_LEDGER_EXISTS="$(sudo -u postgres psql -X -tAq -d "$PG_DB" \
+    -c "SELECT to_regclass('public.seed_application') IS NOT NULL" 2>/dev/null \
+    | tr -d '[:space:]')"
+  [ "$SEED_LEDGER_EXISTS" = "t" ] || info "first run — the full manifest will be applied (all seeds are idempotent)"
+
+  SEED_PENDING=""
+  MISSING_SEEDS=""
+  for base in $(seed_list); do
+    if [ ! -f "db/seed/$base" ]; then
+      MISSING_SEEDS="$MISSING_SEEDS $base"
+      continue
+    fi
+    have="$(sha256sum "db/seed/$base" | cut -d' ' -f1)"
+    if [ "$SEED_LEDGER_EXISTS" = "t" ]; then
+      recorded="$(sudo -u postgres psql -X -tAq -d "$PG_DB" \
+        -c "SELECT content_sha256 FROM seed_application WHERE filename = '$base'" 2>/dev/null \
+        | tr -d '[:space:]')"
+    else
+      recorded=""
+    fi
+    [ "$recorded" = "$have" ] || SEED_PENDING="$SEED_PENDING $base"
+  done
+
+  # A manifest naming a file that does not exist is a mistake worth
+  # shouting about — silently skipping it is how a seed goes missing.
+  [ -n "$MISSING_SEEDS" ] && die "MANIFEST lists files not in db/seed/:$MISSING_SEEDS"
+
+  # Seeds carry reference data and the global rule library. Nothing that
+  # writes a tenant table belongs in them: one such seed created an org
+  # called 'Design Partner Co' with a fake Stripe subscription, and it was
+  # caught by accident. This catches the next one on purpose.
+  TENANT_WRITERS=""
+  for base in $(seed_list); do
+    if grep -qiE 'INSERT INTO (org|app_user|subscription|patient|visit|superbill|org_rulebook_row|org_membership)[[:space:](]' "db/seed/$base" 2>/dev/null; then
+      TENANT_WRITERS="$TENANT_WRITERS $base"
+    fi
+  done
+  [ -n "$TENANT_WRITERS" ] && die "these manifest seeds write TENANT tables and must not run against production:$TENANT_WRITERS"
+
+  if [ -z "$SEED_PENDING" ]; then
+    info "no pending seeds"
+  else
+    for base in $SEED_PENDING; do
+      info "applying seed $base"
+      if [ "$DRY_RUN" = "1" ]; then
+        echo "    [dry-run] would apply db/seed/$base"
+      else
+        sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d "$PG_DB" -f "db/seed/$base" \
+          || die "seed $base FAILED — that file rolled back; app not restarted. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
+        h="$(sha256sum "db/seed/$base" | cut -d' ' -f1)"
+        psql_db -c "INSERT INTO seed_application (filename, content_sha256) VALUES ('$base', '$h')
+                    ON CONFLICT (filename) DO UPDATE SET content_sha256 = EXCLUDED.content_sha256, applied_at = now()"
+      fi
+    done
+  fi
+
+  # The library's core invariant: fetchPayerRule ends in LIMIT 1 with no
+  # confidence tiebreak, so two live rows on one key make the answer
+  # depend on row order. Check it here, where a bad seed is still one
+  # restore away from undone.
+  if [ "$DRY_RUN" != "1" ]; then
+    DUPES="$(psql_db -tAc "SELECT count(*) FROM (SELECT payer_id, state, code, attribute FROM payer_rule WHERE expiration_date IS NULL GROUP BY 1,2,3,4 HAVING count(*) > 1) d" | tr -d '[:space:]')"
+    if [ "$DUPES" != "0" ]; then
+      die "$DUPES (payer, state, code, attribute) keys have MORE THAN ONE live rule. A seed failed to supersede what it replaced, and lookups on those keys now return whichever row comes back first. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
+    fi
+    info "rule-library invariant OK — one live rule per key"
+  fi
+fi
+
+# ---------------------------------------------------------------------
+say "7/8  Build"
 
 if [ "$SKIP_BUILD" = "1" ]; then
   info "skipped (--skip-build)"
@@ -235,7 +362,7 @@ else
 fi
 
 # ---------------------------------------------------------------------
-say "7/7  Restart + health check"
+say "8/8  Restart + health check"
 
 run "pm2 reload '$PM2_APP' --update-env"
 

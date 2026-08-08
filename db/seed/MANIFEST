@@ -1,0 +1,70 @@
+# Seeds the deploy applies, in this order.
+#
+# `scripts/deploy.sh` reads this file. A seed in db/seed/ that is NOT
+# listed here is never applied to production — that is how the test
+# fixtures stay out, by omission rather than by a name convention someone
+# has to remember.
+#
+# ORDER MATTERS. Rule seeds expire what they supersede before inserting,
+# so replaying them out of sequence would leave the wrong version live.
+# This is the order they were originally applied in. Append new seeds at
+# the end of their section; do not reorder existing lines.
+#
+# Every file here must be idempotent — deterministic ids plus
+# ON CONFLICT DO UPDATE — because the deploy re-applies a seed whenever
+# its contents change.
+
+# --- reference data: codes, payers, lookup tables --------------------
+0001_states_product_lines.sql
+0002_pos.sql
+0003_modifiers.sql
+0004_revenue_codes.sql
+0005_provider_taxonomy.sql
+0006_cob_rules.sql
+0007_palliative_codes.sql
+0008_phase4_payers.sql
+0009_behavioral_health_codes.sql
+0010_oncology_codes.sql
+0011_dmepos.sql
+0012_workers_comp.sql
+0013_ihs.sql
+0014_hcc_v28.sql
+0015_phase6_asc_ub04.sql
+payer-medicare.sql
+
+# --- ingestion sources: what the crawler watches ---------------------
+ingestion-sources-cms.sql
+ingestion-source-medicare-pdf.sql
+ingestion-sources-payers-oh-nc-sc.sql
+ingestion-sources-uhc-anthem-oh.sql
+retire-cms-short-docs.sql
+
+# --- the rule library ------------------------------------------------
+# Each of these supersedes rows on the keys it writes, so sequence is
+# load-bearing.
+payer-rules-oh-nc-sc-2026.sql
+payer-rules-fee-schedules-full.sql
+payer-rules-cy2026-full-rule.sql
+payer-rules-humana-sc-editing.sql
+payer-rules-denial-attributes.sql
+payer-rules-denial-attributes-2.sql
+
+# --- deliberately NOT applied ----------------------------------------
+# Listed here rather than merely omitted, so the next person can see the
+# decision was made rather than forgotten.
+#
+# 0016_phase11_design_partner_subscription.sql
+#     Creates org 'Design Partner Co' with a fake Stripe subscription
+#     (cus_DESIGN_PARTNER_DEV, status 'trialing'). Its own header says
+#     production tenants get subscription rows from the Stripe webhook,
+#     never from this seed. Applying it would put a synthetic tenant in
+#     the client's org list. Dev and integration tests only.
+# 0017_test_users.sql
+#     Test accounts — never in production.
+# 0018_test_palliative_payer_rules.sql
+#     Fixture rules that would pollute the real library.
+#
+# The rule for adding to this manifest: if a seed writes to a tenant
+# table (org, app_user, subscription, patient, visit, superbill,
+# org_rulebook_row), it does not belong here. Reference data and the
+# global rule library only.
