@@ -52,6 +52,7 @@ import {
 } from "@/lib/features/rulebook/org-rule.repository";
 
 import {
+  fetchBenchmarkRules,
   fetchPayerRule,
   type CoverageStatus,
   type PayerRuleAttribute,
@@ -82,8 +83,15 @@ export type LookupSource =
   | "ai_synthesized"
   | "unknown";
 
-/** Which library an answer came from. */
-export type LookupScope = "org_rulebook" | "global_library";
+/**
+ * Which library a comparison came from.
+ *
+ * `benchmark` is NOT a statement about the requested payer. It is what
+ * OTHER payers pay for the same code in the same state, shown when the
+ * requested payer publishes nothing — the same sanity check a biller
+ * does by hand against Medicare before billing a commercial plan.
+ */
+export type LookupScope = "org_rulebook" | "global_library" | "benchmark";
 
 export interface LookupCitation {
   documentName: string;
@@ -327,9 +335,56 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
     ? globalComparison(structuredHit, fullCptCode)
     : null;
 
+  // Nothing published for this payer. Rather than return a bare
+  // "Unknown" and throw away what the library does know, fall back to a
+  // BENCHMARK: what Medicare, or a Medicaid plan in the same state, pays
+  // for this code. Commercial payers publish no public fee schedule, so
+  // this is the only reference a biller has — and it is what they would
+  // look up manually anyway.
+  //
+  // The status stays `unknown`, because we genuinely do not know THIS
+  // payer's rule. The benchmark rides in `comparison`, explicitly
+  // labelled, so it can never be mistaken for the payer's own position.
+  const fallback = weakGlobal ?? (await (async () => {
+    // A benchmark is a nicety, never load-bearing: if the lookup fails
+    // for any reason the answer must still come back, just without the
+    // reference. try/catch rather than .catch() so a non-promise return
+    // is handled too.
+    let marks: Awaited<ReturnType<typeof fetchBenchmarkRules>> = [];
+    try {
+      marks = (await fetchBenchmarkRules({
+        state: fullState, code: fullCptCode, attribute: fullAttribute,
+        dos, excludePayerId: fullPayerId,
+      })) ?? [];
+    } catch {
+      marks = [];
+    }
+    const m = marks[0];
+    if (!m) return null;
+    return {
+      scope: "benchmark" as const,
+      coverageStatus: m.coverageStatus,
+      answer:
+        `No published rule for this payer. For reference, ${m.payerName} ` +
+        `${m.coverageStatus === "covered" ? "covers" : m.coverageStatus === "not_covered" ? "does not cover" : "conditionally covers"} ` +
+        `CPT ${fullCptCode} in ${fullState}. ${renderStructuredAnswer(m, fullCptCode)} ` +
+        `This is a reference point, not this payer's rule — confirm with the payer before billing.`,
+      confidence: 0,
+      citation: m.sourceQuote
+        ? {
+            documentName: `Benchmark — ${m.payerName}`,
+            documentUrl: m.sourceUrl,
+            effectiveDate: m.effectiveDate.toISOString().slice(0, 10),
+            verbatimQuote: m.sourceQuote,
+            page: m.sourcePage,
+          }
+        : null,
+    };
+  })());
+
   // Step 3+4 — RAG fallback. Skip if AI providers aren't configured.
   if (!isAnthropicConfigured() || !isEmbedderConfigured()) {
-    return unknownResult(resolved, weakGlobal);
+    return unknownResult(resolved, fallback);
   }
 
   const queryText =
@@ -354,7 +409,7 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
   // Step 5 — refusal path. NEVER swap in a synthesized rule without a
   // verbatim citation.
   if (synth.refused || !synth.citation) {
-    return unknownResult(resolved, weakGlobal);
+    return unknownResult(resolved, fallback);
   }
 
   // Step 6 — caller persists the synthesized rule for analyst review.
@@ -376,7 +431,7 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
       page: null,
     },
     sourceDocId: chunks[0]?.docId ?? null,
-    comparison: weakGlobal,
+    comparison: fallback,
     conflict: false,
     resolved,
   };

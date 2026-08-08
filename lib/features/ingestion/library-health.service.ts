@@ -143,6 +143,8 @@ export interface PayerCoverage {
   coreCodesTargeted: number;
   totalRules: number;
   sourceCount: number;
+  /** Live rules for attributes OTHER than `covered`. */
+  attributeRules: number;
   /** Target codes with NO live rule — the actionable gap. */
   missingCoreCodes: string[];
 }
@@ -150,17 +152,23 @@ export interface PayerCoverage {
 interface CoverageRow {
   payer_id: string; payer_name: string; payer_type: string; states: string[];
   codes_covered: number; core_covered: number; total_rules: number;
-  source_count: number; missing_core: string[];
+  source_count: number; attribute_rules: number; missing_core: string[];
 }
 
 /**
  * Per-payer coverage against `library_coverage_target`.
  *
- * "Covered" means a LIVE rule exists (effective now, not retracted) for
- * that payer and code in any of the payer's states, for any attribute.
- * It deliberately does not require every attribute — a payer that
- * answers `covered` but not `telehealth_allowed` is partially useful,
- * whereas a payer with nothing is a hole.
+ * "Covered" means a live rule exists for the `covered` ATTRIBUTE
+ * specifically — is this code payable at all. That is deliberately
+ * strict: an earlier version counted a rule for any attribute, which
+ * reported a payer holding only place-of-service rules as 8/13 covered
+ * when it could not answer the coverage question for a single code.
+ * Overstating coverage is worse than reporting none, because it hides
+ * the gap it is supposed to expose.
+ *
+ * `attributeRules` reports the breadth of everything else (telehealth,
+ * prior auth, POS, modifiers) separately, so a payer with rich
+ * conditional rules but no coverage data is visible as exactly that.
  */
 export async function getCoverageMatrix(): Promise<PayerCoverage[]> {
   const rows = await prisma.$queryRaw<CoverageRow[]>`
@@ -168,9 +176,11 @@ export async function getCoverageMatrix(): Promise<PayerCoverage[]> {
       SELECT code, is_core FROM library_coverage_target WHERE active
     ),
     live AS (
+      -- The 'covered' attribute only: can we answer "is this payable".
       SELECT DISTINCT pr.payer_id, pr.code
         FROM payer_rule pr
-       WHERE (pr.expiration_date IS NULL OR pr.expiration_date > CURRENT_DATE)
+       WHERE pr.attribute = 'covered'
+         AND (pr.expiration_date IS NULL OR pr.expiration_date > CURRENT_DATE)
          AND pr.effective_date <= CURRENT_DATE
     )
     SELECT
@@ -189,6 +199,13 @@ export async function getCoverageMatrix(): Promise<PayerCoverage[]> {
       ) AS total_rules,
       (SELECT count(*)::int FROM ingestion_source s
         WHERE s.payer_id = p.id AND s.active) AS source_count,
+      -- Conditional rules (telehealth, prior auth, POS, modifiers).
+      -- Reported separately so a payer with these but no coverage data
+      -- reads as exactly that rather than as partially covered.
+      (SELECT count(*)::int FROM payer_rule pr
+        WHERE pr.payer_id = p.id AND pr.attribute <> 'covered'
+          AND (pr.expiration_date IS NULL OR pr.expiration_date > CURRENT_DATE)
+      ) AS attribute_rules,
       COALESCE((SELECT array_agg(t.code ORDER BY t.code) FROM target t
         WHERE t.is_core
           AND NOT EXISTS (SELECT 1 FROM live l WHERE l.payer_id = p.id AND l.code = t.code)
@@ -210,6 +227,7 @@ export async function getCoverageMatrix(): Promise<PayerCoverage[]> {
     codesCovered: r.codes_covered, codesTargeted,
     coreCodesCovered: r.core_covered, coreCodesTargeted: coreTargeted,
     totalRules: r.total_rules, sourceCount: r.source_count,
+    attributeRules: r.attribute_rules,
     missingCoreCodes: r.missing_core ?? [],
   }));
 }

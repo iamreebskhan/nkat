@@ -33,8 +33,12 @@ vi.mock("@/lib/db", () => ({
 }));
 
 const mockFetchPayerRule = vi.fn();
+// Untyped like the other mocks — a typed empty-array initializer would
+// infer never[] and reject the benchmark fixtures below.
+const mockFetchBenchmarks = vi.fn();
 vi.mock("../payer-rule.repository", () => ({
   fetchPayerRule: (...a: unknown[]) => mockFetchPayerRule(...a),
+  fetchBenchmarkRules: (...a: unknown[]) => mockFetchBenchmarks(...a),
   getPayerType: vi.fn(),
   listPayers: vi.fn(),
 }));
@@ -424,5 +428,79 @@ describe("lookupRule answer rendering", () => {
     expect(r.answer).toContain("Units per year: 12");
     expect(r.answer).toContain("Modifier required: yes");
     expect(r.answer).not.toContain("{");
+  });
+});
+
+/**
+ * Benchmark fallback. Commercial payers publish no fee schedule, so a
+ * lookup for one used to return a bare "Unknown" and throw away what the
+ * library did know. It now returns the reference a biller would look up
+ * by hand — clearly labelled as NOT that payer's rule.
+ */
+describe("lookupRule benchmark fallback", () => {
+  const req = {
+    payerId: "44444444-4444-4444-8444-444444444444",
+    state: "OH",
+    cptCode: "99349",
+    attribute: "covered" as const,
+  };
+
+  const benchmark = {
+    ruleId: "b1", attribute: "covered", value: { answer: "Paid separately." },
+    coverageStatus: "covered", confidence: 0.95,
+    effectiveDate: new Date("2026-07-01"), expirationDate: null,
+    sourceDocId: "d", sourceUrl: null,
+    sourceQuote: "99349 | Home/res vst est mod mdm 40 | status code A",
+    sourcePage: null, isStatewide: false,
+    payerName: "Traditional Medicare (Part B)", payerType: "medicare_mac",
+  };
+
+  it("returns a labelled benchmark when the payer has no rule of its own", async () => {
+    mockFetchOrgRule.mockResolvedValue(null);
+    mockFetchPayerRule.mockResolvedValue(null);
+    mockFetchBenchmarks.mockResolvedValue([benchmark]);
+    mockHybridSearch.mockResolvedValue([]);
+    mockSynthesize.mockResolvedValue({ refused: true, citation: null, answer: "", raw: "" });
+
+    const r = await lookupRule(req);
+
+    // Status stays unknown — we genuinely do not know THIS payer's rule.
+    expect(r.status).toBe("unknown");
+    expect(r.comparison?.scope).toBe("benchmark");
+    expect(r.comparison?.answer).toContain("Traditional Medicare");
+    expect(r.comparison?.answer).toContain("not this payer's rule");
+    // Never presented as the payer's own confidence.
+    expect(r.comparison?.confidence).toBe(0);
+  });
+
+  it("excludes the requested payer from its own benchmark", async () => {
+    mockFetchOrgRule.mockResolvedValue(null);
+    mockFetchPayerRule.mockResolvedValue(null);
+    mockFetchBenchmarks.mockResolvedValue([]);
+    mockHybridSearch.mockResolvedValue([]);
+    mockSynthesize.mockResolvedValue({ refused: true, citation: null, answer: "", raw: "" });
+
+    await lookupRule(req);
+
+    expect(mockFetchBenchmarks).toHaveBeenCalledWith(
+      expect.objectContaining({ excludePayerId: req.payerId, code: "99349", state: "OH" }),
+    );
+  });
+
+  it("prefers a real global rule over a benchmark", async () => {
+    mockFetchOrgRule.mockResolvedValue(null);
+    mockFetchPayerRule.mockResolvedValue({
+      ruleId: "r", attribute: "covered", value: {}, coverageStatus: "varies",
+      confidence: 0.2, effectiveDate: new Date("2026-01-01"), expirationDate: null,
+      sourceDocId: "d", sourceUrl: null, sourceQuote: "weak but real", sourcePage: null,
+      isStatewide: false,
+    });
+    mockFetchBenchmarks.mockResolvedValue([benchmark]);
+    mockHybridSearch.mockResolvedValue([]);
+    mockSynthesize.mockResolvedValue({ refused: true, citation: null, answer: "", raw: "" });
+
+    const r = await lookupRule(req);
+
+    expect(r.comparison?.scope).toBe("global_library");
   });
 });

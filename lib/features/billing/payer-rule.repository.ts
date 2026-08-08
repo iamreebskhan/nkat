@@ -194,6 +194,75 @@ export async function fetchPayerRule(
   };
 }
 
+export interface BenchmarkHit extends PayerRuleHit {
+  payerName: string;
+  payerType: PayerType;
+}
+
+/**
+ * Reference rules for the same code and state from OTHER payers, used
+ * when the requested payer has no published rule of its own.
+ *
+ * This is what a biller does by hand: a commercial plan publishes no
+ * public fee schedule, so you look at what Medicare and the state
+ * Medicaid programme pay to sanity-check the code before billing. It is
+ * decision support, NOT an assertion about the requested payer — callers
+ * must label it as a benchmark and must not present it as the payer's
+ * rule.
+ *
+ * Medicare first (the universal reference), then a state Medicaid plan.
+ */
+export async function fetchBenchmarkRules(input: {
+  state: string;
+  code: string;
+  attribute: PayerRuleAttribute;
+  dos: Date;
+  excludePayerId: string;
+}): Promise<BenchmarkHit[]> {
+  const dbAttribute = ATTRIBUTE_DB_MAP[input.attribute] ?? input.attribute;
+  const rows = await prisma.$queryRaw<(RuleRow & { payer_name: string; payer_type: PayerType })[]>`
+    SELECT
+      pr.id AS rule_id, pr.attribute, pr.value, pr.coverage_status,
+      pr.confidence::text AS confidence, pr.effective_date, pr.expiration_date,
+      pr.source_doc_id, pr.source_quote, pr.source_page,
+      sd.url AS source_url, (pr.payer_id IS NULL) AS is_statewide,
+      p.name AS payer_name, p.payer_type
+    FROM payer_rule pr
+    JOIN payer p ON p.id = pr.payer_id
+    LEFT JOIN source_document sd ON sd.id = pr.source_doc_id
+    WHERE pr.state     = ${input.state}
+      AND pr.code      = ${input.code}
+      AND pr.attribute = ${dbAttribute}
+      AND pr.payer_id <> ${input.excludePayerId}::uuid
+      AND pr.effective_date <= ${input.dos}
+      AND (pr.expiration_date IS NULL OR pr.expiration_date > ${input.dos})
+      AND pr.coverage_status <> 'unknown'
+    ORDER BY
+      -- Medicare is the reference every payer is compared against.
+      (p.payer_type = 'medicare_mac') DESC,
+      pr.confidence DESC,
+      pr.effective_date DESC
+    LIMIT 2
+  `;
+
+  return rows.map((row) => ({
+    ruleId: row.rule_id,
+    attribute: input.attribute,
+    value: row.value,
+    coverageStatus: row.coverage_status,
+    confidence: parseFloat(row.confidence),
+    effectiveDate: row.effective_date,
+    expirationDate: row.expiration_date,
+    sourceDocId: row.source_doc_id,
+    sourceUrl: row.source_url,
+    sourceQuote: row.source_quote,
+    sourcePage: row.source_page,
+    isStatewide: row.is_statewide,
+    payerName: row.payer_name,
+    payerType: row.payer_type,
+  }));
+}
+
 /** Resolve payer_id → payer_type. Useful for product-line defaulting. */
 export async function getPayerType(payerId: string): Promise<PayerType | null> {
   const rows = await prisma.$queryRaw<{ payer_type: PayerType }[]>`
