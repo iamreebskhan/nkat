@@ -364,10 +364,13 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
     return {
       scope: "benchmark" as const,
       coverageStatus: m.coverageStatus,
+      // Deliberately not renderStructuredAnswer() — that prefixes "For
+      // CPT X: <status>.", which duplicates the sentence above it and
+      // reads badly in the panel a biller actually sees.
       answer:
         `No published rule for this payer. For reference, ${m.payerName} ` +
         `${m.coverageStatus === "covered" ? "covers" : m.coverageStatus === "not_covered" ? "does not cover" : "conditionally covers"} ` +
-        `CPT ${fullCptCode} in ${fullState}. ${renderStructuredAnswer(m, fullCptCode)} ` +
+        `CPT ${fullCptCode} in ${fullState}${describeRuleValue(m.value) ? ` — ${describeRuleValue(m.value)}` : "."} ` +
         `This is a reference point, not this payer's rule — confirm with the payer before billing.`,
       confidence: 0,
       citation: m.sourceQuote
