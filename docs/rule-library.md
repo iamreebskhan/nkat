@@ -23,13 +23,59 @@ absent modifier, or an exceeded frequency cap.
 
 | source (`created_by`) | rules | payers | codes | attributes | what it gives |
 |---|---|---|---|---|---|
-| `crawler:cms_pfs` | 1,689 | 1 | 447 | 8 | CY2026 Medicare PFS Final Rule — multi-attribute |
 | `extract:fee-schedules-full-2026-08` | 2,745 | 10 | 427 | 1 | coverage + rates, OH/NC Medicaid + CMS RVU |
-| `extract:denial-rules-2026-08` | 952 | 10 | 37 | 9 | the denial-driving attributes, from payer manuals |
+| `crawler:cms_pfs` | 1,689 | 1 | 447 | 8 | CY2026 Medicare PFS Final Rule — multi-attribute |
+| `extract:denial-rules-2026-08` | 924 | 10 | 37 | 9 | the denial-driving attributes, from payer manuals |
 | `extract:payer-docs-2026-08` | 169 | 9 | 11 | 7 | telehealth/POS/modifier, from policy documents |
+| `extract:denial-rules-round2-2026-08` | 114 | 2 | 25 | 4 | UHC Ohio + Anthem Ohio prior auth, provider type, documentation, frequency |
+| `extract:state-fee-schedule-2026-08` | 12 | 4 | 3 | 1 | state schedule remnants |
 | `extract:humana-sc-editing-2026-08` | 8 | 1 | 8 | 1 | Humana SC place-of-service rule SC157 |
 
-Roughly 5,600 live rules.
+Roughly 5,660 live rules. Round 2 shows a smaller number than the facts it
+carries because it consolidates — see the invariant below.
+
+## The one-live-row invariant — read this before writing any seed
+
+`fetchPayerRule` ends in:
+
+```sql
+ORDER BY (pr.payer_id IS NOT NULL) DESC,
+         (pr.product_line = $1) DESC,
+         pr.effective_date DESC
+LIMIT 1
+```
+
+There is **no confidence tiebreak**. Two live rows on the same
+`(payer, state, code, attribute)` with the same effective date means the
+answer a nurse practitioner sees is whichever row the planner returns
+first. That is not an answer.
+
+So: **at most one live rule per key.** Every seed must expire what it
+replaces, in the same transaction, before it inserts.
+
+Expire at `GREATEST(victim.effective_date, successor.effective_date)`, not
+at a fixed sentinel date. The table enforces
+`expiration_date >= effective_date`, so an earlier date is rejected
+outright; and because the lookup keeps a row while
+`expiration_date > dos`, expiring at the successor's start leaves no date
+on which the code has no rule. Where the two share a date the window
+collapses to zero, which is legal and reads correctly — replaced, not
+gapped.
+
+When the row you are replacing holds a **different fact** rather than a
+worse version of yours, merge it instead of dropping it: put your headline
+fact in `source_quote` and carry the rest in
+`value->'supportingQuotes'`, each with its own verbatim sentence. Round 2
+did this with round 1's UnitedHealthcare telehealth rules.
+
+Verify after every seed:
+
+```sql
+SELECT count(*) FROM (
+  SELECT payer_id, state, code, attribute FROM payer_rule
+   WHERE expiration_date IS NULL
+   GROUP BY 1,2,3,4 HAVING count(*) > 1) d;   -- must be 0
+```
 
 ## Questions already settled — do not re-investigate
 
@@ -53,6 +99,49 @@ not a gap. No "PA not required" rule is written — asserting a negative
 from one document is not sound, and the denial scorer already behaves
 correctly when a rule is absent.
 
+**Does UnitedHealthcare Community Plan Ohio require prior auth for home
+visits?** Only when the provider is out of network. The 11/1/2025 prior
+authorization requirements document requires out-of-network physicians,
+facilities and other health care professionals to obtain authorization for
+all procedures and services, with emergency and urgent care the only
+carve-out. For an in-network provider none of the palliative codes appear
+on any prior-authorization list in that document. Its "Home health care"
+row (G0151, G0152, G0153, G0156, G0299, G0300) is a home health **agency**
+benefit and does not govern physician home-visit E/M.
+
+**Who may bill a home visit under UnitedHealthcare Community Plan Ohio?**
+Only MD, DO, NP, CNS, CNM or PA. Policy 2026R0112D defines E/M as CPT
+98000-98016, 99091 and 99202-99499 — which contains every palliative E/M
+code — and refuses reimbursement when the billing party is a nonphysician
+health care professional under its own individual or group TIN. The barred
+list includes RNs, LPNs, MSWs, LCSWs, home health agencies, home health
+aides and visiting nurses. The payer's own FAQ answers the exact case:
+99348 may not be reported by a home health specialty even though the
+service happens in the residence.
+
+**The trap in that policy: two different practitioner lists.** The
+Telehealth/Virtual Health Policy lists CMS-designated practitioners
+eligible to be reimbursed for telehealth — and that list *does* include
+clinical social workers, dietitians and clinical psychologists. It is a
+list of who may deliver a telehealth service, **not** of who may report an
+E/M code. Reading it as E/M eligibility puts an LCSW on a telehealth home
+visit and denies the claim. Both facts now live on one rule, and the
+answer says so explicitly.
+
+**Ohio's pharmacist exception does not reach palliative codes.** It is a
+closed list: 99202, 99203, 99211-99215, plus 90460, 90471-90474 and 96372.
+Washington's exception *does* list 99347-99350 and 99417 for pharmacists —
+that is a different state and must not be imported into Ohio claims.
+
+**Does Anthem BCBS Ohio require prior auth for home visits?** For
+out-of-network services, yes — all of them except emergencies. For mental
+health and substance use diagnoses, explicitly no, and the guide extends
+that to home and prolonged visits. When Anthem is the secondary payer, no.
+99499 does require it, as an unlisted/manually-priced code "ending in 99".
+Nothing is asserted for an in-network physical-health visit: the guide is
+a summary, so absence from its list is not clearance. One rule was
+rejected in audit for making exactly that inference.
+
 **Why do commercial payers have so few rules?**
 They publish no publicly fetchable fee schedule. Coverage for them comes
 from the benchmark fallback (see below) or from the practice's own
@@ -64,9 +153,14 @@ attestations. This is a property of the market, not a bug.
 |---|---|---|
 | `scdhhs.gov` (SC Medicaid fee schedule) | **HTTP 403** to automated requests | fetch by hand, then rulebook CSV upload |
 | `medmutual.com` (Medical Mutual of Ohio) | **connection refused** from this network | analyst attestation, or manual upload |
+| `molinahealthcare.com` (Molina OH **and** SC) | **HTTP 403, `Server: AkamaiGHost`** | fetch by hand, then rulebook CSV upload |
+| `providernews.anthem.com` | reachable, but **JavaScript-rendered** — a plain fetch returns 13 characters of shell HTML | captured with a browser; its ingestion source has `auto_extract = FALSE` so a crawl never reads the empty shell as "the rules vanished" |
 
-Both verified directly, not merely reported by an agent. Five SC plans
+All verified directly, not merely reported by an agent. Five SC plans
 would gain coverage from the SC schedule.
+
+Still without any monitored source: CareSource Ohio, First Choice SC,
+Aetna. Not blocked — just not yet found.
 
 ## The mistake that cost the most, so it isn't repeated
 
@@ -84,6 +178,20 @@ rules.
 **Judge a source by whether it states rules about the SERVICES a
 palliative practice delivers, never by whether it prints a code.**
 
+Round 2 produced the counter-example that proves the point twice over.
+Anthem Ohio requires prior authorization for "Home healthcare (physical,
+occupational, and speech therapy) and skilled nursing (after 18 combined
+visits)". That is a home health **agency** benefit. Mapping it onto
+99341-99350 would have put a confident, wrong prior-auth flag on every
+physician home visit in the state. It is recorded as an explicit scope
+exclusion instead — the rule says out loud that it does not govern
+physician home-visit E/M, so nobody re-derives it later and gets it wrong.
+
+The auditor also rejected an SBIRT bundling rule whose direction was
+inverted: the screening bundles into the E/M, not the reverse. A bundling
+rule pointing the wrong way tells a practice to stop billing its own
+visits.
+
 Service-level rules are mapped to codes at extraction time, and the
 mapping is recorded in `value->>'appliesToService'` so a human can audit
 why a rule was attached to a code. The commonest extraction error is a
@@ -95,7 +203,21 @@ tasked specifically with catching it.
 
 No rule reaches the library on an unverified quote. Every extraction runs
 a programmatic check that `source_quote` appears **verbatim** in the
-source document; anything that fails is dropped, not downgraded. Seeds
+source document; anything that fails is dropped, not downgraded.
+
+The normaliser that check uses forgives whitespace, unicode punctuation,
+and **list-marker glyphs standing alone between spaces** — the same bullet
+arrives as `•` from one PDF extractor, as `�` from another when the
+font encoding is unmapped, and gets transcribed as an en-dash by a reader
+looking at the rendered page. A dash *inside* a token is left alone,
+because there it carries meaning: `99202-99499` must not quietly match
+`99202 99499`. Confirm any change to it against these three cases, which
+must still fail: a flipped negation ("will reimburse" vs "will not
+reimburse"), an altered code range, and a stripped range dash.
+
+Prove the quote is contiguous in the source, not stitched together across
+bullet lines. Two round-2 rules were caught doing exactly that; one was
+re-grounded from the raw extraction and kept, the other dropped. Seeds
 built from spreadsheets are read deterministically (SheetJS over cells),
 so they carry no hallucination surface at all, and a self-consistency
 gate aborts generation if an answer claims a status code, payment code or
@@ -114,6 +236,10 @@ A real rule always outranks a benchmark.
 - `GET /api/admin/library-health` — source health + per-payer coverage
 - `npx tsx scripts/library-coverage-check.ts` — report
 - `… --snapshot` writes the baseline; `… --check` fails on regression
+- `npx tsx scripts/verify-denial-rules-round2.ts` — drives `lookupRule()`
+  for the round-2 payers and asserts on what a biller would actually see,
+  including that every answer carries a verbatim citation and a document
+  URL. Re-run it after touching the lookup or these seeds.
 
 Snapshot the baseline **from production**, not a dev database: a local
 copy missing a seed will record artificially low numbers and then pass
