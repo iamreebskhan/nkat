@@ -199,6 +199,42 @@ wrong mapping — home health *aide* services or hospice rules attached to
 physician home visits — so every extraction runs an independent auditor
 tasked specifically with catching it.
 
+## One row per document VERSION per payer
+
+`source_document` is unique on `(url, payer_id, content_hash)`, and each
+part of that key is load-bearing.
+
+**Not `(url)`.** One state Medicaid clinical policy governs every MCO in
+the state — a single North Carolina policy is cited by UnitedHealthcare
+NC, Carolina Complete, Healthy Blue, AmeriHealth Caritas and EBCI. Each
+payer gets its own row so each payer's rules cite their own payer's
+document. 18 rows exist only for that reason. Collapsing them would
+destroy per-payer citation, not repair it.
+
+**Not `(url, payer_id)` either.** A second row at the same URL is how the
+crawler records that a watched document *changed*.
+`ingestDocumentFromUrl` checks idempotency on `(content_hash, payer_id)`
+then inserts with no `ON CONFLICT`: new bytes → new hash → the check
+misses → a fresh row with its own `retrieved_at`. Rules keep citing the
+version they were extracted from. Forbidding that would make the insert
+raise 23505 forever, and because the ingest cron records the error on the
+source row and moves on, the document would just **stop being
+re-ingested, silently** — the only symptom a rising
+`consecutive_failures`. 18 of 25 registered sources point at a URL that
+already has a row for that payer, so that is the steady state.
+
+The triple key says the true thing: new version, new row; same version
+twice, rejected.
+
+**What it does not catch, and what does.** Migration 0068 merged 10
+duplicated documents created by two seed files that each registered the
+same fee schedule under the same payer with different invented hashes —
+which the triple key would not have blocked. That class of bug is a
+property of the *files*, so it is caught in the files:
+`scripts/check-seed-documents.mjs` fails the deploy when two manifest
+seeds claim one `(url, payer_id)` under different ids. `deploy.sh` runs it
+before applying any seed.
+
 ## Grounding
 
 No rule reaches the library on an unverified quote. Every extraction runs

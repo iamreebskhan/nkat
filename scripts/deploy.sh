@@ -322,6 +322,18 @@ SQL
   done
   [ -n "$TENANT_WRITERS" ] && die "these manifest seeds write TENANT tables and must not run against production:$TENANT_WRITERS"
 
+  # No two seeds may register the same document under different ids. This
+  # is what produced the duplicate source_document rows migration 0068
+  # cleans up, and no database constraint can catch it: the real key is
+  # (url, payer_id, content_hash), and the two offending seeds invented
+  # DIFFERENT placeholder hashes for one document, satisfying it while
+  # still describing that document twice.
+  if command -v node >/dev/null 2>&1; then
+    node scripts/check-seed-documents.mjs . || die "seed documents collide — see above; fix before deploying"
+  else
+    info "node not found — skipping seed-document collision check"
+  fi
+
   if [ -z "$SEED_PENDING" ]; then
     info "no pending seeds"
   else
