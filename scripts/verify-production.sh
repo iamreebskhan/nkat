@@ -156,23 +156,43 @@ echo ""
 echo "=== 6. Live lookup through the real service ======================="
 # The SQL above proves the rows exist. This proves lookupRule() returns
 # them — which is what a nurse practitioner actually sees.
-if command -v npx >/dev/null 2>&1 && [ -f scripts/verify-denial-rules-round2.ts ]; then
-  ENVFILE=""
-  for f in .env.local .env .env.production; do [ -f "$f" ] && ENVFILE="$f" && break; done
-  if [ -n "$ENVFILE" ]; then
-    if npx dotenv-cli -e "$ENVFILE" -- npx tsx scripts/verify-denial-rules-round2.ts 2>&1 | tail -20; then
+# Deliberately NOT via npx. On a VPS `npx dotenv-cli` and `npx tsx` try to
+# DOWNLOAD those packages, which on a box with no npm cache hangs with no
+# output — this step sat there indefinitely on its first production run.
+# Use the tsx that npm ci already installed, or skip and say so. And read
+# DATABASE_URL out of the env file directly rather than shelling out to
+# dotenv-cli for it.
+TSX=""
+for c in ./node_modules/.bin/tsx ./node_modules/tsx/dist/cli.mjs; do
+  [ -x "$c" ] || [ -f "$c" ] && TSX="$c" && break
+done
+ENVFILE=""
+for f in .env.production .env .env.local; do [ -f "$f" ] && ENVFILE="$f" && break; done
+
+if [ -z "$TSX" ]; then
+  echo "  SKIP  tsx not installed locally (node_modules/.bin/tsx). The SQL checks"
+  echo "        above already prove the rows exist; this step proves the SERVICE"
+  echo "        returns them. Run 'npm ci' to enable it."
+elif [ -z "$ENVFILE" ]; then
+  echo "  SKIP  no .env file found — cannot reach the database as the app does"
+else
+  DBURL="$(grep -E '^DATABASE_URL=' "$ENVFILE" | head -1 | cut -d= -f2- | tr -d '"'"'"'')"
+  if [ -z "$DBURL" ]; then
+    echo "  SKIP  no DATABASE_URL in $ENVFILE"
+  else
+    # A hard timeout so a hung query can never wedge the whole check.
+    if DATABASE_URL="$DBURL" timeout 180 node "$TSX" scripts/verify-denial-rules-round2.ts 2>&1 | tail -20; then
       PASS=$((PASS + 1))
       echo "  PASS  lookupRule() returned the expected answers"
     else
+      rc=$?
       FAIL=$((FAIL + 1))
-      FAILURES="$FAILURES\n  - lookupRule() did not return the expected answers"
-      echo "  FAIL  lookupRule() did not return the expected answers"
+      [ "$rc" = "124" ] && msg="lookupRule() check timed out after 180s" \
+                        || msg="lookupRule() did not return the expected answers"
+      FAILURES="$FAILURES\n  - $msg"
+      echo "  FAIL  $msg"
     fi
-  else
-    echo "  SKIP  no .env file found — cannot run the service-level check"
   fi
-else
-  echo "  SKIP  npx or the verifier script is unavailable"
 fi
 
 echo ""
