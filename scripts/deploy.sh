@@ -35,6 +35,27 @@
 
 set -euo pipefail
 
+# ---------------------------------------------------------------------
+# Run from a private copy of ourselves.
+#
+# Step 3 checks out a new revision, and that REPLACES this file on disk
+# while bash is still reading it. Bash reads a script incrementally by
+# byte offset, so when the new version is a different length, execution
+# resumes at the old offset inside different text — mid-token, mid-block,
+# anywhere. The result is a syntax error at best and a half-executed
+# deploy at worst, and it gets more likely the more the script grows.
+#
+# Copying to a temp file first makes the running program immune to the
+# checkout. The copy is deleted on exit.
+if [ "${DEPLOY_SELF_COPY:-}" != "1" ]; then
+  _self="$(mktemp -t deploy.XXXXXX.sh)"
+  cat "$0" > "$_self"
+  DEPLOY_SELF_COPY=1 DEPLOY_SELF_PATH="$_self" exec bash "$_self" "$@"
+fi
+# We are the copy. Remove it on exit — but only ever the copy, never the
+# script in the repo, hence the explicit path rather than "$0".
+[ -n "${DEPLOY_SELF_PATH:-}" ] && trap 'rm -f "$DEPLOY_SELF_PATH"' EXIT
+
 APP_DIR="${APP_DIR:-/opt/pallio/app}"
 PG_DB="${PG_DB:-pallio}"
 PM2_APP="${PM2_APP:-pallio}"
@@ -124,13 +145,66 @@ fi
 # ---------------------------------------------------------------------
 say "3/8  Fetch + checkout"
 
-run "git fetch origin --prune --tags"
-run "git checkout '$REF'"
-# Only fast-forward a branch; a detached tag/SHA has no upstream to pull.
-if [ "$DRY_RUN" != "1" ] && git symbolic-ref -q HEAD >/dev/null; then
-  git pull --ff-only origin "$REF"
+# Fetch for real even in a dry run. It only moves remote-tracking refs —
+# nothing in the working tree changes — and without it a dry run has no
+# idea what is actually coming, which is worse than useless: it reports
+# the CURRENT checkout's plan while looking like a preview of the deploy.
+# That is how a dry run once showed "no pending migrations" for a revision
+# carrying three of them.
+# (DRY_RUN is "0" or "1" — both non-empty — so ${DRY_RUN:+--quiet} would
+#  always be quiet. Test the value.)
+if [ "$DRY_RUN" = "1" ]; then
+  git fetch origin --prune --tags --quiet
+else
+  git fetch origin --prune --tags
+fi
+
+if [ "$DRY_RUN" = "1" ]; then
+  TARGET="$(git rev-parse --verify "origin/$REF" 2>/dev/null || git rev-parse --verify "$REF")"
+  info "[dry-run] would check out $REF ($(git log -1 --pretty=%s "$TARGET" 2>/dev/null))"
+  if [ "$(git rev-parse HEAD)" = "$TARGET" ]; then
+    info "already at that revision — nothing would arrive"
+  else
+    info "arriving in this deploy ($(git rev-list --count HEAD.."$TARGET") commit(s)):"
+    NEW_MIG="$(git diff --name-only --diff-filter=A HEAD "$TARGET" -- db/migrations | sed 's|.*/||')"
+    CHG_SEED="$(git diff --name-only HEAD "$TARGET" -- db/seed | sed 's|.*/||')"
+    [ -n "$NEW_MIG" ]  && { info "  migrations:"; printf '      %s\n' $NEW_MIG; } || info "  migrations: none"
+    [ -n "$CHG_SEED" ] && { info "  seeds (new or edited, so they re-apply):"; printf '      %s\n' $CHG_SEED; } || info "  seeds: none changed"
+    if ! git diff --quiet HEAD "$TARGET" -- scripts/deploy.sh; then
+      info "  NOTE: deploy.sh itself changed. The real run checks out first and"
+      info "        then hands over to the new version, so the steps it performs"
+      info "        may differ from the ones listed below."
+    fi
+  fi
+else
+  git checkout "$REF"
+  # Only fast-forward a branch; a detached tag/SHA has no upstream to pull.
+  if git symbolic-ref -q HEAD >/dev/null; then
+    git pull --ff-only origin "$REF"
+  fi
 fi
 [ "$DRY_RUN" != "1" ] && info "now at: $(git rev-parse HEAD)  $(git log -1 --pretty=%s)"
+
+# The revision just checked out may carry a NEWER version of this script,
+# with steps this running copy knows nothing about — that is exactly the
+# case when the seed step was added. The copy we are executing was taken
+# BEFORE the checkout, so without this handover a deploy would forever
+# run the previous release's deploy logic, one revision behind.
+#
+# Hand over once, and only once (DEPLOY_HANDOVER guards against a loop if
+# the two versions somehow never compare equal). The backup is already
+# taken, so the successor is told to skip it.
+if [ "$DRY_RUN" != "1" ] && [ "${DEPLOY_HANDOVER:-0}" != "1" ] \
+   && [ -f "$APP_DIR/scripts/deploy.sh" ] \
+   && ! cmp -s "${DEPLOY_SELF_PATH:-$0}" "$APP_DIR/scripts/deploy.sh"; then
+  info "deploy.sh differs in this revision — handing over to the checked-out version"
+  handover_args=(--ref "$REF" --skip-backup)
+  [ "$SKIP_BUILD" = "1" ] && handover_args+=(--skip-build)
+  rm -f "${DEPLOY_SELF_PATH:-}"
+  trap - EXIT
+  DEPLOY_HANDOVER=1 DEPLOY_SELF_COPY= DEPLOY_SELF_PATH= \
+    exec bash "$APP_DIR/scripts/deploy.sh" "${handover_args[@]}"
+fi
 
 # ---------------------------------------------------------------------
 say "4/8  Dependencies"
