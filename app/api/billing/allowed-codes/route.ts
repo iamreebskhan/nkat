@@ -8,7 +8,8 @@
  *   payerId      UUID         required
  *   state        CHAR(2)      required
  *   dos          YYYY-MM-DD   optional, defaults to today
- *   productLine  string       optional, defaults to 'commercial'
+ *   productLine  string       optional; defaults to the line implied by
+ *                             the payer's payer_type (see below)
  *   query        string       optional — filter by code prefix / descriptor
  *   limit        int          optional, 1..50
  *
@@ -25,6 +26,10 @@ import {
   getAllowedCodesForPayer,
   searchAllowedCodes,
 } from "@/lib/features/billing/payer-allowed-codes.service";
+import {
+  defaultProductLineForPayerType,
+  getPayerType,
+} from "@/lib/features/billing/payer-rule.repository";
 
 const Schema = z.object({
   payerId: z.string().uuid(),
@@ -46,13 +51,24 @@ export async function GET(req: NextRequest): Promise<Response> {
   if (params instanceof Response) return params;
 
   try {
+    // getAllowedCodesForPayer filters product_line EXACTLY, and its own
+    // default is 'commercial'. That made the picker return nothing for
+    // every Medicaid MCO on the platform: measured on the reference
+    // library, the 13 medicaid_mco payers have 152 rows in
+    // payer_allowed_codes_v, all under product_line='medicaid_mco' and
+    // none under 'commercial'. Derive the default from the payer instead.
+    // An explicit caller value still wins — this only fills the blank.
+    const productLine =
+      params.productLine ??
+      defaultProductLineForPayerType(await getPayerType(params.payerId));
+
     const rows = params.query
       ? await searchAllowedCodes({
           payerId: params.payerId,
           state: params.state.toUpperCase(),
           query: params.query,
           dos: params.dos,
-          productLine: params.productLine,
+          productLine,
           limit: params.limit,
           includeDenied: params.includeDenied,
         })
@@ -60,7 +76,7 @@ export async function GET(req: NextRequest): Promise<Response> {
           payerId: params.payerId,
           state: params.state.toUpperCase(),
           dos: params.dos,
-          productLine: params.productLine,
+          productLine,
           includeDenied: params.includeDenied,
         });
     return ok({ rows, total: rows.length });

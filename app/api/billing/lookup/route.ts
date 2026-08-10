@@ -38,6 +38,10 @@ const Schema = z.object({
       "documentation",
       "frequency_limit",
       "modifier_required",
+      // Place of service decides whether a home visit billed POS 12
+      // is paid at all. 123 rules answer it, and none was reachable by
+      // any query until this enum listed it.
+      "pos_allowed",
     ])
     .optional(),
   dos: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (YYYY-MM-DD)").optional(),

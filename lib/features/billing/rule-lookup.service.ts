@@ -253,8 +253,16 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
           dos,
         })
       : Promise.resolve(null),
-    // Default product_line=commercial; the route handler can override
-    // per resolved payer_type.
+    // product_line only RANKS here, it never filters: fetchPayerRule
+    // pins payer+state+code+attribute, and the library invariant allows
+    // at most one live rule per that key (measured 2026-08: 0 keys with
+    // more than one), so exactly one row can match and the tie-break
+    // never fires. The literal is therefore inert — unlike
+    // /api/billing/allowed-codes, which filters product_line EXACTLY and
+    // must derive it from the payer's payer_type. If the library ever
+    // holds two live rows for one key under different product lines it
+    // has already broken its own invariant, and this ranking is the least
+    // of the problems.
     fetchPayerRule({
       payerId: fullPayerId,
       state: fullState,

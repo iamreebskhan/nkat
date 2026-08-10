@@ -4,22 +4,54 @@
 #  "Every stored answer, checked."
 # =============================================================================
 #
+#  WHAT "LIVE" MEANS HERE
+#  ----------------------
+#  fetchPayerRule() serves a rule when
+#
+#      effective_date <= dos  AND  (expiration_date IS NULL OR expiration_date > dos)
+#
+#  That -- not `expiration_date IS NULL` -- is the definition this script uses,
+#  because it is the definition production uses.  The two are NOT the same set:
+#  a rule given a FUTURE expiration_date (the normal way to schedule an annual
+#  sunset) is served today and is invisible to any check keyed on IS NULL, and a
+#  rule with a future effective_date is not served today even though IS NULL
+#  calls it live.  Section D prints the divergence rather than assuming it away.
+#
+#  Every check below is evaluated at a DATE OF SERVICE, default CURRENT_DATE.
+#  Override with AUDIT_DOS=2025-09-01.  Practices re-work denials inside the
+#  timely-filing window, so Section D re-measures at 90 / 180 / 365 days back.
+#
 #  WHAT THIS PROVES
 #  ----------------
-#  It walks EVERY LIVE rule in payer_rule (expiration_date IS NULL) -- not a
-#  sample, not a spot check -- and asserts, per rule:
+#  It walks EVERY rule live at the audit DOS -- not a sample, not a spot
+#  check -- and asserts, per rule:
 #
 #    A1  it carries a real verbatim source_quote (>= 20 chars)
 #    A2  value->>'answer' exists and is a real prose answer (>= 40 chars)
-#    A3  confidence is a number in [0,1]
-#    A4  coverage_status is one of covered / not_covered / varies / unknown
-#    A5  effective_date is not in the future
-#    A6  source_doc_id resolves to a row in source_document
-#    A7  that source_document carries a non-empty url
+#    A7  the cited source_document carries a non-empty url
 #    A8  attribute is one of the ten attributes the product answers on.
 #        A failure here is a SCOPE finding, not corruption: it means the
 #        library is storing rules on an attribute no screen ever shows.
-#    A9  a "live" rule is not simultaneously marked superseded_by
+#    A9  a live rule is not simultaneously marked superseded_by
+#
+#  STRUCTURAL GUARANTEES -- PRINTED, BUT NOT EVIDENCE
+#  --------------------------------------------------
+#  Three things this script used to present as passing checks CANNOT FAIL,
+#  because the schema already forbids the failure.  They are printed as [STRC]
+#  with the constraint that enforces them, and they are NOT counted in the pass
+#  tally -- a reader must not be able to mistake "the column is NOT NULL" for
+#  "somebody verified 5,665 rows".
+#
+#    S1  confidence in [0,1]         payer_rule_confidence_check + NOT NULL
+#    S2  coverage_status in 4 values payer_rule_coverage_status_check + NOT NULL
+#    S3  citation resolves           payer_rule_source_doc_id_fkey + NOT NULL
+#
+#  If any of those constraints is ever dropped, the guarantee stops being
+#  structural and the line degrades into a real, counted check on the spot.
+#
+#  The old A5 ("effective_date is not in the future") is gone for the same
+#  reason: under the correct live predicate it is true by construction.  The
+#  number it used to stand in for -- rules not yet in effect -- is in Section D.
 #
 #  Then it runs the CONTRADICTION HUNT -- the part that catches denials:
 #
@@ -49,6 +81,23 @@
 #        disclaimer naming "home health agency".  Left unflagged, that single
 #        mis-mapping tells every practice that every physician home visit
 #        needs prior authorization.
+#    B6  LIMIT 1 INVARIANT AT A BACK-DATED DOS.  B1 asks the question at today
+#        only.  A practice appealing a denial asks it at the DOS on the claim,
+#        which is months back, and the set served at that DOS is a DIFFERENT
+#        set of rows.  B6 re-runs the duplicate-key test at 90, 180 and 365
+#        days back.  A duplicate there is the same defect as a duplicate today
+#        -- Postgres row order decides the answer -- and the IS NULL definition
+#        cannot see it at all.
+#
+#  SECTION C -- VISIBILITY, NOT FAILURE
+#  ------------------------------------
+#  C3 counts rules whose prose names a DIFFERENT code and never their own.
+#  C4 counts rules stamped value->>'mappedFrom' = 'service-level rule mapped to
+#  this code', which is the pipeline saying "this is a general policy attached
+#  to a specific code".  Service-level mapping is legitimate and deliberate.
+#  Neither is a defect and neither fails the run -- but the VOLUME belongs on
+#  the page, because it is the difference between "we read a policy about
+#  99349" and "we read a policy about home visits and filed it under 99349".
 #
 #  WHAT THIS DELIBERATELY DOES NOT DO
 #  ----------------------------------
@@ -77,11 +126,14 @@
 #
 #  HOW TO READ THE OUTPUT
 #  ----------------------
-#  Every line is [PASS], [FAIL] or [INFO] followed by the number measured.
-#  [PASS] means the number was zero.  [FAIL] prints the offending rows right
-#  underneath, and every failed check is relisted at the very bottom so the
-#  whole report can be pasted into an email as-is.  [INFO] lines are counts a
-#  reviewer should see; they never fail the run.
+#  Every line is [PASS], [FAIL], [STRC] or [INFO] followed by the number
+#  measured.  [PASS] means the number was zero.  [FAIL] prints the offending
+#  rows right underneath, and every failed check is relisted at the very bottom
+#  so the whole report can be pasted into an email as-is.  [STRC] is a schema
+#  constraint restated -- it is not evidence and is not counted.  [INFO] lines
+#  are counts a reviewer should see; they never fail the run.
+#
+#  The footer tally counts ONLY the checks that could have come out either way.
 #
 #  EXIT CODES
 #  ----------
@@ -102,8 +154,32 @@ MAX_ROWS_SHOWN=25
 # B3 into a manual review queue over the whole Section C population.
 B3_MAX_OTHER="${B3_MAX_OTHER:-1}"
 
+# The date of service every check is evaluated at.  Default today.  Must be a
+# bare ISO date -- it is interpolated into SQL, so it is validated here.
+AUDIT_DOS="${AUDIT_DOS:-}"
+if [ -n "$AUDIT_DOS" ]; then
+  case "$AUDIT_DOS" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) printf 'FATAL: AUDIT_DOS must be YYYY-MM-DD, got "%s"\n' "$AUDIT_DOS" >&2; exit 2 ;;
+  esac
+  DOS_SQL="date '$AUDIT_DOS'"
+else
+  DOS_SQL="current_date"
+fi
+
+# The one definition of "live" in this file: fetchPayerRule()'s own predicate.
+# served <alias> [<dos-expr>] -- every query below is built from this single
+# function, so no query can drift back to `expiration_date IS NULL`.
+served() {
+  local a="$1" d="${2:-$DOS_SQL}"
+  printf '%s.effective_date <= %s and (%s.expiration_date is null or %s.expiration_date > %s)' \
+    "$a" "$d" "$a" "$a" "$d"
+}
+SERVED_PR="$(served pr)"
+
 FAIL_COUNT=0
 PASS_COUNT=0
+STRUCT_COUNT=0
 FAILED_SUMMARY=""
 
 sql_scalar() { $PSQL -X -q -A -t -v ON_ERROR_STOP=1 -c "$1"; }
@@ -151,6 +227,39 @@ check() {
   printf '\n'
 }
 
+# guarantee <id> <label> <enforced-sql> <constraint-name> <count-sql> <detail-sql>
+#
+# For a property the SCHEMA already forbids violating.  Printed so a reader can
+# see it was considered, labelled [STRC] so nobody reads it as an independent
+# assurance, and deliberately NOT counted in the pass tally.
+#
+# <enforced-sql> must return 't' when the constraint is still in place.  If it
+# ever returns 'f' -- somebody dropped the constraint -- the property stops
+# being structural and this degrades into a real, counted check on the spot.
+guarantee() {
+  local id="$1" label="$2" cname="$3" notnull_col="$4" count_sql="$5" detail_sql="$6"
+  local cdef notnull
+  cdef="$(sql_scalar "select coalesce(pg_get_constraintdef(oid),'') from pg_constraint
+                       where conrelid = 'payer_rule'::regclass and conname = '$cname';")"
+  # boolean::text renders as 'true'/'false' here, but psql's unaligned output
+  # has printed 't'/'f' on other builds -- accept either rather than silently
+  # reporting a live constraint as missing.
+  notnull="$(sql_scalar "select case when coalesce(bool_and(attnotnull),false) then 'yes' else 'no' end
+                           from pg_attribute
+                          where attrelid = 'payer_rule'::regclass and attname = '$notnull_col';")"
+  if [ -n "$cdef" ] && [ "$notnull" = "yes" ]; then
+    printf '  [STRC] %-4s %-52s %s\n' "$id" "$label" "schema"
+    printf '              %s NOT NULL, and %s\n' "$notnull_col" "$cname"
+    printf '              %s\n' "$cdef" | cut -c1-92
+    printf '              cannot fail -> restated, NOT evidence, NOT counted in the tally\n'
+    STRUCT_COUNT=$((STRUCT_COUNT + 1))
+    return
+  fi
+  printf '  [!!!!] %-4s %-52s %s\n' "$id" "$label" "ENFORCEMENT GONE"
+  printf '              %s missing or %s is nullable -- this is a REAL check now:\n' "$cname" "$notnull_col"
+  check "$id" "$label" "$count_sql" "$detail_sql"
+}
+
 # note <id> <label> <count-sql> -- a measured number that is context, not a
 # defect.  Never changes the exit code.
 note() {
@@ -159,10 +268,11 @@ note() {
   printf '  [INFO] %-4s %-52s %s\n' "$id" "$label" "${n:-?}"
 }
 
-# --- shared CTE: one normalized view of every LIVE rule -----------------------
-# ans / hay are ASCII-folded so the regexes below cannot be defeated by
+# --- shared CTE: one normalized view of every rule SERVED AT THE AUDIT DOS ----
+# The WHERE clause is fetchPayerRule()'s own predicate, not `expiration_date IS
+# NULL`.  ans / hay are ASCII-folded so the regexes below cannot be defeated by
 # en-dashes, smart quotes or non-breaking spaces in the ingested prose.
-read -r -d '' LIVE <<'SQL'
+read -r -d '' LIVE <<SQL
 with live as (
   select pr.id,
          pr.payer_id,
@@ -177,6 +287,7 @@ with live as (
          pr.superseded_by,
          pr.source_doc_id,
          coalesce(pr.source_quote,'')                        as quote,
+         pr.value->>'mappedFrom'                             as mapped_from,
          -- the prose the biller reads
          regexp_replace(coalesce(pr.value->>'answer',''), '[^ -~]', ' ', 'g') as ans,
          -- ONLY the verbatim payer text backing this rule.  Must exclude the
@@ -189,7 +300,7 @@ with live as (
                         '[^ -~]', ' ', 'g')                  as hay
   from payer_rule pr
   left join payer p on p.id = pr.payer_id
-  where pr.expiration_date is null
+  where $SERVED_PR
 )
 SQL
 
@@ -208,12 +319,18 @@ if [ -z "$DBINFO" ]; then
   printf '\n  Could not reach the database with: %s\n\n' "$PSQL"
   exit 99
 fi
-TOTAL_LIVE="$(sql_scalar "select count(*) from payer_rule where expiration_date is null;")"
-TOTAL_PAYERS="$(sql_scalar "select count(distinct payer_id) from payer_rule where expiration_date is null;")"
+AUDIT_DATE="$(sql_scalar "select ($DOS_SQL)::text;")"
+TOTAL_LIVE="$(sql_scalar "select count(*) from payer_rule pr where $SERVED_PR;")"
+TOTAL_PAYERS="$(sql_scalar "select count(distinct payer_id) from payer_rule pr where $SERVED_PR;")"
 TOTAL_DOCS="$(sql_scalar "select count(*) from source_document;")"
+TOTAL_EXPNULL="$(sql_scalar "select count(*) from payer_rule where expiration_date is null;")"
 
 printf ' Database ......... %s\n' "$DBINFO"
-printf ' Live rules ....... %s   (expiration_date IS NULL)\n' "$TOTAL_LIVE"
+printf ' Date of service .. %s%s\n' "$AUDIT_DATE" \
+  "$( [ -n "$AUDIT_DOS" ] && printf '   (AUDIT_DOS override)' || printf '   (today; override with AUDIT_DOS=YYYY-MM-DD)' )"
+printf ' Live rules ....... %s   (effective_date <= DOS AND (expiration_date IS NULL OR expiration_date > DOS)\n' "$TOTAL_LIVE"
+printf '                    %s   -- what fetchPayerRule actually serves)\n' ''
+printf ' For comparison ... %s rows match the OLD, WRONG test `expiration_date IS NULL`\n' "$TOTAL_EXPNULL"
 printf ' Payers ........... %s\n' "$TOTAL_PAYERS"
 printf ' Source documents . %s\n' "$TOTAL_DOCS"
 printf ' Mode ............. READ ONLY -- SELECT statements only, no API calls\n'
@@ -239,29 +356,6 @@ check A2 "Every rule has a prose answer of usable length" \
           coalesce(nullif(btrim(ans),''),'EMPTY / NULL') as answer
    from live where length(btrim(ans)) < 40 order by payer, code, attribute limit $MAX_ROWS_SHOWN;"
 
-check A3 "Confidence is a number between 0 and 1" \
-"$LIVE select count(*) from live where confidence is null or confidence < 0 or confidence > 1;" \
-"$LIVE select payer, state, code, attribute, confidence
-   from live where confidence is null or confidence < 0 or confidence > 1
-   order by confidence nulls first limit $MAX_ROWS_SHOWN;"
-
-check A4 "coverage_status is one of the four valid values" \
-"$LIVE select count(*) from live where coverage_status not in ('covered','not_covered','varies','unknown');" \
-"$LIVE select payer, state, code, attribute, coverage_status
-   from live where coverage_status not in ('covered','not_covered','varies','unknown')
-   order by coverage_status limit $MAX_ROWS_SHOWN;"
-
-check A5 "effective_date is on or before today" \
-"$LIVE select count(*) from live where effective_date > current_date;" \
-"$LIVE select payer, state, code, attribute, effective_date
-   from live where effective_date > current_date order by effective_date desc limit $MAX_ROWS_SHOWN;"
-
-check A6 "Cited source_document actually exists" \
-"$LIVE select count(*) from live l left join source_document d on d.id = l.source_doc_id where d.id is null;" \
-"$LIVE select l.payer, l.state, l.code, l.attribute, l.source_doc_id
-   from live l left join source_document d on d.id = l.source_doc_id
-   where d.id is null order by l.payer, l.code limit $MAX_ROWS_SHOWN;"
-
 check A7 "Cited source_document has a non-empty url" \
 "$LIVE select count(*) from live l join source_document d on d.id = l.source_doc_id where length(btrim(coalesce(d.url,''))) = 0;" \
 "$LIVE select l.payer, l.state, l.code, l.attribute, coalesce(d.title,'(no title)') as doc_title
@@ -277,6 +371,35 @@ check A9 "A live rule is not also marked superseded" \
 "$LIVE select count(*) from live where superseded_by is not null;" \
 "$LIVE select payer, state, code, attribute, superseded_by
    from live where superseded_by is not null order by payer, code limit $MAX_ROWS_SHOWN;"
+
+# =============================================================================
+printf '\nSECTION S -- STRUCTURAL GUARANTEES   (restated, NOT evidence)\n'
+hr
+printf '  These three cannot come out any other way: the schema rejects the bad\n'
+printf '  row at INSERT time.  They were previously printed as [PASS] and counted\n'
+printf '  in the tally, which read as three independent assurances.  They are not.\n'
+hr
+
+guarantee S1 "Confidence is a number between 0 and 1" \
+  payer_rule_confidence_check confidence \
+"$LIVE select count(*) from live where confidence is null or confidence < 0 or confidence > 1;" \
+"$LIVE select payer, state, code, attribute, confidence
+   from live where confidence is null or confidence < 0 or confidence > 1
+   order by confidence nulls first limit $MAX_ROWS_SHOWN;"
+
+guarantee S2 "coverage_status is one of the four valid values" \
+  payer_rule_coverage_status_check coverage_status \
+"$LIVE select count(*) from live where coverage_status not in ('covered','not_covered','varies','unknown');" \
+"$LIVE select payer, state, code, attribute, coverage_status
+   from live where coverage_status not in ('covered','not_covered','varies','unknown')
+   order by coverage_status limit $MAX_ROWS_SHOWN;"
+
+guarantee S3 "Cited source_document actually exists" \
+  payer_rule_source_doc_id_fkey source_doc_id \
+"$LIVE select count(*) from live l left join source_document d on d.id = l.source_doc_id where d.id is null;" \
+"$LIVE select l.payer, l.state, l.code, l.attribute, l.source_doc_id
+   from live l left join source_document d on d.id = l.source_doc_id
+   where d.id is null order by l.payer, l.code limit $MAX_ROWS_SHOWN;"
 
 # =============================================================================
 printf '\nSECTION B -- CONTRADICTION HUNT   (the part that prevents denials)\n'
@@ -388,12 +511,22 @@ check B4 "Retired code 99343 is never marked covered" \
 record
 
 # --- B5: home health AGENCY trigger leaking onto a physician home visit --------
+# Exempt any rule whose own VERBATIM QUOTE names the code. When the payer
+# writes the code down there is no service-to-code mapping to get wrong,
+# and the trigger words are then just the category heading the code was
+# listed under. Humana Healthy Horizons SC is the real case: its PAL reads
+#   'Prior authorization required after five visits for the following
+#    codes: 99344, 99501, 99502, ...'
+# under a 'Home health/home infusion' heading. The rule is correct; the
+# heading is not evidence of a mis-mapping.
 B5_TRIGGER="18 combined visits|home health aide|private duty nursing|home infusion"
 
 check B5 "Home-visit E/M prior-auth free of agency triggers" \
 "$LIVE select count(*) from live
    where code in ($HOME_EM) and attribute in ('prior_auth_required','covered')
-     and hay ~* '$B5_TRIGGER' and hay !~* 'home health agency';" \
+     and hay ~* '$B5_TRIGGER' and hay !~* 'home health agency'
+     and quote !~ ('(^|[^0-9])' || code || '([^0-9]|$)')
+     and quote !~ ('(^|[^0-9])' || code || '([^0-9]|$)');" \
 "$LIVE select '* ' || code || '  ' || state || '  ' || payer
           || '  [' || attribute || ']' || chr(10)
           || '    agency-benefit wording found, no \"home health agency\" scope disclaimer' || chr(10)
@@ -401,8 +534,93 @@ check B5 "Home-visit E/M prior-auth free of agency triggers" \
    from live
    where code in ($HOME_EM) and attribute in ('prior_auth_required','covered')
      and hay ~* '$B5_TRIGGER' and hay !~* 'home health agency'
+     and quote !~ ('(^|[^0-9])' || code || '([^0-9]|$)')
    order by payer, code limit $MAX_ROWS_SHOWN;" \
 record
+
+# --- B6: the LIMIT 1 invariant at a BACK-DATED date of service ----------------
+# B1 asks at the audit DOS only.  A denial is re-worked at the DOS on the claim,
+# which is months back, and the set of rows served at that DOS is a DIFFERENT
+# set.  Two rows live at that DOS on one key is the same nondeterminism B1
+# guards against -- and `expiration_date IS NULL` cannot see it at all, because
+# it has no notion of a date.
+read -r -d '' B6_BODY <<SQL
+with back(lbl, dos) as (values
+  ('90d back',  ($DOS_SQL - 90)),
+  ('180d back', ($DOS_SQL - 180)),
+  ('365d back', ($DOS_SQL - 365))),
+dup as (
+  select b.lbl, b.dos, pr.payer_id, pr.state, pr.code, pr.attribute, count(*) as live_rows
+  from back b
+  join payer_rule pr
+    on pr.effective_date <= b.dos
+   and (pr.expiration_date is null or pr.expiration_date > b.dos)
+  group by 1,2,3,4,5,6
+  having count(*) > 1)
+SQL
+
+# Counted as DISTINCT keys, not as (key x date) pairs: a key that is ambiguous
+# at both 90d and 180d is ONE broken key, and summing the three dates would
+# report it as two or three.
+check B6 "LIMIT 1 invariant holds at 90/180/365 days back too" \
+"$B6_BODY select count(*) from (select distinct payer_id, state, code, attribute from dup) k;" \
+"$B6_BODY
+ select coalesce(p.name::text,'(unknown payer)') as payer,
+        d.state, d.code, d.attribute,
+        max(d.live_rows)                          as worst_live_rows,
+        string_agg(distinct d.lbl, ', ')          as ambiguous_at
+   from dup d left join payer p on p.id = d.payer_id
+  group by payer, d.state, d.code, d.attribute
+  order by max(d.live_rows) desc, payer, d.code, d.attribute limit $MAX_ROWS_SHOWN;"
+
+# =============================================================================
+printf '\nSECTION D -- DATE OF SERVICE DIMENSION   (context, not a pass/fail)\n'
+hr
+printf '  Practices re-work denials inside the timely-filing window, so the\n'
+printf '  question "what does the library answer?" has a different answer at\n'
+printf '  every date of service.  Same predicate as fetchPayerRule, four dates.\n\n'
+
+sql_table "with back(ord, lbl, dos) as (values
+  (1,'today',     ($DOS_SQL)),
+  (2,'90d back',  ($DOS_SQL - 90)),
+  (3,'180d back', ($DOS_SQL - 180)),
+  (4,'365d back', ($DOS_SQL - 365))),
+served as (
+  select b.ord, b.lbl, b.dos, pr.payer_id, pr.state, pr.code, pr.attribute
+    from back b
+    left join payer_rule pr
+      on pr.effective_date <= b.dos
+     and (pr.expiration_date is null or pr.expiration_date > b.dos))
+select s.lbl as date_of_service, s.dos,
+       count(s.payer_id) as rules_served,
+       count(distinct (s.payer_id::text||s.state||s.code||s.attribute)) as cells_answered,
+       count(s.payer_id)
+         - count(distinct (s.payer_id::text||s.state||s.code||s.attribute)) as surplus_rows_on_a_key,
+       count(distinct s.payer_id) as payers,
+       count(distinct s.code)     as codes
+  from served s group by s.ord, s.lbl, s.dos order by s.ord;" | indent 2
+printf '        (surplus_rows_on_a_key > 0 means more than one rule is live on\n'
+printf '         some key at that date.  fetchPayerRule ends in LIMIT 1 with no\n'
+printf '         tiebreak, so which one a biller sees is Postgres row order.\n'
+printf '         B6 above fails on exactly this.)\n'
+
+printf '\n  Where the two definitions of "live" disagree, right now\n\n'
+sql_table "select
+  count(*) filter (where expiration_date is null
+                     and not (effective_date <= $DOS_SQL))                       as exp_null_but_not_yet_served,
+  count(*) filter (where expiration_date is not null and expiration_date > $DOS_SQL
+                     and effective_date <= $DOS_SQL)                             as served_but_exp_null_misses_it,
+  count(*) filter (where expiration_date is null)                                as exp_null_total,
+  count(*) filter (where effective_date <= $DOS_SQL
+                     and (expiration_date is null or expiration_date > $DOS_SQL)) as served_total
+from payer_rule;" | indent 2
+printf '        (A FUTURE expiration_date is the normal way to schedule an annual\n'
+printf '         sunset.  Every such rule IS served in production and the old\n'
+printf '         IS NULL test could not see one of them.  If both middle columns\n'
+printf '         read 0 the two definitions happen to coincide TODAY -- that is a\n'
+printf '         property of the data on this date, not of the test, and it stops\n'
+printf '         being true the moment anyone schedules a sunset or back-dates a\n'
+printf '         lookup.  The row counts above already differ at every other DOS.)\n'
 
 # =============================================================================
 printf '\nSECTION C -- WHAT WAS WALKED   (context, not a pass/fail)\n'
@@ -415,7 +633,32 @@ note C2 "...of those, answers that enumerate other codes" \
 "$B3_BODY select count(*) from orphans;"
 printf '        (C1/C2 are prose written as general policy rather than\n'
 printf '         code-by-code.  Reviewable, not broken.  B3 above fails only\n'
-printf '         on the unambiguous single-code substitutions.)\n'
+printf '         on the unambiguous single-code substitutions.)\n\n'
+
+# --- F6 visibility: how much of the library is general policy, not code policy
+note C3 "Prose names a DIFFERENT code and never its own" \
+"$LIVE, m as (
+   select l.id, l.code,
+     (regexp_matches(l.ans,'(?:^|[^0-9A-Za-z])((?:9[0-9]{4})|(?:[A-HJ-VX-Z][0-9]{4}))(?![0-9A-Za-z])','g'))[1] as mentioned
+   from live l)
+ select count(*) from (
+   select id from m group by id, code
+    having count(*) filter (where mentioned <> code) > 0
+       and count(*) filter (where mentioned =  code) = 0) z;"
+
+note C4 "Stamped mappedFrom = service-level rule mapped to code" \
+"$LIVE select count(*) from live
+   where mapped_from = 'service-level rule mapped to this code';"
+
+printf '        (C3/C4 are VISIBILITY, not failure.  Service-level mapping is\n'
+printf '         legitimate and deliberate -- a payer publishes one home-visit\n'
+printf '         policy, the pipeline stamps it onto each code in that family.\n'
+printf '         But the volume is the difference between "we read a policy\n'
+printf '         about 99349" and "we read a policy about home visits".  A\n'
+printf '         reader of this report is entitled to know which they are\n'
+printf '         holding, so the number is on the page.)\n'
+
+printf '\n  Section C in scope: the %s rules served at %s\n' "$TOTAL_LIVE" "$AUDIT_DATE"
 
 printf '\n  Live rules by attribute\n\n'
 sql_table "$LIVE
@@ -446,14 +689,20 @@ printf '\n'
 printf '============================================================================\n'
 printf ' RESULT\n'
 printf '============================================================================\n'
-printf ' Checks run ....... %s\n' "$((PASS_COUNT + FAIL_COUNT))"
-printf ' Passed ........... %s\n' "$PASS_COUNT"
-printf ' Failed ........... %s\n' "$FAIL_COUNT"
-printf ' Live rules walked  %s\n' "$TOTAL_LIVE"
+printf ' Checks that could have failed .... %s\n' "$((PASS_COUNT + FAIL_COUNT))"
+printf '   passed ........................ %s\n' "$PASS_COUNT"
+printf '   failed ........................ %s\n' "$FAIL_COUNT"
+printf ' Structural guarantees restated ... %s   (NOT checks -- the schema forbids\n' "$STRUCT_COUNT"
+printf '                                        the failure, so no row was proved\n'
+printf '                                        by them.  Excluded from the tally.)\n'
+printf ' Rules walked ..................... %s   at DOS %s\n' "$TOTAL_LIVE" "$AUDIT_DATE"
 
 if [ "$FAIL_COUNT" -eq 0 ]; then
-  printf '\n ALL CHECKS PASSED.  Every one of the %s live rules is sourced,\n' "$TOTAL_LIVE"
-  printf ' internally consistent, and free of the contradiction classes above.\n'
+  printf '\n ALL %s CHECKS PASSED at DOS %s.  Every one of the %s rules served at\n' \
+    "$PASS_COUNT" "$AUDIT_DATE" "$TOTAL_LIVE"
+  printf ' that date is sourced, internally consistent, and free of the\n'
+  printf ' contradiction classes above.\n'
+  printf '\n This is NOT a statement about other dates of service.  Read Section D.\n'
   printf '============================================================================\n\n'
   exit 0
 fi

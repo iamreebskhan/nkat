@@ -8,10 +8,9 @@
  * ----------------
  * Layers 1 and 2 count rows. This one prints the ANSWER. For every in-scope
  * palliative-care code crossed with every payer/state that has rules, it
- * resolves the live rule for each of the four attributes the denial scorer
- * consumes (covered, prior_auth_required, modifier_required, frequency_limit)
- * and renders exactly what a nurse practitioner would be shown in the billing
- * lookup panel:
+ * resolves the live rule for ALL TEN attributes the product answers on — not
+ * just the four the denial scorer consumes — and renders exactly what a nurse
+ * practitioner would be shown in the billing lookup panel:
  *
  *   - the answer sentence, produced by re-implementing, verbatim in behaviour,
  *     `describeRuleValue()` + `renderStructuredAnswer()` from
@@ -20,10 +19,36 @@
  *     (`documentName` / `verbatimQuote` / `documentUrl` / effective date);
  *   - the row-selection itself, produced by replicating `fetchPayerRule()` in
  *     lib/features/billing/payer-rule.repository.ts — same date-of-service
- *     window, same state-Medicaid `payer_id IS NULL` fallback for
- *     medicaid_mco / medicaid_state / tribal payers, same ORDER BY
- *     (own policy first, then product_line match, then newest effective date),
- *     same LIMIT 1.
+ *     window, same `pr.payer_id = <payer>` restriction, same ORDER BY
+ *     (product_line match, then newest effective date), same LIMIT 1.
+ *
+ * WHY ALL TEN ATTRIBUTES
+ * ----------------------
+ * An earlier version of this file exercised four. That left the other six
+ * unexercised and unmentioned, so the report said "all checks green across N
+ * live answers" while a large majority of the in-scope library had not been
+ * looked at — provider_taxonomy_allowed, documentation_required,
+ * telehealth_allowed, pos_allowed, bundled_with and units_per_period_max are
+ * all rendered in the lookup panel and all could have been empty, uncited or
+ * sub-threshold without this saying so. ATTRIBUTES below is now the same ten
+ * as ATTRIBUTE_DB_MAP in payer-rule.repository.ts; the four the scorer reads
+ * are still called out, but they no longer stand in for the whole library.
+ *
+ * WHAT "LIVE" MEANS HERE
+ * ----------------------
+ * fetchPayerRule() serves a rule when
+ *
+ *     effective_date <= dos AND (expiration_date IS NULL OR expiration_date > dos)
+ *
+ * Not `expiration_date IS NULL`. The cell resolution below always used the
+ * real predicate, but the structural checks underneath it (duplicates, retired
+ * codes, the live-row count in the banner) did not, so they were answering a
+ * different question from the one the report was about. They all use the real
+ * predicate now, and section DATE-OF-SERVICE re-measures at 90 / 180 / 365
+ * days back — practices re-work denials inside the timely-filing window, and
+ * the library serves a DIFFERENT set of rows at those dates.
+ *
+ * Default DOS is CURRENT_DATE; override with AUDIT_DOS=YYYY-MM-DD.
  *
  * So a human can READ the output and judge whether the answers are real,
  * specific and sourced — not merely that a COUNT(*) matched. Every rendered
@@ -91,11 +116,29 @@ const CODES = [
 const RETIRED_CODES = ["99343"];
 
 /**
- * The four attributes lib/features/billing/predict-superbill.service.ts feeds
- * into scoreLine() in denial-risk.service.ts. These are the ones that decide
- * whether a claim gets paid, so these are the ones we render.
+ * All ten attributes the product answers on — the values of ATTRIBUTE_DB_MAP
+ * in lib/features/billing/payer-rule.repository.ts. Every one of them is
+ * rendered in the lookup panel, so every one of them is exercised here.
  */
 const ATTRIBUTES = [
+  "covered",
+  "prior_auth_required",
+  "modifier_required",
+  "frequency_limit",
+  "telehealth_allowed",
+  "pos_allowed",
+  "provider_taxonomy_allowed",
+  "documentation_required",
+  "units_per_period_max",
+  "bundled_with",
+];
+
+/**
+ * The four of those ten that lib/features/billing/predict-superbill.service.ts
+ * feeds into scoreLine() in denial-risk.service.ts. Reported separately, but
+ * NOT a substitute for the other six.
+ */
+const SCORER_ATTRIBUTES = [
   "covered",
   "prior_auth_required",
   "modifier_required",
@@ -106,7 +149,19 @@ const ATTRIBUTES = [
 const MIN_SQL_CONFIDENCE = 0.5;
 
 /** Default product_line the lookup service asks for. */
-const DEFAULT_PRODUCT_LINE = "commercial";
+// Production does NOT default to commercial. fetchPayerRule now derives the
+// product line from the payer type (lib/features/billing/payer-rule.repository.ts),
+// so a script pinned to "commercial" ranks rows differently from the code it
+// claims to replicate — and for Traditional Medicare, whose rules are all
+// medicare_ffs, it ranked every one of them last.
+const PAYER_TYPE_PRODUCT_LINE = {
+  medicare_mac:  "medicare_ffs",
+  medicaid_mco:  "medicaid_mco",
+  medicaid_state:"medicaid_ffs",
+  tribal:        "tribal_638",
+  commercial:    "commercial",
+};
+const productLineFor = (payerType) => PAYER_TYPE_PRODUCT_LINE[payerType] ?? "commercial";
 
 const ANSWER_CHARS = 200;
 const CITE_CHARS = 120;
@@ -115,6 +170,24 @@ const MIN_QUOTE_CHARS = 25;
 const EMPTY_CELL_SAMPLE = 5;
 
 const BRIEF = process.argv.includes("--brief");
+
+/**
+ * Date of service every query is evaluated at. Interpolated into SQL, so it is
+ * validated to a bare ISO date first. Default CURRENT_DATE.
+ */
+const AUDIT_DOS = (process.env.AUDIT_DOS || "").trim();
+if (AUDIT_DOS && !/^\d{4}-\d{2}-\d{2}$/.test(AUDIT_DOS)) {
+  throw new Error(`AUDIT_DOS must be YYYY-MM-DD, got "${AUDIT_DOS}"`);
+}
+const DOS_SQL = AUDIT_DOS ? `DATE '${AUDIT_DOS}'` : "current_date";
+
+/**
+ * fetchPayerRule()'s own predicate, as one string, so no query in this file
+ * can quietly drift back to `expiration_date IS NULL`.
+ */
+const served = (alias, dos = DOS_SQL) =>
+  `${alias}.effective_date <= ${dos} ` +
+  `AND (${alias}.expiration_date IS NULL OR ${alias}.expiration_date > ${dos})`;
 
 // ---------------------------------------------------------------------------
 // psql plumbing. No `pg` dependency exists in package.json, and psql is always
@@ -368,8 +441,9 @@ function main() {
   // -- 0. Connectivity + shape ---------------------------------------------
   const meta = psqlJson(`
     SELECT current_database() AS db,
-           current_date::text AS dos,
-           (SELECT count(*) FROM payer_rule WHERE expiration_date IS NULL) AS live_rules,
+           (${DOS_SQL})::text AS dos,
+           (SELECT count(*) FROM payer_rule pr WHERE ${served("pr")}) AS live_rules,
+           (SELECT count(*) FROM payer_rule WHERE expiration_date IS NULL) AS exp_null_rules,
            (SELECT count(*) FROM payer) AS payers,
            (SELECT count(*) FROM source_document) AS docs
   `)[0];
@@ -377,8 +451,11 @@ function main() {
   const dos = meta.dos;
   say("CONNECTION");
   say(`  database              : ${meta.db}`);
-  say(`  date of service used  : ${dos}   (same DOS window fetchPayerRule() applies)`);
-  say(`  live payer_rule rows  : ${Number(meta.live_rules).toLocaleString()}`);
+  say(`  date of service used  : ${dos}   ${AUDIT_DOS ? "(AUDIT_DOS override)" : "(today; override with AUDIT_DOS=YYYY-MM-DD)"}`);
+  say(`  rules served at DOS   : ${Number(meta.live_rules).toLocaleString()}`);
+  say("                          effective_date <= DOS AND (expiration_date IS NULL");
+  say("                          OR expiration_date > DOS) — fetchPayerRule's own test");
+  say(`  for comparison        : ${Number(meta.exp_null_rules).toLocaleString()} rows match the OLD, WRONG test  expiration_date IS NULL`);
   say(`  payers                : ${meta.payers}`);
   say(`  source documents      : ${Number(meta.docs).toLocaleString()}`);
   say();
@@ -387,8 +464,15 @@ function main() {
     `${meta.live_rules} live rules`);
 
   // -- 1. Payer x state universe -------------------------------------------
-  // A pair qualifies when at least one live in-scope rule is reachable by the
-  // real fetch predicate (own rule, or the statewide Medicaid fallback).
+  // A pair qualifies when at least one rule served at the audit DOS is
+  // reachable by the real fetch predicate.
+  //
+  // The `pr.payer_id IS NULL` statewide-Medicaid fallback this file used to
+  // replicate no longer exists in fetchPayerRule() and never could match:
+  // payer_rule.payer_id is NOT NULL. Ingestion writes one row PER PAYER for a
+  // shared state policy, so every MCO already has its own row. Keeping the
+  // dead branch here made this audit a replica of a query the product does not
+  // run.
   const pairs = psqlJson(`
     SELECT p.id::text        AS payer_id,
            p.name            AS payer_name,
@@ -401,13 +485,8 @@ function main() {
       WHERE pr.state = s.state
         AND pr.code IN (${sqlList(CODES)})
         AND pr.attribute IN (${sqlList(ATTRIBUTES)})
-        AND pr.effective_date <= current_date
-        AND (pr.expiration_date IS NULL OR pr.expiration_date > current_date)
-        AND (
-          pr.payer_id = p.id
-          OR (pr.payer_id IS NULL
-              AND p.payer_type IN ('medicaid_mco','medicaid_state','tribal'))
-        )
+        AND ${served("pr")}
+        AND pr.payer_id = p.id
     )
     ORDER BY p.name, s.state
   `);
@@ -423,13 +502,8 @@ function main() {
       SELECT 1 FROM payer_rule pr
       WHERE pr.code IN (${sqlList(CODES)})
         AND pr.attribute IN (${sqlList(ATTRIBUTES)})
-        AND pr.effective_date <= current_date
-        AND (pr.expiration_date IS NULL OR pr.expiration_date > current_date)
-        AND (
-          pr.payer_id = p.id
-          OR (pr.payer_id IS NULL
-              AND p.payer_type IN ('medicaid_mco','medicaid_state','tribal'))
-        )
+        AND ${served("pr")}
+        AND pr.payer_id = p.id
     )
     ORDER BY p.name
   `);
@@ -438,7 +512,10 @@ function main() {
 
   say("SCOPE EXERCISED");
   say(`  in-scope codes        : ${CODES.length}   (99343 excluded — retired from CPT)`);
-  say(`  denial-scorer attrs   : ${ATTRIBUTES.join(", ")}`);
+  say(`  attributes exercised  : ${ATTRIBUTES.length} of 10 the product answers on`);
+  for (const a of ATTRIBUTES) {
+    say(`      ${pad(a, 28)}${SCORER_ATTRIBUTES.includes(a) ? "<- denial scorer reads this" : ""}`);
+  }
   say(`  payer × state pairs   : ${pairs.length}`);
   say(`  cells enumerated      : ${totalCells.toLocaleString()}   (codes × attrs × payer-states)`);
   say();
@@ -447,9 +524,12 @@ function main() {
     `${pairs.length} pairs`);
 
   // -- 2. Resolve every cell through the real fetch path --------------------
-  // One LATERAL per cell, replicating fetchPayerRule() exactly: DOS window,
-  // statewide Medicaid fallback, own-policy-first / product-line / newest
-  // ordering, LIMIT 1.
+  // One LATERAL per cell, replicating fetchPayerRule() as it stands today:
+  // DOS window, pr.payer_id = <payer>, ORDER BY product_line match then newest
+  // effective_date, LIMIT 1. `is_statewide` is a property of the DOCUMENT
+  // (source_document.document_type = 'state_medicaid_manual'), not of a NULL
+  // payer_id — the old payer_id-based flag was hardwired false, which
+  // mislabelled every state-policy citation as "Payer policy document".
   const pairValues = pairs
     .map((p) => `('${p.payer_id}'::uuid, '${p.payer_type}'::text, '${p.state}'::text)`)
     .join(",\n      ");
@@ -485,23 +565,17 @@ function main() {
         pr.source_page              AS source_page,
         pr.product_line             AS product_line,
         sd.url                      AS source_url,
-        (pr.payer_id IS NULL)       AS is_statewide,
+        coalesce(sd.document_type = 'state_medicaid_manual', false) AS is_statewide,
         (sd.id IS NOT NULL)         AS source_doc_resolved
       FROM payer_rule pr
       LEFT JOIN source_document sd ON sd.id = pr.source_doc_id
       WHERE pr.state     = c.state
         AND pr.code      = c.code
         AND pr.attribute = c.attribute
-        AND pr.effective_date <= current_date
-        AND (pr.expiration_date IS NULL OR pr.expiration_date > current_date)
-        AND (
-          pr.payer_id = c.payer_id
-          OR (pr.payer_id IS NULL
-              AND c.payer_type IN ('medicaid_mco','medicaid_state','tribal'))
-        )
+        AND ${served("pr")}
+        AND pr.payer_id = c.payer_id
       ORDER BY
-        (pr.payer_id IS NOT NULL) DESC,
-        (pr.product_line = '${DEFAULT_PRODUCT_LINE}') DESC,
+        (pr.product_line = '${productLineFor(pair.payer_type)}') DESC,
         pr.effective_date DESC
       LIMIT 1
     ) h ON TRUE
@@ -652,29 +726,106 @@ function main() {
   }
 
   // -- 6. Structural checks that back the report up --------------------------
-  const dupes = psqlJson(`
+  // COUNT THE WHOLE POPULATION, LIMIT ONLY WHAT IS DISPLAYED.
+  // This query used to end in LIMIT 20 and the check below reported
+  // `dupes.length` as the number of duplicated cells — so 500 duplicates would
+  // have been reported as 20, and a reader would have been told the problem was
+  // 25x smaller than it is. The total now comes from COUNT(*) over the full
+  // set; the LIMIT applies only to the sample printed in the detail line.
+  const DUPE_SAMPLE = 20;
+  const dupeQuery = (dosExpr) => `
     SELECT payer_id::text AS payer_id, state, code, attribute, count(*)::int AS n
-    FROM payer_rule
-    WHERE expiration_date IS NULL
+    FROM payer_rule pr
+    WHERE ${served("pr", dosExpr)}
       AND code IN (${sqlList(CODES)})
       AND attribute IN (${sqlList(ATTRIBUTES)})
     GROUP BY 1,2,3,4
     HAVING count(*) > 1
-    ORDER BY n DESC
-    LIMIT 20
-  `);
+  `;
+
+  const dupeTotal = Number(
+    psqlJson(`SELECT count(*)::int AS n FROM (${dupeQuery(DOS_SQL)}) d`)[0].n,
+  );
+  const dupeSample = psqlJson(
+    `SELECT * FROM (${dupeQuery(DOS_SQL)}) d ORDER BY n DESC, state, code LIMIT ${DUPE_SAMPLE}`,
+  );
+
+  // The same invariant at a BACK-DATED date of service. A denial is re-worked
+  // at the DOS on the claim, months back, where a DIFFERENT set of rows is
+  // served — and `expiration_date IS NULL` has no notion of a date, so it can
+  // never ask this. Counted as DISTINCT keys so a key ambiguous at two dates
+  // is one broken key, not two.
+  const BACK_DAYS = [90, 180, 365];
+  const backDupeTotal = Number(
+    psqlJson(`
+      SELECT count(*)::int AS n FROM (
+        SELECT DISTINCT payer_id, state, code, attribute FROM (
+          ${BACK_DAYS.map(
+            (d) => `SELECT * FROM (${dupeQuery(`(${DOS_SQL} - ${d})`)}) d${d}`,
+          ).join("\n          UNION ALL\n          ")}
+        ) u
+      ) k
+    `)[0].n,
+  );
 
   const retired = psqlJson(`
     SELECT pr.code AS code,
-           coalesce(p.name, '(statewide policy)') AS payer_name,
+           coalesce(p.name, '(unknown payer)') AS payer_name,
            pr.state AS state,
            count(*)::int AS n
     FROM payer_rule pr
     LEFT JOIN payer p ON p.id = pr.payer_id
-    WHERE pr.expiration_date IS NULL AND pr.code IN (${sqlList(RETIRED_CODES)})
+    WHERE ${served("pr")} AND pr.code IN (${sqlList(RETIRED_CODES)})
     GROUP BY 1,2,3
     ORDER BY 1,2,3
   `);
+
+  // -- 6b. Date-of-service dimension ---------------------------------------
+  const dosRows = psqlJson(`
+    WITH back(ord, lbl, d) AS (
+      VALUES (1,'today',0),(2,'90d back',90),(3,'180d back',180),(4,'365d back',365)
+    ),
+    s AS (
+      SELECT b.ord, b.lbl, (${DOS_SQL} - b.d) AS dos, pr.payer_id, pr.state, pr.code, pr.attribute
+      FROM back b
+      JOIN payer_rule pr
+        ON pr.effective_date <= (${DOS_SQL} - b.d)
+       AND (pr.expiration_date IS NULL OR pr.expiration_date > (${DOS_SQL} - b.d))
+      WHERE pr.code IN (${sqlList(CODES)})
+        AND pr.attribute IN (${sqlList(ATTRIBUTES)})
+    )
+    SELECT s.ord::int AS ord, s.lbl AS lbl, s.dos::text AS dos,
+           count(*)::int AS rules,
+           count(DISTINCT (s.payer_id::text||s.state||s.code||s.attribute))::int AS cells,
+           count(*) FILTER (WHERE s.attribute IN (${sqlList(SCORER_ATTRIBUTES)}))::int AS scorer,
+           count(DISTINCT (s.payer_id::text||s.state))::int AS lanes
+    FROM s GROUP BY s.ord, s.lbl, s.dos ORDER BY s.ord
+  `);
+
+  say();
+  say(RULE);
+  say("  DATE OF SERVICE — the same library, asked at four different dates");
+  say(RULE);
+  say("  Everything above is resolved at one DOS. A practice re-working a denial");
+  say("  asks about the DOS on the CLAIM, inside the timely-filing window and");
+  say("  months back, where the library serves a DIFFERENT set of rows. A cell");
+  say("  that answers today is not evidence it answered when care was given.");
+  say();
+  say(`  ${pad("AT DOS", 12)}${pad("DATE", 13)}${pad("RULES", 8)}${pad("CELLS", 8)}${pad("SCORER", 8)}${pad("LANES", 8)}AMBIGUOUS`);
+  for (const r of dosRows) {
+    say(
+      `  ${pad(r.lbl, 12)}${pad(r.dos, 13)}${pad(r.rules, 8)}${pad(r.cells, 8)}` +
+        `${pad(r.scorer, 8)}${pad(r.lanes, 8)}${r.rules - r.cells}`,
+    );
+  }
+  say();
+  say("  RULES     = in-scope rule rows served at that DOS");
+  say("  CELLS     = distinct (payer,state,code,attribute) answered");
+  say("  SCORER    = of those rows, the four attributes the denial scorer reads");
+  say("  LANES     = distinct payer x state answering anything");
+  say("  AMBIGUOUS = RULES minus CELLS. Above 0 means more than one rule is live");
+  say("              on one key at that date; fetchPayerRule ends in LIMIT 1 with");
+  say("              no tiebreak, so Postgres row order picks the answer.");
 
   const codesSeen = new Set(rows.filter((r) => r.rule_id).map((r) => r.code));
   const codesMissing = CODES.filter((c) => !codesSeen.has(c));
@@ -685,8 +836,14 @@ function main() {
   const count = (pred) => failures.filter((f) => f.what.startsWith(pred)).length;
 
   check("No duplicate live rule per (payer, state, code, attribute) — fetchPayerRule ends in LIMIT 1 with no tiebreak, so a duplicate makes the answer nondeterministic",
-    dupes.length === 0, `${dupes.length} duplicated cells`,
-    dupes.map((d) => `${d.state}/${d.code}/${d.attribute} ×${d.n}`).join("; "));
+    dupeTotal === 0, `${dupeTotal} duplicated cells`,
+    dupeSample.map((d) => `${d.state}/${d.code}/${d.attribute} ×${d.n}`).join("; ") +
+      (dupeTotal > dupeSample.length
+        ? ` … (${dupeTotal - dupeSample.length} more not shown; ${dupeTotal} is the full count, not a sample size)`
+        : ""));
+
+  check(`Nor at a back-dated DOS (${BACK_DAYS.map((d) => `${d}d`).join(" / ")}) — a claim being appealed is looked up at the DOS on the claim, not today`,
+    backDupeTotal === 0, `${backDupeTotal} keys ambiguous at some back-date`);
 
   check(`Retired code(s) ${RETIRED_CODES.join(", ")} have no live rules — a deleted CPT code that still answers will be billed and denied`,
     retired.length === 0, `${retired.reduce((s, r) => s + r.n, 0)} live rules on retired codes`,
@@ -696,7 +853,7 @@ function main() {
     codesMissing.length === 0, `${CODES.length - codesMissing.length}/${CODES.length} codes answer`,
     codesMissing.join(", "));
 
-  check("All four denial-scorer attributes answer somewhere",
+  check("All ten product attributes answer somewhere — four of them are the denial-scorer inputs, the other six are rendered in the lookup panel and were previously never exercised",
     attrsMissing.length === 0, `${ATTRIBUTES.length - attrsMissing.length}/${ATTRIBUTES.length} attributes answer`,
     attrsMissing.join(", "));
 
@@ -715,7 +872,7 @@ function main() {
   check("No answer is a stock/placeholder phrase",
     count("STOCK PHRASE") === 0, `${answered - count("STOCK PHRASE")}/${answered} substantive`);
 
-  check("Every prior_auth / modifier / frequency answer states an actual requirement (not bare status)",
+  check("Every non-coverage answer states an actual requirement (not bare status) — all nine attributes other than `covered` exist precisely to state one",
     count("NO DETAIL") === 0, `${answered - count("NO DETAIL")}/${answered} specific`);
 
   const coveredCells = answered

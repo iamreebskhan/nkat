@@ -641,7 +641,16 @@ INSERT INTO payer_rule (
 SELECT
   (SELECT id FROM payer WHERE name ILIKE '%medicare%'
     ORDER BY (payer_type = 'medicare_mac') DESC, created_at ASC LIMIT 1),
-  s.state, 'commercial', r.code, r.attribute,
+  -- 'medicare_ffs', not 'commercial'. These rules come from the CY2026
+  -- Medicare Physician Fee Schedule Final Rule and belong to Traditional
+  -- Medicare (Part B), a medicare_mac payer. Filed as 'commercial' they
+  -- were invisible to getAllowedCodesForPayer, which matches product_line
+  -- EXACTLY and now defaults from payer_type — so the super-bill picker
+  -- showed a Medicare biller a code set drawn from the wrong product
+  -- line. Measured before changing: 0 (state, code, attribute) keys carry
+  -- both product lines, so re-filing cannot create a second live rule on
+  -- a key and break fetchPayerRule's LIMIT 1.
+  s.state, 'medicare_ffs', r.code, r.attribute,
   r.value_json::jsonb, r.coverage_status, 0.95,
   DATE '2026-01-01', NULL,
   'b0000000-0000-4000-8000-000000002026'::uuid, r.source_quote, 'crawler:cms_pfs'

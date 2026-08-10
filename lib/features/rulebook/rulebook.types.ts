@@ -22,6 +22,17 @@ export const COVERAGE_STATUSES = [
 ] as const;
 export type CoverageStatus = (typeof COVERAGE_STATUSES)[number];
 
+/**
+ * Must stay in step with `PayerRuleAttribute` / `ATTRIBUTE_DB_MAP` in
+ * lib/features/billing/payer-rule.repository.ts — the rulebook stores the
+ * DB-side name and the lookup maps through that table.
+ *
+ * `pos_allowed` was added 2026-08. It had been missing from every
+ * attribute list while the library held 123 live `pos_allowed` rules, so
+ * a rulebook could neither show nor be uploaded with a place-of-service
+ * position — the rule that decides whether a home visit billed POS 12
+ * gets paid.
+ */
 export const RULEBOOK_ATTRIBUTES = [
   "covered",
   "prior_auth",
@@ -32,6 +43,7 @@ export const RULEBOOK_ATTRIBUTES = [
   "documentation",
   "frequency_limit",
   "modifier_required",
+  "pos_allowed",
 ] as const;
 export type RulebookAttribute = (typeof RULEBOOK_ATTRIBUTES)[number];
 

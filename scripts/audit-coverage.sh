@@ -27,6 +27,24 @@
 #     6. payers covering fewer than half the in-scope codes
 #     7. rules that exist but the denial scorer structurally cannot see
 #     8. rules that exist but carry no prose answer
+#    11. how much of all of the above survives a BACK-DATED date of service
+#
+# WHAT "LIVE" MEANS HERE
+#
+#   fetchPayerRule() serves a rule when
+#
+#     effective_date <= dos AND (expiration_date IS NULL OR expiration_date > dos)
+#
+#   Not `expiration_date IS NULL`. Earlier versions of this script used IS NULL,
+#   which is a different set: a rule given a FUTURE expiration_date — the normal
+#   way to schedule an annual sunset — is served in production and is invisible
+#   to an IS NULL test, and a rule with a future effective_date is not served
+#   even though IS NULL calls it live.
+#
+#   Every count is taken at a DATE OF SERVICE, default CURRENT_DATE, overridable
+#   with AUDIT_DOS=YYYY-MM-DD. Section 11 re-measures at 90 / 180 / 365 days
+#   back, because practices re-work denials inside the timely-filing window and
+#   the library answers a DIFFERENT question at those dates.
 #
 # WHAT THIS DELIBERATELY DOES NOT DO
 #
@@ -61,6 +79,18 @@ set -uo pipefail
 PG_DB="${PG_DB:-pallio}"
 PSQL_BIN="${PSQL_BIN:-sudo -u postgres psql}"
 
+# Date of service every count is taken at. Interpolated into SQL, so validated.
+AUDIT_DOS="${AUDIT_DOS:-}"
+if [ -n "$AUDIT_DOS" ]; then
+  case "$AUDIT_DOS" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) echo "FATAL: AUDIT_DOS must be YYYY-MM-DD, got '$AUDIT_DOS'"; exit 2 ;;
+  esac
+  DOS_SQL="DATE '$AUDIT_DOS'"
+else
+  DOS_SQL="CURRENT_DATE"
+fi
+
 case "$PSQL_BIN" in
   sudo*) [ "$(id -u)" = "0" ] || { echo "FATAL: run with sudo (needs the postgres role)"; exit 2; } ;;
 esac
@@ -84,7 +114,8 @@ $PSQL_BIN -X -tAq -d "$PG_DB" -c "SELECT 1" >/dev/null 2>&1 \
 #           the attribute='covered' row, so 'covered' is what we test for.
 #   lane  — payer x state. This is fetchPayerRule's real key, so it is the
 #           unit of coverage. Only active payers.
-#   live  — live in-scope rules. Live means expiration_date IS NULL.
+#   live  — in-scope rules SERVED AT THE AUDIT DOS. That is fetchPayerRule's
+#           own predicate, not expiration_date IS NULL. See the header.
 # ---------------------------------------------------------------------------
 PRELUDE="
 WITH scope(code) AS (VALUES
@@ -115,7 +146,8 @@ live AS (
   SELECT r.payer_id, r.state, r.code, r.attribute
     FROM payer_rule r
     JOIN scope sc ON sc.code = r.code
-   WHERE r.expiration_date IS NULL)
+   WHERE r.effective_date <= $DOS_SQL
+     AND (r.expiration_date IS NULL OR r.expiration_date > $DOS_SQL))
 "
 
 # Every lane label in every section is rendered the same width so the
@@ -155,7 +187,14 @@ UNION ALL SELECT '  active payers       : ' || count(DISTINCT id)::text FROM lan
 UNION ALL SELECT '  lookup lanes        : ' || count(*)::text || ' (payer x state)' FROM lane
 UNION ALL SELECT '  cells to account for: ' ||
        ((SELECT count(*) FROM lane) * (SELECT count(*) FROM scope) * (SELECT count(*) FROM attrs))::text
-UNION ALL SELECT '  live rules in scope : ' || count(*)::text FROM live;"
+UNION ALL SELECT '  date of service    : ' || ($DOS_SQL)::text
+       || ' (override with AUDIT_DOS=YYYY-MM-DD)'
+UNION ALL SELECT '  live rules in scope : ' || count(*)::text
+       || '   [effective_date <= DOS AND (expiration_date IS NULL OR expiration_date > DOS)]'
+     FROM live
+UNION ALL SELECT '  for comparison      : ' || count(*)::text
+       || '   would match the OLD, WRONG test  expiration_date IS NULL'
+     FROM payer_rule r JOIN scope sc ON sc.code = r.code WHERE r.expiration_date IS NULL;"
 echo ""
 echo "  in-scope codes:"
 Q "$PRELUDE
@@ -334,7 +373,7 @@ SELECT '  Payers with no live rule for ANY code (not just in-scope): '
       FROM payer p
      WHERE p.active
        AND NOT EXISTS (SELECT 1 FROM payer_rule r
-                        WHERE r.payer_id = p.id AND r.expiration_date IS NULL)) x;"
+                        WHERE r.payer_id = p.id AND r.effective_date <= $DOS_SQL AND (r.expiration_date IS NULL OR r.expiration_date > $DOS_SQL))) x;"
 
 # ===========================================================================
 echo ""
@@ -371,16 +410,33 @@ echo "  appear in the view AT ALL, and any prior_auth / modifier /"
 echo "  frequency_limit rules filed against it are invisible to the scorer."
 echo "  These rules exist, cost money to produce, and do nothing today."
 echo ""
-Q "$PRELUDE
-, orphan AS (
-  SELECT lane.name, lane.state, l.code
+echo "  TWO different populations are reported below, because they are two"
+echo "  different things and an earlier version of this script listed one and"
+echo "  totalled the other:"
+echo "    (a) LISTED  — anchorless (payer,state,code) that carry at least one"
+echo "        prior_auth / modifier / frequency rule. Money was spent on a"
+echo "        scorer input the scorer cannot reach."
+echo "    (b) WIDER   — every anchorless (payer,state,code), including those"
+echo "        carrying only non-scorer attributes. (a) is a subset of (b)."
+echo ""
+
+# ONE CTE chain feeds the listing, the (a) total and the (b) total, so the
+# three numbers cannot drift apart again.
+ORPHAN_CTE="$PRELUDE
+, anchorless AS (
+  SELECT lane.id, lane.name, lane.state, l.code,
+         bool_or(l.attribute IN ('prior_auth_required','modifier_required','frequency_limit'))
+           AS has_scorer_hint
     FROM lane JOIN live l ON l.payer_id = lane.id AND l.state = lane.state
-   GROUP BY lane.name, lane.state, l.code
-  HAVING NOT bool_or(l.attribute = 'covered')
-     AND bool_or(l.attribute IN ('prior_auth_required','modifier_required','frequency_limit')))
+   GROUP BY lane.id, lane.name, lane.state, l.code
+  HAVING NOT bool_or(l.attribute = 'covered'))
+"
+
+Q "$ORPHAN_CTE
+, listed AS (SELECT * FROM anchorless WHERE has_scorer_hint)
 , agg AS (
   SELECT name, state, count(*) AS n, array_agg(code ORDER BY code) AS codes
-    FROM orphan GROUP BY name, state)
+    FROM listed GROUP BY name, state)
 , chunked AS (
   SELECT a.name, a.state, (i - 1) / 10 AS chunk, a.codes[i] AS code
     FROM agg a, generate_subscripts(a.codes, 1) AS i)
@@ -394,16 +450,32 @@ Q "$PRELUDE
     FROM chunked GROUP BY name, state, chunk)
 SELECT txt FROM lines ORDER BY name, state, sub;"
 echo ""
-Q "$PRELUDE
-, orphan AS (
-  SELECT lane.id, lane.state, l.code
-    FROM lane JOIN live l ON l.payer_id = lane.id AND l.state = lane.state
-   GROUP BY lane.id, lane.state, l.code
-  HAVING NOT bool_or(l.attribute = 'covered'))
-SELECT '  TOTAL (payer, state, code) with no coverage anchor: ' || count(DISTINCT (o.id::text || o.state || o.code))::text
-    || '   unreachable rule rows: ' || count(*)::text
-  FROM orphan o
-  JOIN live l ON l.payer_id = o.id AND l.state = o.state AND l.code = o.code;"
+# Keep SQL string literals ASCII-only. These queries are handed to psql as a
+# -c argument; on a Windows shell the argument is re-encoded in the ANSI
+# codepage, so a UTF-8 em dash arrives as a lone 0x97 byte and psql rejects the
+# whole statement as an invalid byte sequence. Prose in echo lines is fine.
+Q "$ORPHAN_CTE
+, rows_on AS (
+  SELECT a.has_scorer_hint, l.attribute
+    FROM anchorless a
+    JOIN live l ON l.payer_id = a.id AND l.state = a.state AND l.code = a.code)
+SELECT '  (a) LISTED ABOVE - anchorless (payer,state,code) WITH scorer hints : '
+    || lpad((SELECT count(*)::text FROM anchorless WHERE has_scorer_hint), 4)
+UNION ALL
+SELECT '      ...the rule rows sitting on them, unreachable by the scorer   : '
+    || lpad((SELECT count(*)::text FROM rows_on WHERE has_scorer_hint), 4)
+UNION ALL
+SELECT '      ...of which are actual scorer inputs (PA / MOD / FRQ)         : '
+    || lpad((SELECT count(*)::text FROM rows_on
+              WHERE has_scorer_hint
+                AND attribute IN ('prior_auth_required','modifier_required','frequency_limit')), 4)
+UNION ALL
+SELECT '  (b) WIDER  - every anchorless (payer,state,code), hints or not    : '
+    || lpad((SELECT count(*)::text FROM anchorless), 4)
+    || '   <- NOT the list above'
+UNION ALL
+SELECT '      ...the rule rows sitting on them                              : '
+    || lpad((SELECT count(*)::text FROM rows_on), 4);"
 
 # ===========================================================================
 echo ""
@@ -418,7 +490,11 @@ Q "$PRELUDE
     FROM payer_rule r
     JOIN scope sc ON sc.code = r.code
     JOIN payer p ON p.id = r.payer_id
-   WHERE r.expiration_date IS NULL
+   -- Served predicate, not IS NULL. Section 9 guards this same set with
+   -- the same served predicate; when the two disagreed, section 8 printed
+   -- "none" while the guard directly below it FAILED on the same rules.
+   WHERE r.effective_date <= $DOS_SQL
+     AND (r.expiration_date IS NULL OR r.expiration_date > $DOS_SQL)
      AND nullif(btrim(coalesce(r.value->>'answer', '')), '') IS NULL)
 SELECT txt FROM (
   SELECT 0 AS k, '' AS srt,
@@ -435,42 +511,66 @@ SELECT txt FROM (
 echo ""
 echo "=== 9. Integrity guards (these decide the exit code) ======================"
 echo ""
-echo "  Publishing gaps above are expected and do not fail. These five are"
+echo "  Publishing gaps above are expected and do not fail. These guards are"
 echo "  different: each one means the library hands back a WRONG answer, or"
 echo "  silently hides a rule, rather than admitting it does not know."
 echo ""
+echo "  Every guard here can come out either way — none of them restates a"
+echo "  constraint the schema already enforces. A guard that cannot fail is"
+echo "  not an assurance, and is not printed."
+echo ""
+
+SERVED="r.effective_date <= $DOS_SQL AND (r.expiration_date IS NULL OR r.expiration_date > $DOS_SQL)"
 
 check "one live rule per (payer,state,code,attribute) - no ties" 0 \
   "$(Q1 "$PRELUDE
 , dup AS (
   SELECT r.payer_id, r.state, r.code, r.attribute
     FROM payer_rule r JOIN scope sc ON sc.code = r.code
-   WHERE r.expiration_date IS NULL
+   WHERE $SERVED
    GROUP BY 1,2,3,4 HAVING count(*) > 1)
 SELECT count(*) FROM dup;")"
+
+# The same invariant at a BACK-DATED date of service. The guard above asks at
+# today only; a denial is re-worked at the DOS on the claim, months back, where
+# a DIFFERENT set of rows is served. `expiration_date IS NULL` has no notion of
+# a date and cannot ask this question at all. Counted as DISTINCT keys, so a key
+# ambiguous at two dates is one broken key, not two.
+check "...and at 90/180/365 days back (timely-filing window)" 0 \
+  "$(Q1 "$PRELUDE
+, back(dos) AS (VALUES ($DOS_SQL - 90), ($DOS_SQL - 180), ($DOS_SQL - 365))
+, dup AS (
+  SELECT b.dos, r.payer_id, r.state, r.code, r.attribute
+    FROM back b
+    JOIN payer_rule r ON r.effective_date <= b.dos
+                     AND (r.expiration_date IS NULL OR r.expiration_date > b.dos)
+    JOIN scope sc ON sc.code = r.code
+   GROUP BY 1,2,3,4,5 HAVING count(*) > 1)
+SELECT count(*) FROM (SELECT DISTINCT payer_id, state, code, attribute FROM dup) k;")"
 
 check "no live in-scope rule filed under an unserved state" 0 \
   "$(Q1 "$PRELUDE
 SELECT count(*) FROM payer_rule r
   JOIN scope sc ON sc.code = r.code
   JOIN payer p ON p.id = r.payer_id
- WHERE r.expiration_date IS NULL AND NOT (r.state = ANY (p.states_served));")"
-
-check "no live in-scope rule dated to start in the future" 0 \
-  "$(Q1 "$PRELUDE
-SELECT count(*) FROM payer_rule r JOIN scope sc ON sc.code = r.code
- WHERE r.expiration_date IS NULL AND r.effective_date > CURRENT_DATE;")"
+ WHERE $SERVED AND NOT (r.state = ANY (p.states_served));")"
 
 check "no live in-scope rule that is also marked superseded" 0 \
   "$(Q1 "$PRELUDE
 SELECT count(*) FROM payer_rule r JOIN scope sc ON sc.code = r.code
- WHERE r.expiration_date IS NULL AND r.superseded_by IS NOT NULL;")"
+ WHERE $SERVED AND r.superseded_by IS NOT NULL;")"
 
 check "every live in-scope rule carries a prose answer" 0 \
   "$(Q1 "$PRELUDE
 SELECT count(*) FROM payer_rule r JOIN scope sc ON sc.code = r.code
- WHERE r.expiration_date IS NULL
+ WHERE $SERVED
    AND nullif(btrim(coalesce(r.value->>'answer', '')), '') IS NULL;")"
+
+# The old guard "no live in-scope rule dated to start in the future" is GONE,
+# not silently passing: under the correct served predicate it is true by
+# construction (effective_date <= DOS is part of the definition), so printing
+# it as PASS would have been a tautology dressed as an assurance. The number it
+# used to stand for — rules not yet in effect — is in section 11.
 
 # ===========================================================================
 echo ""
@@ -501,8 +601,80 @@ Q "$PRELUDE
 SELECT '  NOTE: ' || count(*)::text || ' live rule(s) exist outside the in-scope code list'
     || ' (other specialties - not audited here).'
   FROM payer_rule r
- WHERE r.expiration_date IS NULL
+ WHERE r.effective_date <= $DOS_SQL
+   AND (r.expiration_date IS NULL OR r.expiration_date > $DOS_SQL)
    AND r.code NOT IN (SELECT code FROM scope);"
+
+# ===========================================================================
+echo ""
+echo "=== 11. The same matrix at a BACK-DATED date of service ==================="
+echo ""
+echo "  Everything above is measured at one date. A practice re-working a"
+echo "  denial asks the library about the DOS on the CLAIM, which is inside the"
+echo "  timely-filing window and months in the past — and the library serves a"
+echo "  DIFFERENT set of rules at that date. A cell that answers today is not"
+echo "  evidence that it answered when the service was rendered."
+echo ""
+printf '  %-14s%-13s%9s%9s%9s%9s%11s\n' "AT DOS" "DATE" "RULES" "CELLS" "SCORER" "LANES" "AMBIGUOUS"
+Q "$PRELUDE
+, back(ord, lbl, dos) AS (VALUES
+    (1,'today',     $DOS_SQL),
+    (2,'90d back',  $DOS_SQL - 90),
+    (3,'180d back', $DOS_SQL - 180),
+    (4,'365d back', $DOS_SQL - 365))
+, served AS (
+  SELECT b.ord, b.lbl, b.dos, r.payer_id, r.state, r.code, r.attribute
+    FROM back b
+    JOIN payer_rule r ON r.effective_date <= b.dos
+                     AND (r.expiration_date IS NULL OR r.expiration_date > b.dos)
+    JOIN scope sc ON sc.code = r.code)
+, agg AS (
+  SELECT s.ord, s.lbl, s.dos,
+         count(*)                                                          AS rules,
+         count(DISTINCT (s.payer_id::text||s.state||s.code||s.attribute))  AS cells,
+         count(*) FILTER (WHERE s.attribute IN
+           ('covered','prior_auth_required','modifier_required','frequency_limit')) AS scorer,
+         count(DISTINCT (s.payer_id::text||s.state))                       AS lanes
+    FROM served s GROUP BY s.ord, s.lbl, s.dos)
+SELECT '  ' || rpad(lbl, 14) || rpad(dos::text, 13)
+    || lpad(rules::text, 9) || lpad(cells::text, 9)
+    || lpad(scorer::text, 9) || lpad(lanes::text, 9)
+    || lpad((rules - cells)::text, 11)
+  FROM agg ORDER BY ord;"
+echo ""
+echo "  RULES     = in-scope rule rows served at that DOS"
+echo "  CELLS     = distinct (payer,state,code,attribute) answered"
+echo "  SCORER    = of those rows, the four attributes the denial scorer reads"
+echo "  LANES     = distinct payer x state answering anything"
+echo "  AMBIGUOUS = RULES minus CELLS. Anything above 0 means more than one"
+echo "              rule is live on one key at that date, and fetchPayerRule"
+echo "              ends in LIMIT 1 with no tiebreak — Postgres row order picks"
+echo "              the answer. Guard 2 in section 9 fails on this."
+echo ""
+Q "$PRELUDE
+SELECT '  Divergence between the two definitions of live, at ' || ($DOS_SQL)::text || ':'
+UNION ALL
+SELECT '    in-scope rows matching  expiration_date IS NULL          : '
+    || (SELECT count(*)::text FROM payer_rule r JOIN scope sc ON sc.code = r.code
+         WHERE r.expiration_date IS NULL)
+UNION ALL
+SELECT '    in-scope rows actually SERVED at this DOS                : '
+    || (SELECT count(*)::text FROM live)
+UNION ALL
+SELECT '    served, but IS NULL misses them (future expiration_date)  : '
+    || (SELECT count(*)::text FROM payer_rule r JOIN scope sc ON sc.code = r.code
+         WHERE r.expiration_date IS NOT NULL AND r.expiration_date > $DOS_SQL
+           AND r.effective_date <= $DOS_SQL)
+    || '   <- served in production, invisible to the old test'
+UNION ALL
+SELECT '    IS NULL calls them live, but they are not served yet      : '
+    || (SELECT count(*)::text FROM payer_rule r JOIN scope sc ON sc.code = r.code
+         WHERE r.expiration_date IS NULL AND r.effective_date > $DOS_SQL);"
+echo ""
+echo "  If the two middle lines are equal the definitions happen to coincide at"
+echo "  this date. That is a property of today's data, not of the test: it stops"
+echo "  holding the moment anyone schedules a sunset, and the table above shows"
+echo "  they already disagree at every other date of service."
 
 echo ""
 echo "==========================================================================="

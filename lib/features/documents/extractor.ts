@@ -106,6 +106,8 @@ const ATTR_SYNONYM: Record<string, RulebookAttribute> = {
   documentation: "documentation", docs: "documentation", documentationrequired: "documentation",
   frequencylimit: "frequency_limit", frequency: "frequency_limit",
   modifierrequired: "modifier_required", modifier: "modifier_required", modifiers: "modifier_required",
+  posallowed: "pos_allowed", pos: "pos_allowed", placeofservice: "pos_allowed",
+  placeofserviceallowed: "pos_allowed",
 };
 
 const COVERAGE_SYNONYM: Record<string, CoverageStatus> = {

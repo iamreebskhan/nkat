@@ -21,7 +21,8 @@ export type PayerRuleAttribute =
   | "addon_compatible"
   | "documentation"
   | "frequency_limit"
-  | "modifier_required";
+  | "modifier_required"
+  | "pos_allowed";
 
 /**
  * The Pallio lookup layer uses short attribute names, but the
@@ -30,6 +31,13 @@ export type PayerRuleAttribute =
  * db/migrations/0003_payers_and_rules.sql). Without this map a query
  * for `prior_auth` could never match a stored `prior_auth_required`
  * row — 6 of 9 attributes were silently un-answerable.
+ *
+ * `pos_allowed` is listed last because it was missing entirely until
+ * 2026-08: the map had nine entries and the DB held 123 live
+ * `pos_allowed` rules that no query could ever reach. Place of service
+ * decides whether a home visit billed POS 12 gets paid, which for a
+ * home-based palliative product line is not an edge case. The DB name
+ * and the API name are the same, so it maps to itself.
  */
 export const ATTRIBUTE_DB_MAP: Record<PayerRuleAttribute, string> = {
   covered: "covered",
@@ -41,6 +49,7 @@ export const ATTRIBUTE_DB_MAP: Record<PayerRuleAttribute, string> = {
   documentation: "documentation_required",
   frequency_limit: "frequency_limit",
   modifier_required: "modifier_required",
+  pos_allowed: "pos_allowed",
 };
 
 export type CoverageStatus = "covered" | "not_covered" | "varies" | "unknown";
@@ -58,6 +67,54 @@ export type PayerType =
   | "tribal"
   | "self_insured"
   | "other";
+
+/**
+ * Which `payer_rule.product_line` a payer's rules are filed under, given
+ * only its `payer.payer_type`.
+ *
+ * Callers that filter product_line EXACTLY (getAllowedCodesForPayer) were
+ * defaulting to 'commercial' for every payer. Measured 2026-08 on the
+ * reference library: of the 268 rows in payer_allowed_codes_v, the 13
+ * medicaid_mco payers have 152 rows — every one of them under
+ * product_line='medicaid_mco' and ZERO under 'commercial'. The picker
+ * returned an empty code list for every Medicaid MCO in the platform.
+ *
+ * Values are the `product_line` reference table's PKs (FK-enforced on
+ * payer_rule.product_line), not invented strings.
+ *
+ * The four types with live data are medicaid_mco, medicare_mac, tribal and
+ * commercial; the rest are the honest reading of the same reference table
+ * and cost nothing to state now rather than discover as another silent
+ * empty list. 'commercial' is the fallback for the administrator-style
+ * types (tpa / self_insured / other) that pay on commercial terms.
+ */
+export const PAYER_TYPE_PRODUCT_LINE: Record<PayerType, string> = {
+  medicare_mac: "medicare_ffs",
+  medicare_advantage_org: "medicare_advantage",
+  medicaid_state: "medicaid_ffs",
+  medicaid_mco: "medicaid_mco",
+  commercial: "commercial",
+  tpa: "commercial",
+  workers_comp: "workers_comp_state",
+  auto_no_fault: "auto_no_fault",
+  tribal: "tribal_638",
+  self_insured: "commercial",
+  other: "commercial",
+};
+
+/**
+ * Default product line for a payer. Null payerType (payer not found)
+ * falls back to 'commercial' — the query will return nothing for an
+ * unknown payer either way, so this only picks which empty set.
+ *
+ * An explicit caller-supplied product line must always win over this;
+ * this is the default, not an override.
+ */
+export function defaultProductLineForPayerType(
+  payerType: PayerType | null,
+): string {
+  return (payerType && PAYER_TYPE_PRODUCT_LINE[payerType]) || "commercial";
+}
 
 export interface FetchRuleInput {
   payerId: string;
@@ -83,10 +140,19 @@ export interface PayerRuleHit {
   sourceQuote: string | null;
   sourcePage: number | null;
   /**
-   * True when this rule came from a STATE Medicaid policy
-   * (`payer_rule.payer_id IS NULL`) rather than the plan's own document.
-   * The answer is still correct — state policy governs the MCOs — but
-   * the UI should say so rather than implying the plan published it.
+   * True when this rule came from a STATE Medicaid policy rather than the
+   * plan's own document. The answer is still correct — state policy
+   * governs the MCOs — but the UI should say so rather than implying the
+   * plan published it.
+   *
+   * Derived from the source document's type. It used to be
+   * `payer_rule.payer_id IS NULL`, which is unreachable: payer_id is NOT
+   * NULL (0 of 6,064 rows are null) and has been since 0003, so the flag
+   * was hardwired false and every state-policy citation was mislabelled
+   * "Payer policy document". Ingestion files one row per payer for a
+   * shared state policy — the payer_id is the plan, the DOCUMENT is what
+   * makes it statewide. Measured: 2,039 rules trace to a
+   * `state_medicaid_manual` source document.
    */
   isStatewide: boolean;
 }
@@ -119,10 +185,10 @@ interface RuleRow {
 export async function fetchPayerRule(
   input: FetchRuleInput,
 ): Promise<PayerRuleHit | null> {
-  // The caller defaults product_line to 'commercial', but many payers
-  // are Medicaid MCOs / MA orgs whose rules are stored under a
-  // different product line. Rank an exact product_line match first,
-  // then fall back to any product line for the same
+  // Callers derive product_line from the payer's payer_type
+  // (defaultProductLineForPayerType), but a payer's rules can still be
+  // filed under a neighbouring line. Rank an exact product_line match
+  // first, then fall back to any product line for the same
   // payer+state+code+attribute — a cited cross-product rule beats a
   // false "unknown".
   const dbAttribute = ATTRIBUTE_DB_MAP[input.attribute] ?? input.attribute;
@@ -139,7 +205,9 @@ export async function fetchPayerRule(
       pr.source_quote    AS source_quote,
       pr.source_page     AS source_page,
       sd.url             AS source_url,
-      (pr.payer_id IS NULL) AS is_statewide
+      -- See PayerRuleHit.isStatewide. A shared state policy is ingested
+      -- once per payer, so "statewide" is a property of the DOCUMENT.
+      COALESCE(sd.document_type = 'state_medicaid_manual', FALSE) AS is_statewide
     FROM payer_rule pr
     LEFT JOIN source_document sd ON sd.id = pr.source_doc_id
     WHERE pr.state        = ${input.state}
@@ -147,29 +215,18 @@ export async function fetchPayerRule(
       AND pr.attribute    = ${dbAttribute}
       AND pr.effective_date <= ${input.dos}
       AND (pr.expiration_date IS NULL OR pr.expiration_date > ${input.dos})
-      AND (
-        pr.payer_id = ${input.payerId}::uuid
-        -- State Medicaid fallback. A state's clinical coverage policy
-        -- (e.g. NC Medicaid CCP 1H) governs every Medicaid MCO in that
-        -- state, so one ingestion answers for all of them. Ingesting the
-        -- same PDF once per plan would be wasteful and, because the
-        -- content-hash dedupe is global, would silently yield zero rules
-        -- for every plan after the first.
-        --
-        -- Deliberately NOT applied to commercial payers: North Carolina
-        -- Medicaid policy has no authority over an Aetna commercial plan.
-        OR (
-          pr.payer_id IS NULL
-          AND EXISTS (
-            SELECT 1 FROM payer p
-             WHERE p.id = ${input.payerId}::uuid
-               AND p.payer_type IN ('medicaid_mco', 'medicaid_state', 'tribal')
-          )
-        )
-      )
+      -- One payer, one rule. There used to be a second branch here on
+      -- "pr.payer_id IS NULL", described as a statewide-Medicaid fallback
+      -- where one ingestion of a state policy answered for every MCO.
+      -- It could never match — payer_id is NOT NULL — and the premise was
+      -- wrong: ingestion writes one row PER PAYER for a shared state
+      -- policy (2,039 such rules today, all with a payer_id), which
+      -- already gives every MCO its own answer. Making payer_id nullable
+      -- to revive the branch would buy nothing and would put a NULL into
+      -- the (payer_id, state, code, attribute) uniqueness invariant the
+      -- whole library rests on.
+      AND pr.payer_id = ${input.payerId}::uuid
     ORDER BY
-      -- The plan's own policy always outranks the state fallback.
-      (pr.payer_id IS NOT NULL) DESC,
       (pr.product_line = ${input.productLine}) DESC,
       pr.effective_date DESC
     LIMIT 1
@@ -225,7 +282,8 @@ export async function fetchBenchmarkRules(input: {
       pr.id AS rule_id, pr.attribute, pr.value, pr.coverage_status,
       pr.confidence::text AS confidence, pr.effective_date, pr.expiration_date,
       pr.source_doc_id, pr.source_quote, pr.source_page,
-      sd.url AS source_url, (pr.payer_id IS NULL) AS is_statewide,
+      sd.url AS source_url,
+      COALESCE(sd.document_type = 'state_medicaid_manual', FALSE) AS is_statewide,
       p.name AS payer_name, p.payer_type
     FROM payer_rule pr
     JOIN payer p ON p.id = pr.payer_id

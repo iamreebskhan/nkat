@@ -78,6 +78,7 @@ const ATTRIBUTES = [
   ["documentation", "Documentation requirements?"],
   ["frequency_limit", "Frequency limit?"],
   ["modifier_required", "Modifier required?"],
+  ["pos_allowed", "Place of service allowed?"],
 ] as const;
 
 export default function LookupPage() {

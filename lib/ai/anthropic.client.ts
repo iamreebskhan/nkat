@@ -104,6 +104,7 @@ const ParsedQuery = z.object({
       "documentation",
       "frequency_limit",
       "modifier_required",
+      "pos_allowed",
     ])
     .nullable(),
 });
@@ -147,7 +148,7 @@ const PARSER_SYSTEM_PROMPT = [
   "  - Medicare + home-visit time beyond the 60-min level (e.g. 70 min) → G0318.",
   "  - If the question names or compares MULTIPLE codes (\"99348 vs 99349\", \"difference between X and Y\"), return the FIRST one.",
   "",
-  "attribute ∈ { covered, prior_auth, telehealth, provider_type, billing_limit, addon_compatible, documentation, frequency_limit, modifier_required }. Infer from intent:",
+  "attribute ∈ { covered, prior_auth, telehealth, provider_type, billing_limit, addon_compatible, documentation, frequency_limit, modifier_required, pos_allowed }. Infer from intent:",
   "  - who can bill / social worker / NP vs MD / provider eligibility → provider_type",
   "  - consent wording / statement / what must I document / note requirements → documentation",
   "  - authorization / pre-auth / prior auth → prior_auth",
@@ -156,6 +157,7 @@ const PARSER_SYSTEM_PROMPT = [
   "  - can I bill X with Y / add-on / bundled → addon_compatible",
   "  - how often / per day / per year / frequency → frequency_limit",
   "  - which modifier / modifier required → modifier_required",
+  "  - place of service / POS / where the service is delivered / home vs facility → pos_allowed",
   "  - otherwise → covered",
   "",
   "Only set a field null when it genuinely cannot be inferred. Never invent a payer or state that isn't implied.",

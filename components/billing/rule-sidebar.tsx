@@ -96,7 +96,8 @@ type Props = {
     | "addon_compatible"
     | "documentation"
     | "frequency_limit"
-    | "modifier_required";
+    | "modifier_required"
+    | "pos_allowed";
 };
 
 export function RuleSidebar({ payerId, state, cptCodes, attribute = "covered" }: Props) {

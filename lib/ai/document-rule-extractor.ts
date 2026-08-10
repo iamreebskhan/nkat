@@ -49,6 +49,7 @@ const ExtractedRule = z.object({
     "documentation",
     "frequency_limit",
     "modifier_required",
+    "pos_allowed",
   ]),
   coverageStatus: z.enum(["covered", "not_covered", "varies", "unknown"]),
   /** Plain-English summary of the rule. */
@@ -96,7 +97,7 @@ export async function extractRulesFromDocument(
   const prompt =
     "Extract every payer billing rule about CPT or HCPCS codes that this document explicitly states. " +
     "Return JSON ONLY — no prose, no markdown fences — matching this schema:\n" +
-    '{ "rules": [ { "cptCode": "99349", "attribute": "covered" | "prior_auth" | "telehealth" | "provider_type" | "billing_limit" | "addon_compatible" | "documentation" | "frequency_limit" | "modifier_required", "coverageStatus": "covered" | "not_covered" | "varies" | "unknown", "answer": "plain-English summary of the rule", "sourceQuote": "verbatim quote from the document supporting this rule" } ] }\n' +
+    '{ "rules": [ { "cptCode": "99349", "attribute": "covered" | "prior_auth" | "telehealth" | "provider_type" | "billing_limit" | "addon_compatible" | "documentation" | "frequency_limit" | "modifier_required" | "pos_allowed", "coverageStatus": "covered" | "not_covered" | "varies" | "unknown", "answer": "plain-English summary of the rule", "sourceQuote": "verbatim quote from the document supporting this rule" } ] }\n' +
     "Rules:\n" +
     "  - Only include rules you can support with a verbatim quote from the document.\n" +
     "  - Do NOT invent rules. If the document is silent on a code/attribute, omit it.\n" +
