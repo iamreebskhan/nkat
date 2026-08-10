@@ -35,6 +35,16 @@ export interface PredictInput {
   cptCodes: string[];
   modifiers?: string[];
   icd10Codes?: string[];
+  /**
+   * The superbill being scored, when it is already persisted.
+   *
+   * Without it the frequency history counts the very lines under review:
+   * a "maximum one per 30 days" rule then fires on the claim that IS the
+   * first occurrence, on every saved super-bill, forever. Harmless while
+   * no rule carried a numeric limit — which was true until the limits
+   * were backfilled — and wrong the moment one did.
+   */
+  excludeSuperbillId?: string;
   /** Has the patient been prior-authorized? */
   patientPriorAuth?: boolean;
   /** Clinician taxonomy code, if known. */
@@ -145,6 +155,9 @@ export async function predictSuperbill(args: PredictInput): Promise<PredictedRis
             FROM superbill
            WHERE patient_id = ${args.patientId}::uuid
              AND date_of_service >= ${sinceStr}::date
+             -- Never count the super-bill under review as prior history.
+             AND (${args.excludeSuperbillId ?? null}::uuid IS NULL
+                  OR id <> ${args.excludeSuperbillId ?? null}::uuid)
         `;
         context.recentLinesForPatient = hist.map((h) => ({
           code: h.code.toUpperCase(),

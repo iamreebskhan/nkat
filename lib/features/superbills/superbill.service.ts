@@ -428,6 +428,10 @@ export async function updateSuperbill(args: {
           payerId: c.payer_id,
           state: c.state,
           patientId: c.patient_id,
+          // This super-bill already exists, so its own lines are not
+          // prior history — without this a "max one per period" rule
+          // fires on the very claim that is the first occurrence.
+          excludeSuperbillId: args.id,
           dos: c.dos.toISOString().slice(0, 10),
           cptCodes: c.cpt ?? [],
           modifiers: c.mods ?? [],
