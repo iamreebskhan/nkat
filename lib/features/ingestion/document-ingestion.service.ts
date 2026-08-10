@@ -134,8 +134,47 @@ export async function ingestDocumentFromUrl(
       ? { bytes: Buffer.from(args.inlineText, "utf8"), contentType: "text/plain" }
       : await fetchUrlBytes(args.url);
 
+  // Is this a PDF? Needed before hashing, because the two are hashed on
+  // different bases — see below.
+  const isPdf =
+    !!args.inlinePdfBase64 ||
+    fetched.contentType.includes("application/pdf") ||
+    args.url.toLowerCase().endsWith(".pdf");
+
+  // For HTML, the extracted text IS the document as far as this pipeline
+  // is concerned — it is what Claude reads and what gets chunked. Compute
+  // it once here so the hash and the extraction agree.
+  const pageText = isPdf ? null : htmlToText(fetched.bytes.toString("utf8"));
+
+  // HASH THE CONTENT, NOT THE TRANSPORT.
+  //
+  // A byte hash treats every cosmetic difference as a new version of the
+  // document: timestamps, ad slots, session ids, rotating nonces, a
+  // reordered script tag. Each "new version" writes another
+  // source_document row and can trigger another paid Claude extraction of
+  // text that did not change.
+  //
+  // Measured in production before this change: one Aetna clinical policy
+  // page had accumulated 13 versions in three months, roughly one every
+  // six days, while the policy it states was unchanged.
+  //
+  // So for HTML we hash the extracted, whitespace-normalised text. Real
+  // wording changes still produce a new hash and a genuine new version;
+  // markup churn no longer does.
+  //
+  // PDFs keep hashing bytes. There is no in-process text extraction for
+  // them here (they are passed to Claude as a document block), and a PDF
+  // is not normally re-rendered per request.
+  //
+  // The stored format stays 'sha256:<64 hex>' either way — migration 0068
+  // keys its merge scope on exactly that shape — and which basis was used
+  // is recorded in source_metadata.hashBasis instead.
+  const hashBasis = isPdf ? "bytes" : "extracted-text";
   const contentHash =
-    "sha256:" + createHash("sha256").update(fetched.bytes).digest("hex");
+    "sha256:" +
+    createHash("sha256")
+      .update(isPdf ? fetched.bytes : normalizeForHash(pageText!))
+      .digest("hex");
 
   // Detect-only: the caller wants the hash, nothing else. Return before
   // touching source_document, Claude, or the embedder.
@@ -181,14 +220,11 @@ export async function ingestDocumentFromUrl(
     };
   }
 
-  // 3. Prepare for Claude extraction.
-  const isPdf =
-    !!args.inlinePdfBase64 ||
-    fetched.contentType.includes("application/pdf") ||
-    args.url.toLowerCase().endsWith(".pdf");
+  // 3. Prepare for Claude extraction. isPdf and pageText were computed
+  //    above, because the content hash depends on them.
   const extractInput = isPdf
     ? { pdfBase64: fetched.bytes.toString("base64") }
-    : { textContent: htmlToText(fetched.bytes.toString("utf8")) };
+    : { textContent: pageText! };
 
   // 4. Persist source_document FIRST (so payer_rule FK is satisfied).
   const docId = await withBreakglass(async (tx) => {
@@ -202,6 +238,9 @@ export async function ingestDocumentFromUrl(
         ${JSON.stringify({
           state: args.state,
           inline: !!args.inlineText,
+          // Which basis produced content_hash, so a future reader can tell
+          // a text hash from a byte hash without guessing.
+          hashBasis,
         })}::jsonb
       )
       RETURNING id
@@ -418,6 +457,23 @@ async function fetchUrlBytes(
  * policy pages we typically ingest (paragraph-heavy text on a plain
  * template).
  */
+/**
+ * Normalise extracted text before hashing it.
+ *
+ * Whitespace is the noisiest difference between two fetches of the same
+ * page - a reflowed paragraph, a changed indent, CRLF versus LF - and none
+ * of it changes what the document SAYS. Collapsing it means only a real
+ * wording change mints a new version.
+ *
+ * Deliberately conservative: it folds whitespace and case, and nothing
+ * else. It does not strip numbers, dates or punctuation, because a payer
+ * changing "after five visits" to "after three visits" - or an effective
+ * date moving - is exactly the change this pipeline exists to notice.
+ */
+function normalizeForHash(text: string): string {
+  return text.replace(/s+/g, " ").trim().toLowerCase();
+}
+
 function htmlToText(html: string): string {
   return html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
@@ -433,3 +489,14 @@ function htmlToText(html: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/**
+ * Internals exposed for tests only.
+ *
+ * The content-hash basis is the one piece of this file with a failure mode
+ * nobody notices: too strict and every fetch mints a version, too loose
+ * and a payer can change its rules without the pipeline reacting. Both
+ * halves are asserted in __tests__/content-hash.spec.ts, which needs the
+ * two functions the hash is built from.
+ */
+export const __testing = { htmlToText, normalizeForHash };

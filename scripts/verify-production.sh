@@ -335,17 +335,23 @@ echo "=== 6. Live lookup through the real service ======================="
 # Use the tsx that npm ci already installed, or skip and say so. And read
 # DATABASE_URL out of the env file directly rather than shelling out to
 # dotenv-cli for it.
-TSX=""
-for c in ./node_modules/.bin/tsx ./node_modules/tsx/dist/cli.mjs; do
-  [ -x "$c" ] || [ -f "$c" ] && TSX="$c" && break
-done
+# node_modules/.bin/tsx is a SHELL WRAPPER, not JavaScript — running it as
+# `node .bin/tsx` dies on `basedir=$(dirname ...)`. Prefer the real JS
+# entry point for node; fall back to executing the wrapper directly.
+TSX_NODE=""
+TSX_EXEC=""
+if [ -f ./node_modules/tsx/dist/cli.mjs ]; then
+  TSX_NODE=./node_modules/tsx/dist/cli.mjs
+elif [ -x ./node_modules/.bin/tsx ]; then
+  TSX_EXEC=./node_modules/.bin/tsx
+fi
 ENVFILE=""
 for f in .env.production .env .env.local; do [ -f "$f" ] && ENVFILE="$f" && break; done
 
-if [ -z "$TSX" ]; then
-  echo "  SKIP  tsx not installed locally (node_modules/.bin/tsx). The SQL checks"
-  echo "        above already prove the rows exist; this step proves the SERVICE"
-  echo "        returns them. Run 'npm ci' to enable it."
+if [ -z "$TSX_NODE" ] && [ -z "$TSX_EXEC" ]; then
+  echo "  SKIP  tsx not found under node_modules. The SQL checks above already"
+  echo "        prove the rows exist; this step proves the SERVICE returns them."
+  echo "        Run 'npm ci' to enable it."
 elif [ -z "$ENVFILE" ]; then
   echo "  SKIP  no .env file found — cannot reach the database as the app does"
 else
@@ -354,13 +360,20 @@ else
     echo "  SKIP  no DATABASE_URL in $ENVFILE"
   else
     # A hard timeout so a hung query can never wedge the whole check.
-    if DATABASE_URL="$DBURL" timeout 180 node "$TSX" scripts/verify-denial-rules-round2.ts 2>&1 | tail -20; then
+    # 300s, not 180: tsx compiles the service graph on a cold start, and
+    # the VPS is slower than a laptop.
+    if [ -n "$TSX_NODE" ]; then
+      set -- node "$TSX_NODE"
+    else
+      set -- "$TSX_EXEC"
+    fi
+    if DATABASE_URL="$DBURL" timeout 300 "$@" scripts/verify-denial-rules-round2.ts 2>&1 | tail -20; then
       PASS=$((PASS + 1))
       echo "  PASS  lookupRule() returned the expected answers"
     else
       rc=$?
       FAIL=$((FAIL + 1))
-      [ "$rc" = "124" ] && msg="lookupRule() check timed out after 180s" \
+      [ "$rc" = "124" ] && msg="lookupRule() check timed out after 300s" \
                         || msg="lookupRule() did not return the expected answers"
       FAILURES="$FAILURES\n  - $msg"
       echo "  FAIL  $msg"
