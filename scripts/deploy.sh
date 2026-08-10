@@ -60,8 +60,16 @@ APP_DIR="${APP_DIR:-/opt/pallio/app}"
 PG_DB="${PG_DB:-pallio}"
 PM2_APP="${PM2_APP:-pallio}"
 BASE_URL="${BASE_URL:-https://app.pallio.io}"
-APP_PORT="${APP_PORT:-3000}"
-LOCAL_URL="${LOCAL_URL:-http://127.0.0.1:$APP_PORT}"
+# Do NOT hardcode the port. This defaulted to 3000 while the app has been
+# serving on 3020, so the health check curled a closed port, got 000, and
+# reported a completely successful deploy as a failure — after migrating
+# the database, seeding it and rebuilding. A deploy that cries wolf is
+# worse than one with no health check, because the next real failure gets
+# waved through.
+#
+# Resolved later, after the reload, from what the process is ACTUALLY
+# listening on. See detect_app_port().
+APP_PORT="${APP_PORT:-}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/pallio}"
 MIGRATION_BASELINE="${MIGRATION_BASELINE:-0063}"
 REF="main"
@@ -79,6 +87,35 @@ while [ $# -gt 0 ]; do
     *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
+
+# Find the port the app is really on, in decreasing order of authority:
+#   1. APP_PORT, if the operator set it explicitly
+#   2. the port the running pm2 process is listening on, via its PID —
+#      the only source that cannot be out of date
+#   3. PORT= in the env files Next actually loads
+#   4. 3000, the framework default, as a last resort
+detect_app_port() {
+  if [ -n "${APP_PORT:-}" ]; then echo "$APP_PORT"; return; fi
+
+  local pid port
+  pid="$(pm2 pid "$PM2_APP" 2>/dev/null | tr -d '[:space:]')"
+  if [ -n "$pid" ] && [ "$pid" != "0" ] && command -v ss >/dev/null 2>&1; then
+    # Field 4 of `ss -ltnpH` is the local address, e.g. 0.0.0.0:3020,
+    # [::]:3020 or *:3020. Take whatever follows the LAST colon, which is
+    # the port in all three shapes.
+    port="$(ss -ltnpH 2>/dev/null | grep "pid=$pid," \
+            | awk '{ n = split($4, a, ":"); print a[n] }' | head -1)"
+    if [ -n "$port" ]; then echo "$port"; return; fi
+  fi
+
+  for f in "$APP_DIR/.env.production" "$APP_DIR/.env" "$APP_DIR/.env.local"; do
+    [ -f "$f" ] || continue
+    port="$(grep -E '^PORT=' "$f" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"'"'"' ')"
+    if [ -n "$port" ]; then echo "$port"; return; fi
+  done
+
+  echo 3000
+}
 
 say()  { echo ""; echo "==> $*"; }
 info() { echo "    $*"; }
@@ -464,6 +501,13 @@ if [ "$DRY_RUN" != "1" ]; then
   # it returns 000 even when the site is perfectly healthy externally.
   # The local port is also the thing we actually want to assert: that
   # pm2 brought the Next.js process back up.
+  #
+  # Resolve the port AFTER the reload, so it reflects the process now
+  # running rather than an assumption made at the top of the script.
+  RESOLVED_PORT="$(detect_app_port)"
+  LOCAL_URL="${LOCAL_URL:-http://127.0.0.1:$RESOLVED_PORT}"
+  info "app port: $RESOLVED_PORT"
+
   # --retry-connrefused rides out the reload window without a sleep.
   code="$(curl -s -o /dev/null -w '%{http_code}' \
           --retry 30 --retry-delay 2 --retry-connrefused --retry-all-errors \
@@ -473,6 +517,9 @@ if [ "$DRY_RUN" != "1" ]; then
   else
     echo ""
     echo "HEALTH CHECK FAILED: $LOCAL_URL/login returned $code"
+    echo "  Before rolling anything back, confirm this is not the check being"
+    echo "  wrong: 'pm2 logs $PM2_APP --lines 40' prints the port Next bound to."
+    echo "  If it differs from $RESOLVED_PORT, re-run with APP_PORT=<that port>."
     echo "  logs:     pm2 logs $PM2_APP --lines 80"
     echo "  rollback: cd $APP_DIR && git checkout $PREV_SHA && npm ci && npm run build && pm2 reload $PM2_APP"
     exit 1
