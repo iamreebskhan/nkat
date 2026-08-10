@@ -30,6 +30,10 @@
 0013_ihs.sql
 0014_hcc_v28.sql
 0015_phase6_asc_ub04.sql
+# Must come BEFORE any payer-rule seed: payer_allowed_codes_v INNER JOINs
+# the code table, so a rule for a code that is not registered there is
+# invisible to the super-bill picker and the denial scorer.
+0019_palliative_codes_missing.sql
 payer-medicare.sql
 
 # --- ingestion sources: what the crawler watches ---------------------
