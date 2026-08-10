@@ -77,13 +77,43 @@ echo "=== 3. Document dedup (migration 0068) ============================"
 
 check "duplicate (url,payer_id,content_hash) triples" 0 \
   "$(Q "SELECT count(*) FROM (SELECT 1 FROM source_document GROUP BY url, coalesce(payer_id::text,'~null~'), content_hash HAVING count(*)>1) d")"
+# Either form counts: the constraint on PostgreSQL 15+, or the expression
+# index on older servers. Summed IN SQL — two separate $(Q ...) calls side
+# by side CONCATENATE their output, so a present constraint (1) and an
+# absent index (0) read as "10" and failed a check that should have passed.
 check "uniqueness constraint present on source_document" 1 \
-  "$(Q "SELECT count(*) FROM pg_constraint WHERE conname='source_document_url_payer_hash_key'")$(Q "SELECT count(*) FROM pg_class WHERE relname='source_document_url_payer_hash_uniq'")"
+  "$(Q "SELECT (SELECT count(*) FROM pg_constraint WHERE conname='source_document_url_payer_hash_key')
+             + (SELECT count(*) FROM pg_class     WHERE relname='source_document_url_payer_hash_uniq')")"
 echo "  note  documents merged by 0068 on this database: $(Q "SELECT count(*) FROM migration_0068_document_merge_journal")"
-echo "  note  multi-payer documents left intact (same url, different payers):"
+echo "  note  documents on more than one row — expected for a policy serving"
+echo "        several payers, and for a watched document with real versions:"
 sudo -u postgres psql -X -q -d "$PG_DB" -c \
   "SELECT count(DISTINCT payer_id) AS payers, count(*) AS rows, left(url,52) AS url
      FROM source_document GROUP BY url HAVING count(*)>1 ORDER BY 2 DESC;" 2>/dev/null
+
+# VERSION CHURN. A row per (url, payer, content_hash) is correct — that is
+# how a changed document is recorded. But an HTML page whose bytes differ
+# on every fetch (timestamps, ad slots, session ids) mints a NEW version
+# each crawl, and each one can trigger a fresh extraction. Many versions
+# of ONE document under ONE payer is that, not real change. Reported, not
+# failed: it is a property of the source, not of this deploy.
+CHURN="$(Q "SELECT count(*) FROM (SELECT url, payer_id FROM source_document GROUP BY url, payer_id HAVING count(*) >= 5) d")"
+if [ "${CHURN:-0}" = "0" ]; then
+  printf '  PASS  %-58s %s\n' "documents with runaway version churn (>=5 per payer)" "0"
+  PASS=$((PASS + 1))
+else
+  printf '  WARN  %-58s %s\n' "documents with >=5 versions for ONE payer" "$CHURN"
+  echo "        Each version can cost a re-extraction. Worth checking whether"
+  echo "        these pages genuinely change or just differ byte-to-byte."
+  sudo -u postgres psql -X -q -d "$PG_DB" -c \
+    "SELECT count(*) AS versions,
+            min(retrieved_at)::date AS first_seen,
+            max(retrieved_at)::date AS last_seen,
+            left(url, 58) AS url
+       FROM source_document
+      GROUP BY url, payer_id HAVING count(*) >= 5
+      ORDER BY 1 DESC;" 2>/dev/null
+fi
 
 echo ""
 echo "=== 4. The rules the client asked for ============================="
