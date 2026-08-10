@@ -396,6 +396,12 @@ SQL
   done
   [ -n "$TENANT_WRITERS" ] && die "these manifest seeds write TENANT tables and must not run against production:$TENANT_WRITERS"
 
+  # Synthetic documents registering themselves as a production data source
+  # are checked too — see scripts/check-seed-documents.mjs below, which
+  # scopes the search to INSERT blocks. A plain grep cannot tell a seed
+  # that REGISTERS a test fixture from one that DELETES it, and flagged
+  # retire-cms-short-docs.sql for cleaning up exactly this kind of row.
+
   # No two seeds may register the same document under different ids. This
   # is what produced the duplicate source_document rows migration 0068
   # cleans up, and no database constraint can catch it: the real key is
