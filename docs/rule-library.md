@@ -77,6 +77,40 @@ SELECT count(*) FROM (
    GROUP BY 1,2,3,4 HAVING count(*) > 1) d;   -- must be 0
 ```
 
+## Verified in production, 2026-08-10
+
+`scripts/verify-production.sh` — 21 checks, 0 failures, against the live
+database rather than a development copy:
+
+- migrations 0066–0068 applied; 26 seeds in the `seed_application` ledger
+- 5,680 live rules; **0** duplicate keys, **0** citing a missing document,
+  **0** without a verbatim quote (extracted, crawled and legacy alike)
+- UnitedHealthcare Ohio 25/25/25/14 and Anthem Ohio 25 — both payers held
+  no prior-auth rule at all before this
+- 12 duplicate documents merged by 0068; every multi-payer document intact
+
+Two facts worth keeping. The health check had been asserting port 3000
+while the app serves **3020**, so it reported a wholly successful deploy
+as a failure; it now resolves the port from the running process. And
+`tsx` is not a dependency of this project, so anything invoking
+`npx tsx` on the VPS blocks trying to download it — the service-level
+check skips rather than hangs.
+
+**Known version churn.** `source_document` holds a row per
+(url, payer_id, content_hash), which is how a changed document is
+recorded. Two sources mint versions faster than they change:
+
+| document | versions | window |
+|---|---|---|
+| Federal Register CY2026 | 35 | 2026-07-02 → 07-03 (one-day burst, dormant) |
+| Aetna policy page (HTML) | 13 | 2026-05-17 → 08-06 (~1 per 6 days, ongoing) |
+
+Only the Aetna page is still accumulating. HTML whose bytes differ per
+fetch — timestamps, ad slots, session ids — looks like a new version to a
+byte hash, and each one can trigger a fresh extraction. The fix, when it
+is worth doing, is to hash the EXTRACTED TEXT rather than the raw
+response, so cosmetic changes stop counting.
+
 ## Questions already settled — do not re-investigate
 
 **Is the CY2026 Medicare Final Rule extraction complete and honest?**
