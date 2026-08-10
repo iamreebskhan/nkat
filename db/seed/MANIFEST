@@ -51,6 +51,7 @@ payer-rules-cy2026-full-rule.sql
 payer-rules-humana-sc-editing.sql
 payer-rules-denial-attributes.sql
 payer-rules-denial-attributes-2.sql
+payer-rules-sc-fee-schedule.sql
 
 # --- deliberately NOT applied ----------------------------------------
 # Listed here rather than merely omitted, so the next person can see the
