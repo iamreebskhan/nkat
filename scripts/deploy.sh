@@ -468,16 +468,46 @@ SQL
     done
   fi
 
+  # Close overlapping rule timelines, AFTER the seeds.
+  #
+  # The seeds expire what they supersede at CURRENT_DATE rather than at
+  # the date the replacement takes effect, so both rows are served for
+  # every date of service in between. Migration 0072 repaired exactly this
+  # and was undone minutes later by the seeds in the very same deploy —
+  # migrations run at step 5, seeds at step 6. The repair therefore
+  # belongs here, downstream of whatever the seeds did, and it is
+  # idempotent so it costs nothing when there is nothing to close.
+  TIMELINE_SQL="db/maintenance/close-rule-timelines.sql"
+  if [ "$DRY_RUN" = "1" ]; then
+    [ -f "$TIMELINE_SQL" ] && echo "    [dry-run] would close rule timelines ($TIMELINE_SQL)"
+  elif [ -f "$TIMELINE_SQL" ]; then
+    sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d "$PG_DB" -f "$TIMELINE_SQL" \
+      || die "closing rule timelines FAILED — rules on some keys are served ambiguously at a past date of service. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
+  fi
+
   # The library's core invariant: fetchPayerRule ends in LIMIT 1 with no
-  # confidence tiebreak, so two live rows on one key make the answer
-  # depend on row order. Check it here, where a bad seed is still one
-  # restore away from undone.
+  # confidence tiebreak, so two rows served on one key make the answer
+  # depend on row order.
+  #
+  # Checked at PAST dates of service too, not just today. `expiration_date
+  # IS NULL` at CURRENT_DATE was the old test and it passed all the way
+  # through a deploy that left 28 keys ambiguous at 90 days back — which
+  # is where it matters, because a denial is re-worked at the date on the
+  # claim, inside a timely-filing window.
   if [ "$DRY_RUN" != "1" ]; then
-    DUPES="$(psql_db -tAc "SELECT count(*) FROM (SELECT payer_id, state, code, attribute FROM payer_rule WHERE expiration_date IS NULL GROUP BY 1,2,3,4 HAVING count(*) > 1) d" | tr -d '[:space:]')"
+    DUPES="$(psql_db -tAc "
+      SELECT coalesce(max(n), 0) FROM (
+        SELECT (SELECT count(*) FROM (
+                  SELECT payer_id, state, code, attribute
+                    FROM payer_rule
+                   WHERE effective_date <= CURRENT_DATE - o
+                     AND (expiration_date IS NULL OR expiration_date > CURRENT_DATE - o)
+                   GROUP BY 1,2,3,4 HAVING count(*) > 1) x) AS n
+          FROM (VALUES (0),(30),(90),(180),(365),(730)) t(o)) y" | tr -d '[:space:]')"
     if [ "$DUPES" != "0" ]; then
-      die "$DUPES (payer, state, code, attribute) keys have MORE THAN ONE live rule. A seed failed to supersede what it replaced, and lookups on those keys now return whichever row comes back first. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
+      die "$DUPES (payer, state, code, attribute) key(s) serve MORE THAN ONE rule at some date of service. Lookups on those keys return whichever row comes back first. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
     fi
-    info "rule-library invariant OK — one live rule per key"
+    info "rule-library invariant OK — one rule served per key, today and at 30/90/180/365/730 days back"
   fi
 fi
 
