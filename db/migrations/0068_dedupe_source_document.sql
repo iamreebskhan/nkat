@@ -108,9 +108,31 @@ WITH refs AS (
          AS ref_count
     FROM source_document sd
 )
+-- The grouping key is what decides which rows are "the same document",
+-- and it has to distinguish two cases that look alike:
+--
+--   REAL DIGEST ('sha256:' + 64 hex) — group by the digest itself. Two
+--     rows with DIFFERENT digests are two VERSIONS of the document and
+--     must both survive. Two rows with the SAME digest are the identical
+--     bytes registered twice, and must merge. Production had exactly
+--     that: upload://aetna-policy.txt stored twice under one hash.
+--
+--   SEED PLACEHOLDER (anything else — 'sha256:full-OH|<payer>' and
+--     friends) — group by (url, payer_id) alone. These invented strings
+--     carry no version information, so two of them at one url and payer
+--     are the same document however much the strings differ. That is the
+--     original pathology this migration exists to clean up.
+--
+-- An earlier version of this excluded every real-digest row from the
+-- merge, which protected the versions but left identical duplicates in
+-- place — and then ALTER TABLE could not build the unique index.
 SELECT id, url, payer_id, content_hash,
        first_value(id) OVER (
-         PARTITION BY url, coalesce(payer_id::text, '~null~')
+         PARTITION BY url,
+                      coalesce(payer_id::text, '~null~'),
+                      CASE WHEN content_hash ~ '^sha256:[0-9a-f]{64}$'
+                           THEN content_hash
+                           ELSE '~unversioned~' END
          ORDER BY ref_count DESC, retrieved_at ASC, id ASC
        ) AS canonical_id
   FROM refs;
@@ -118,10 +140,7 @@ SELECT id, url, payer_id, content_hash,
 CREATE TEMP TABLE _merge ON COMMIT DROP AS
 SELECT id AS loser_id, canonical_id, url, payer_id
   FROM _canon
- WHERE id <> canonical_id
-   -- Never merge a genuinely crawled version. A real digest is
-   -- 'sha256:' + 64 hex characters; the seeds' placeholders are not.
-   AND content_hash !~ '^sha256:[0-9a-f]{64}$';
+ WHERE id <> canonical_id;
 
 -- ---------------------------------------------------------------------
 -- 3. Journal the losers whole, before anything moves.
@@ -227,6 +246,30 @@ DELETE FROM source_document sd USING _merge m WHERE sd.id = m.loser_id;
 -- guarantee. The version check is at runtime, but UNIQUE NULLS NOT
 -- DISTINCT must still PARSE on an old server, so it is kept out of the
 -- statically-parsed path by executing it as dynamic SQL.
+-- Check before building, so a leftover duplicate names itself instead of
+-- arriving as "could not create unique index ... is duplicated" from deep
+-- inside an ALTER TABLE. That is how this migration failed on its first
+-- production run, and the raw error did not say which rows to look at.
+DO $$
+DECLARE
+  r RECORD;
+  n INT := 0;
+BEGIN
+  FOR r IN
+    SELECT url, payer_id, content_hash, count(*) AS rows
+      FROM source_document
+     GROUP BY url, coalesce(payer_id::text, '~null~'), payer_id, content_hash
+    HAVING count(*) > 1
+  LOOP
+    n := n + 1;
+    RAISE WARNING 'still duplicated: % rows for url=% payer=% hash=%',
+      r.rows, r.url, coalesce(r.payer_id::text, '(none)'), r.content_hash;
+  END LOOP;
+  IF n > 0 THEN
+    RAISE EXCEPTION 'migration 0068: % (url, payer_id, content_hash) group(s) survived the merge — see the warnings above. The uniqueness constraint cannot be built until they are resolved.', n;
+  END IF;
+END $$;
+
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'source_document_url_payer_hash_key')
