@@ -120,9 +120,18 @@
 #
 #  USAGE
 #  -----
-#    bash scripts/audit-answers.sh              # production (sudo -u postgres)
-#    PSQL_CMD="psql -h localhost -U postgres -d billing_rules" \
+#    sudo bash scripts/audit-answers.sh         # production (sudo -u postgres)
+#    PG_DB=billing_rules PSQL_BIN="psql -h localhost -U postgres" \
 #        bash scripts/audit-answers.sh          # any other database
+#
+#  PG_DB and PSQL_BIN are the same two variables audit-coverage.sh and
+#  verify-production.sh take, so one prefix drives all three:
+#
+#    PG_DB=billing_rules PSQL_BIN="psql -h localhost -U postgres" \
+#      bash scripts/verify-production.sh && ... audit-coverage.sh && ... audit-answers.sh
+#
+#  PSQL_CMD (a whole command including its own -d) is the older form.  It
+#  still works and still overrides PG_DB/PSQL_BIN.
 #
 #  HOW TO READ THE OUTPUT
 #  ----------------------
@@ -144,8 +153,21 @@
 
 set -uo pipefail
 
-PSQL="${PSQL_CMD:-sudo -u postgres psql -d pallio}"
+# Connection.  The three audit scripts are meant to be run back to back, so
+# they take the same two variables: PG_DB names the database, PSQL_BIN is
+# the client WITHOUT -d.  This script used to take a single PSQL_CMD that
+# had to carry its own -d, which meant the same run needed two different
+# spellings of the same connection and the odd one out silently audited
+# the wrong database.  PSQL_CMD is still honoured, and still wins, so
+# anything already scripted against it keeps working unchanged.
+PG_DB="${PG_DB:-pallio}"
+PSQL_BIN="${PSQL_BIN:-sudo -u postgres psql}"
+PSQL="${PSQL_CMD:-$PSQL_BIN -d $PG_DB}"
 export PGCLIENTENCODING="${PGCLIENTENCODING:-UTF8}"
+
+case "$PSQL" in
+  sudo*) [ "$(id -u)" = "0" ] || { echo "FATAL: run with sudo (needs the postgres role)"; exit 2; } ;;
+esac
 
 MAX_ROWS_SHOWN=25
 

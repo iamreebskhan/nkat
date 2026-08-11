@@ -529,6 +529,25 @@ SQL
       || die "closing rule timelines FAILED — rules on some keys are served ambiguously at a past date of service. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
   fi
 
+  # Retire document versions that byte-hashing minted and nothing cites.
+  #
+  # Until content_hash was taken over extracted TEXT rather than raw bytes,
+  # an HTML page whose markup differs on every fetch minted a new
+  # source_document row each crawl — 13 versions of one Aetna policy page
+  # in three months, 35 of a Federal Register PDF in a single day, none of
+  # them a real change to what the document says. The hashing fix stops new
+  # churn; it cannot undo what is stored, because extracted_text is NULL on
+  # the historical rows. This clears them, and only ever removes a version
+  # that is neither the newest nor cited by anything — so a rule never
+  # loses the exact version it was extracted from.
+  RETIRE_SQL="db/maintenance/retire-uncited-document-versions.sql"
+  if [ "$DRY_RUN" = "1" ]; then
+    [ -f "$RETIRE_SQL" ] && echo "    [dry-run] would retire uncited document versions ($RETIRE_SQL)"
+  elif [ -f "$RETIRE_SQL" ]; then
+    sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d "$PG_DB" -f "$RETIRE_SQL" \
+      || die "retiring uncited document versions FAILED. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
+  fi
+
   # The library's core invariant: fetchPayerRule ends in LIMIT 1 with no
   # confidence tiebreak, so two rows served on one key make the answer
   # depend on row order.
