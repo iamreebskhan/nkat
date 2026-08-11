@@ -529,6 +529,22 @@ SQL
       || die "closing rule timelines FAILED — rules on some keys are served ambiguously at a past date of service. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
   fi
 
+  # Withdraw rules a PERSON wrote from service.
+  #
+  # Seven rules authored by 'test@pallio.io' came from a seed left out of
+  # the MANIFEST as test data, applied to production before the manifest
+  # existed. They sat on Aetna and Anthem BCBS Ohio, on real palliative
+  # codes, five of them holding `covered`, at higher confidence than any
+  # real extraction — and LIMIT 1 made each one THE answer for its key.
+  # Runs before the scorer backfill so nothing downstream reads them.
+  UNGROUNDED_SQL="db/maintenance/expire-ungrounded-rules.sql"
+  if [ "$DRY_RUN" = "1" ]; then
+    [ -f "$UNGROUNDED_SQL" ] && echo "    [dry-run] would withdraw ungrounded rules ($UNGROUNDED_SQL)"
+  elif [ -f "$UNGROUNDED_SQL" ]; then
+    sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d "$PG_DB" -f "$UNGROUNDED_SQL" \
+      || die "withdrawing ungrounded rules FAILED. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
+  fi
+
   # Re-assert the structured scorer fields the seeds just overwrote.
   #
   # maxOccurrences/windowDays live INSIDE payer_rule.value on rows the

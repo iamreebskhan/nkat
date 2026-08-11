@@ -317,6 +317,34 @@ else
         AND (r.source_quote IS NULL OR length(trim(r.source_quote)) = 0);" 2>/dev/null
 fi
 
+# The check above asks for a non-pipeline author AND a missing source_quote.
+# Seven rules authored by 'test@pallio.io' passed it for months because they
+# HAVE quotes -- typed by hand, along with the answers. They sat on Aetna and
+# Anthem BCBS Ohio, on real palliative codes, five of them holding `covered`,
+# at confidence 0.93-0.95 (above every real extraction), and fetchPayerRule's
+# LIMIT 1 made each one THE answer for its key.
+#
+# So the author alone is the test. Every legitimate rule in this library is
+# created by a run that names itself -- extract:<batch> or crawler:<source>.
+# A person's name in created_by means a human typed a payer rule, and no
+# amount of well-formedness makes that citable.
+check "live rules whose author is not an extraction run" "0" \
+  "$(Q "SELECT count(*) FROM payer_rule
+         WHERE effective_date <= $DOS_SQL
+           AND (expiration_date IS NULL OR expiration_date > $DOS_SQL)
+           AND created_by NOT LIKE 'extract:%'
+           AND created_by NOT LIKE 'crawler:%'")"
+if [ "$(Q "SELECT count(*) FROM payer_rule WHERE effective_date <= $DOS_SQL AND (expiration_date IS NULL OR expiration_date > $DOS_SQL) AND created_by NOT LIKE 'extract:%' AND created_by NOT LIKE 'crawler:%'")" != "0" ]; then
+  $PSQL_BIN -X -q -d "$PG_DB" -c \
+    "SELECT p.name AS payer, r.code, r.attribute, r.created_by, r.confidence
+       FROM payer_rule r LEFT JOIN payer p ON p.id = r.payer_id
+      WHERE r.effective_date <= $DOS_SQL AND (r.expiration_date IS NULL OR r.expiration_date > $DOS_SQL)
+        AND r.created_by NOT LIKE 'extract:%' AND r.created_by NOT LIKE 'crawler:%'
+      ORDER BY r.created_by, p.name, r.code;" 2>/dev/null
+  echo "        db/maintenance/expire-ungrounded-rules.sql withdraws known-bad authors."
+  echo "        An author not on its denylist is a decision for a human, not a script."
+fi
+
 echo ""
 echo "=== 5. Denial-scorer attribute coverage ==========================="
 $PSQL_BIN -X -q -d "$PG_DB" -c \

@@ -226,6 +226,7 @@ echo "[4/6] running the post-seed maintenance scripts"
 # Same order deploy.sh step 6 runs them in. The scorer backfill is after the
 # timeline repair because it resolves "live" the way fetchPayerRule does.
 MAINT="db/maintenance/close-rule-timelines.sql
+db/maintenance/expire-ungrounded-rules.sql
 db/maintenance/backfill-structured-scorer-fields.sql
 db/maintenance/retire-uncited-document-versions.sql"
 
@@ -300,6 +301,25 @@ ANSWERS="SELECT payer_id::text || '|' || coalesce(state,'') || '|' || code || '|
           AND (expiration_date IS NULL OR expiration_date > CURRENT_DATE)
         ORDER BY 1"
 
+# The same keys, but only for rules a PERSON authored. A rule the repo
+# cannot produce is not automatically wrong: the crawler ingests documents
+# continuously, so production legitimately holds rules written after the
+# seeds were (22 of them, from the Federal Register PDF). What is never
+# legitimate is a live rule whose author is not a pipeline run at all --
+# that is how seven hand-typed rules from a non-manifest test seed ended up
+# answering Aetna and Anthem coverage questions in production.
+#
+# So the two are scored differently: pipeline-authored differences are
+# reported, non-pipeline ones fail the run.
+UNGROUNDED="SELECT payer_id::text || '|' || coalesce(state,'') || '|' || code || '|' || attribute
+                 || '|' || coalesce(product_line,'') || '  [' || created_by || ']'
+            FROM payer_rule
+           WHERE effective_date <= CURRENT_DATE
+             AND (expiration_date IS NULL OR expiration_date > CURRENT_DATE)
+             AND created_by NOT LIKE 'extract:%'
+             AND created_by NOT LIKE 'crawler:%'
+           ORDER BY 1"
+
 TMP_REF="$(mktemp)"; TMP_RPL="$(mktemp)"
 trap 'rm -f "$TMP_REF" "$TMP_RPL"' EXIT
 
@@ -331,15 +351,34 @@ else
   # Split the difference into the three kinds that mean different things.
   only_ref="$(comm -23 "$TMP_REF" "$TMP_RPL" | wc -l | tr -d '[:space:]')"
   only_rpl="$(comm -13 "$TMP_REF" "$TMP_RPL" | wc -l | tr -d '[:space:]')"
-  fail "the rebuilt library does not match the reference"
-  echo "        in reference but not replay: $only_ref"
-  echo "        in replay but not reference: $only_rpl"
+
+  # A key the REPLAY produces and the reference does not always means the
+  # repo and production disagree about what to serve. A key only the
+  # reference has may just be a document crawled since the seeds were
+  # written — so that alone is reported, not failed.
+  if [ "$only_rpl" != "0" ]; then
+    fail "the repo produces $only_rpl answer(s) production does not serve"
+  else
+    note "the repo produces nothing production lacks — the difference is one-directional"
+  fi
+  note "in reference but not replay: $only_ref   in replay but not reference: $only_rpl"
   echo
   echo "        A key present in BOTH lists with a different value after '=>'"
   echo "        is the dangerous case: the same key answering differently."
   echo
-  comm -23 "$TMP_REF" "$TMP_RPL" | head -15 | sed 's/^/        REF-only  /'
-  comm -13 "$TMP_REF" "$TMP_RPL" | head -15 | sed 's/^/        RPL-only  /'
+  comm -23 "$TMP_REF" "$TMP_RPL" | head -10 | sed 's/^/        REF-only  /'
+  comm -13 "$TMP_REF" "$TMP_RPL" | head -10 | sed 's/^/        RPL-only  /'
+fi
+
+# Whatever the diff said, a live rule no pipeline authored is never
+# acceptable. Checked on the reference, because that is what billers read.
+UNG="$(REF "$UNGROUNDED")"
+if [ -z "$UNG" ]; then
+  note "every live rule in the reference was authored by an extraction run"
+else
+  fail "$(printf '%s\n' "$UNG" | wc -l | tr -d '[:space:]') live rule(s) in $PG_DB were authored by a person, not a pipeline"
+  printf '%s\n' "$UNG" | head -20 | sed 's/^/        /'
+  echo "        Run db/maintenance/expire-ungrounded-rules.sql (deploy.sh step 6 does)."
 fi
 
 # --- teardown ---------------------------------------------------------------
