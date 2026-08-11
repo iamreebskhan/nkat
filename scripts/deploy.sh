@@ -529,6 +529,25 @@ SQL
       || die "closing rule timelines FAILED — rules on some keys are served ambiguously at a past date of service. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
   fi
 
+  # Re-assert the structured scorer fields the seeds just overwrote.
+  #
+  # maxOccurrences/windowDays live INSIDE payer_rule.value on rows the
+  # seeds own, and a seed's ON CONFLICT ... DO UPDATE SET value =
+  # EXCLUDED.value replaces the whole object. Migration 0070 added them
+  # once; migrations never run again, so the next seed replay silently
+  # deleted all 32 and nothing noticed — the rules still existed and still
+  # answered, only denial-risk.service.ts stopped scoring frequency at all
+  # (it gates the whole frequency_exceeded check, weight 0.75, on these two
+  # keys being present). Runs after the timeline repair because it resolves
+  # "live" the way fetchPayerRule does.
+  SCORER_SQL="db/maintenance/backfill-structured-scorer-fields.sql"
+  if [ "$DRY_RUN" = "1" ]; then
+    [ -f "$SCORER_SQL" ] && echo "    [dry-run] would re-assert structured scorer fields ($SCORER_SQL)"
+  elif [ -f "$SCORER_SQL" ]; then
+    sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d "$PG_DB" -f "$SCORER_SQL" \
+      || die "backfilling structured scorer fields FAILED — the denial scorer would run without frequency caps. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
+  fi
+
   # Retire document versions that byte-hashing minted and nothing cites.
   #
   # Until content_hash was taken over extracted TEXT rather than raw bytes,

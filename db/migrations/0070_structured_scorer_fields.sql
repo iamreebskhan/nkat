@@ -279,9 +279,33 @@ DECLARE
 BEGIN
   SELECT count(*) INTO n_expected FROM freq_rows;
 
-  -- 5a. The target set must be non-empty. If the extractor ever rewords an
-  --     answer, the md5 pins stop matching and this migration would silently
-  --     do nothing while reporting success.
+  -- 5a. The target set must be non-empty -- BUT ONLY once there is
+  --     something to match against.
+  --
+  --     Migrations run at deploy step 5 and seeds at step 6, so on a
+  --     database being built from nothing this migration executes before a
+  --     single payer_rule exists. It then matched zero rows, raised, and
+  --     aborted the whole rebuild -- which is how scripts/replay-from-
+  --     scratch.sh found it. Distinguishing "no rules yet" from "the pins
+  --     stopped matching" keeps the real signal without blocking a build.
+  --
+  --     The backfill itself now lives in
+  --     db/maintenance/backfill-structured-scorer-fields.sql and runs
+  --     AFTER the seeds on every deploy, because these keys are written
+  --     into payer_rule.value on rows the SEEDS own: their
+  --     ON CONFLICT ... DO UPDATE SET value = EXCLUDED.value replaces the
+  --     whole object, dropping both keys, and a migration never runs again
+  --     to put them back. Production lost all 32 exactly that way.
+  SELECT count(*) INTO n_live FROM payer_rule
+   WHERE attribute = 'frequency_limit'
+     AND effective_date <= CURRENT_DATE
+     AND (expiration_date IS NULL OR expiration_date > CURRENT_DATE);
+
+  IF n_expected = 0 AND n_live = 0 THEN
+    RAISE NOTICE '0070: no frequency_limit rules seeded yet — the post-seed maintenance script will backfill';
+    RETURN;
+  END IF;
+
   IF n_expected = 0 THEN
     RAISE EXCEPTION
       '0070 matched no rules. The classified answer texts no longer exist verbatim (md5 pins in freq_targets). Re-read the distinct frequency_limit answers and re-classify by hand before re-running.';

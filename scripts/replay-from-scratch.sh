@@ -223,8 +223,22 @@ note "$N_SEED seeds applied"
 # --- 4. the maintenance scripts deploy.sh runs after the seeds --------------
 echo
 echo "[4/6] running the post-seed maintenance scripts"
-for m in db/maintenance/close-rule-timelines.sql \
-         db/maintenance/retire-uncited-document-versions.sql; do
+# Same order deploy.sh step 6 runs them in. The scorer backfill is after the
+# timeline repair because it resolves "live" the way fetchPayerRule does.
+MAINT="db/maintenance/close-rule-timelines.sql
+db/maintenance/backfill-structured-scorer-fields.sql
+db/maintenance/retire-uncited-document-versions.sql"
+
+# A hand-kept list in two scripts is the drift this repo keeps getting bitten
+# by, so an unlisted maintenance script is an error rather than a silent skip.
+for f in db/maintenance/*.sql; do
+  case "$MAINT" in
+    *"$f"*) ;;
+    *) fail "db/maintenance/$(basename "$f") is not in this script's run list — add it here and to deploy.sh step 6" ;;
+  esac
+done
+
+for m in $MAINT; do
   [ -f "$m" ] || { note "$(basename "$m") — not present, skipped"; continue; }
   if out="$($PSQL_BIN -X -q -v ON_ERROR_STOP=1 -d "$PG_DB_REPLAY" -f "$m" 2>&1)"; then
     note "$(basename "$m") — ok"

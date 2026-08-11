@@ -325,6 +325,26 @@ $PSQL_BIN -X -q -d "$PG_DB" -c \
       AND attribute IN ('covered','prior_auth_required','modifier_required','frequency_limit')
     GROUP BY 1 ORDER BY 2 DESC;" 2>/dev/null
 
+# The counts above say the RULES exist. They say nothing about whether the
+# scorer can act on them, and for frequency it could not: denial-risk.
+# service.ts gates its whole frequency_exceeded check (weight 0.75) on
+# value->'maxOccurrences' and value->'windowDays' being present, and those
+# two keys live INSIDE payer_rule.value on rows the seeds own. Migration
+# 0070 added them once; the next seed replay's ON CONFLICT ... DO UPDATE
+# SET value = EXCLUDED.value replaced the whole object and deleted them,
+# and a migration never runs again to restore it. Production ran with 150
+# frequency_limit rules and 0 usable caps, and every count-based check on
+# this page still read green. This is the check that would have caught it.
+# A zero here means backfill-structured-scorer-fields.sql did not run, or a
+# seed overwrote value after it did.
+check "frequency rules carrying usable caps (scorer can act)" "gt:0" \
+  "$(Q "SELECT count(*) FROM payer_rule
+         WHERE attribute = 'frequency_limit'
+           AND effective_date <= $DOS_SQL
+           AND (expiration_date IS NULL OR expiration_date > $DOS_SQL)
+           AND jsonb_typeof(value->'maxOccurrences') = 'number'
+           AND jsonb_typeof(value->'windowDays')     = 'number'")"
+
 echo ""
 echo "=== 6. Live lookup through the real service ======================="
 # The SQL above proves the rows exist. This proves lookupRule() returns
