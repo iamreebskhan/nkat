@@ -27,13 +27,45 @@ BEGIN
   RETURN v_id;
 END $$;
 
+-- Chunks. p_embedded decides only whether `embedding` is NULL -- that is
+-- the whole distinction the retirement rule cares about.
+--
+-- The literal has to be built dynamically because the column's type is not
+-- the same everywhere: production runs pgvector and the column is
+-- vector(1024), while a dev box without the extension has it as bytea.
+-- Hardcoding either one makes this fixture fail on the other, which would
+-- mean the test cannot run where the real data lives.
 CREATE OR REPLACE FUNCTION _fx_chunks(p_id uuid, p_n int, p_embedded boolean)
-RETURNS void LANGUAGE sql AS $$
-  INSERT INTO document_chunk (source_doc_id, chunk_index, content, embedding)
-  SELECT p_id, g, 'identical chunk text ' || g,
-         CASE WHEN p_embedded THEN '\x0102'::bytea ELSE NULL END
-    FROM generate_series(1, p_n) g;
-$$;
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  v_type text;
+  v_dims int;
+  v_lit  text;
+BEGIN
+  SELECT format_type(a.atttypid, a.atttypmod), t.typname
+    INTO v_lit, v_type
+    FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid
+   WHERE a.attrelid = 'document_chunk'::regclass AND a.attname = 'embedding';
+
+  IF NOT p_embedded THEN
+    v_lit := 'NULL';
+  ELSIF v_type = 'vector' THEN
+    -- format_type gives 'vector(1024)'. Build [1,0,0,...] of that width --
+    -- NOT an all-zero vector: cosine distance is undefined for one, and
+    -- document_chunk carries an HNSW vector_cosine_ops index. The
+    -- retirement only ever tests IS NOT NULL, so the direction is
+    -- arbitrary; it just has to be a legal one.
+    v_dims := coalesce(nullif(regexp_replace(v_lit, '\D', '', 'g'), '')::int, 3);
+    v_lit  := quote_literal('[1' || repeat(',0', v_dims - 1) || ']') || '::vector';
+  ELSE
+    v_lit := quote_literal('\x0102') || '::' || v_type;
+  END IF;
+
+  EXECUTE format(
+    'INSERT INTO document_chunk (source_doc_id, chunk_index, content, embedding)
+     SELECT %L, g, ''identical chunk text '' || g, %s FROM generate_series(1, %s) g',
+    p_id, v_lit, p_n);
+END $$;
 
 -- Rules citing a version. Cloned from a real row through jsonb so every
 -- NOT NULL and check constraint is satisfied without listing 30 columns.
@@ -116,6 +148,7 @@ END $$;
 
 DROP FUNCTION _fx_ver(int, int, text);
 DROP FUNCTION _fx_chunks(uuid, int, boolean);
+-- (signature unchanged; only the body became type-aware)
 DROP FUNCTION _fx_rules(uuid, int, text);
 
 COMMIT;
