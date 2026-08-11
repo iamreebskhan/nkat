@@ -57,25 +57,90 @@ COMMENT ON TABLE document_version_retirement_journal IS
   'To undo: INSERT INTO source_document SELECT (jsonb_populate_record(NULL::source_document, document_row)).* '
   'FROM document_version_retirement_journal WHERE ...';
 
-CREATE TEMP TABLE _retire ON COMMIT DROP AS
-WITH ranked AS (
-  SELECT sd.id, sd.url, sd.payer_id,
-         row_number() OVER (
-           PARTITION BY sd.url, coalesce(sd.payer_id::text, '~null~')
-           ORDER BY sd.retrieved_at DESC, sd.id DESC
-         ) AS recency,
-         (SELECT count(*) FROM payer_rule                r WHERE r.source_doc_id      = sd.id)
-       + (SELECT count(*) FROM document_chunk            c WHERE c.source_doc_id      = sd.id)
-       + (SELECT count(*) FROM extraction_candidate      e WHERE e.source_doc_id      = sd.id)
-       + (SELECT count(*) FROM documentation_requirement d WHERE d.source_doc_id      = sd.id)
-       + (SELECT count(*) FROM client_doc_upload         u WHERE u.source_document_id = sd.id)
-         AS refs
-    FROM source_document sd
+-- Every version, with the two things that decide its fate kept apart:
+-- references that PROTECT it, and chunks, which do not.
+--
+-- WHY document_chunk IS NOT A PROTECTING REFERENCE
+-- Chunking runs on whatever the crawler just fetched, so a churned version
+-- always has its own chunks. Counting them as protection is circular --
+-- the chunks exist only because the churn created the version -- and it
+-- made this script a no-op on the very document it was written for: all
+-- 13 versions of the Aetna policy page protected themselves, 0 retired.
+--
+-- Chunks are also derived, regenerable, and already ON DELETE CASCADE.
+-- And keeping them is not free: 12 of those Aetna versions hold 87 chunks
+-- each of IDENTICAL text, so 1,044 near-duplicate rows sit in the vector
+-- index and a retrieval that should surface twelve different documents
+-- surfaces the same page twelve times.
+--
+-- A payer_rule citation is the opposite and still protects absolutely: a
+-- biller clicking through to their evidence has to land on the version
+-- the rule was actually read from. In production those citations sit on
+-- the OLDEST Aetna version, which carries no chunks at all -- so
+-- "protected" and "has the text" are genuinely different versions, and
+-- the rescue below is what keeps both.
+CREATE TEMP TABLE _versions ON COMMIT DROP AS
+SELECT sd.id, sd.url, sd.payer_id,
+       coalesce(sd.payer_id::text, '~null~') AS grp,
+       row_number() OVER (
+         PARTITION BY sd.url, coalesce(sd.payer_id::text, '~null~')
+         ORDER BY sd.retrieved_at DESC, sd.id DESC
+       ) AS recency,
+       (SELECT count(*) FROM payer_rule                r WHERE r.source_doc_id      = sd.id)
+     + (SELECT count(*) FROM extraction_candidate      e WHERE e.source_doc_id      = sd.id)
+     + (SELECT count(*) FROM documentation_requirement d WHERE d.source_doc_id      = sd.id)
+     + (SELECT count(*) FROM client_doc_upload         u WHERE u.source_document_id = sd.id)
+       AS refs,
+       (SELECT count(*) FROM document_chunk c WHERE c.source_doc_id = sd.id) AS chunks,
+       (SELECT count(*) FROM document_chunk c
+         WHERE c.source_doc_id = sd.id AND c.embedding IS NOT NULL)          AS embedded
+  FROM source_document sd;
+
+-- THE RESCUE
+-- A document must not lose its retrieval text just because the versions
+-- carrying it happen to be uncited. If the kept set -- the newest version
+-- plus everything a rule cites -- would hold no chunks while the document
+-- HAS chunks, the newest chunk-bearing version is kept as well. Embeddings
+-- are considered first: chunks without an embedding are not retrievable by
+-- vector search, so a version whose chunks are embedded outranks one whose
+-- chunks are merely present.
+CREATE TEMP TABLE _rescue ON COMMIT DROP AS
+WITH per_group AS (
+  SELECT url, grp, max(chunks) AS any_chunks, max(embedded) AS any_embedded
+    FROM _versions GROUP BY url, grp
+),
+kept_group AS (
+  SELECT url, grp, max(chunks) AS kept_chunks, max(embedded) AS kept_embedded
+    FROM _versions WHERE recency = 1 OR refs > 0
+   GROUP BY url, grp
 )
-SELECT id, url, payer_id
-  FROM ranked
- WHERE recency > 1     -- never the current version
-   AND refs = 0;       -- never something a rule cites
+SELECT DISTINCT ON (v.url, v.grp) v.id
+  FROM _versions v
+  JOIN per_group  g ON g.url  = v.url AND g.grp  = v.grp
+  JOIN kept_group k ON k.url  = v.url AND k.grp  = v.grp
+ WHERE v.recency > 1 AND v.refs = 0
+   AND (
+        -- the document has embedded chunks, but nothing kept does
+        (g.any_embedded > 0 AND k.kept_embedded = 0 AND v.embedded > 0)
+        -- or it has chunks at all, none embedded, and nothing kept has any
+     OR (g.any_embedded = 0 AND g.any_chunks > 0 AND k.kept_chunks = 0 AND v.chunks > 0)
+   )
+ ORDER BY v.url, v.grp, v.recency;   -- newest qualifying version
+
+-- What the document holds BEFORE the delete, so the postconditions can
+-- prove nothing was lost rather than assume it.
+CREATE TEMP TABLE _before ON COMMIT DROP AS
+SELECT url, grp, max(chunks) AS had_chunks, max(embedded) AS had_embedded
+  FROM _versions GROUP BY url, grp;
+
+CREATE TEMP TABLE _retire ON COMMIT DROP AS
+SELECT v.id, v.url, v.payer_id,
+       v.chunks   AS chunks_removed,
+       v.embedded AS embedded_removed
+  FROM _versions v
+ WHERE v.recency > 1                                    -- never the current version
+   AND v.refs = 0                                       -- never something a rule cites
+   AND NOT EXISTS (SELECT 1 FROM _rescue r WHERE r.id = v.id);  -- never the last copy of the text
 
 INSERT INTO document_version_retirement_journal (document_id, url, payer_id, document_row)
 SELECT r.id, r.url, r.payer_id, to_jsonb(sd) - 'extracted_text'
@@ -88,8 +153,33 @@ DECLARE
   n_retired INT;
   n_dangling INT;
   n_orphan_urls INT;
+  n_lost_text INT;
+  n_chunks INT;
+  n_embedded INT;
 BEGIN
-  SELECT count(*) INTO n_retired FROM _retire;
+  SELECT count(*), coalesce(sum(chunks_removed),0), coalesce(sum(embedded_removed),0)
+    INTO n_retired, n_chunks, n_embedded
+    FROM _retire;
+
+  -- A document that HAD chunks must still have chunks, and one that had
+  -- embedded chunks must still have embedded ones. This is the check the
+  -- rescue exists to satisfy; without it, dropping every uncited version
+  -- of the Aetna page would have taken all 1,044 of its chunks with it and
+  -- silently removed the document from vector retrieval, while every
+  -- rule citation still resolved and every count above still read zero.
+  SELECT count(*) INTO n_lost_text
+    FROM _before b
+   WHERE (b.had_chunks > 0 OR b.had_embedded > 0)
+     AND NOT EXISTS (
+       SELECT 1
+         FROM source_document sd
+         JOIN document_chunk c ON c.source_doc_id = sd.id
+        WHERE sd.url = b.url
+          AND coalesce(sd.payer_id::text, '~null~') = b.grp
+          AND (b.had_embedded = 0 OR c.embedding IS NOT NULL));
+  IF n_lost_text <> 0 THEN
+    RAISE EXCEPTION 'retire-uncited-document-versions: % document(s) would lose all retrievable text — refusing', n_lost_text;
+  END IF;
 
   -- Nothing may point at a row that no longer exists. document_chunk and
   -- extraction_candidate are ON DELETE CASCADE, so a mistake there would
@@ -124,7 +214,9 @@ BEGIN
   END IF;
 
   RAISE NOTICE 'document versions: % uncited old version(s) retired', n_retired;
+  RAISE NOTICE '  duplicate chunks removed: % (% embedded)', n_chunks, n_embedded;
   RAISE NOTICE '  dangling references: 0   documents left with no version: 0';
+  RAISE NOTICE '  documents that lost their retrievable text: 0';
 END $$;
 
 COMMIT;
