@@ -300,6 +300,26 @@ check "extracted live rules with no source_quote" 0 \
   "$(Q "SELECT count(*) FROM payer_rule WHERE $SERVED AND created_by LIKE 'extract:%' AND (source_quote IS NULL OR length(trim(source_quote))=0)")"
 check "crawled live rules with no source_quote" 0 \
   "$(Q "SELECT count(*) FROM payer_rule WHERE $SERVED AND created_by LIKE 'crawler:%' AND (source_quote IS NULL OR length(trim(source_quote))=0)")"
+
+# A quote is only worth as much as the document a biller can open to check
+# it. source_document still holds a row for
+# 'https://example.test/anthem-oh-palliative-policy.pdf' — a fixture URL
+# registered as a real Anthem policy, predating the seed-document check
+# that now rejects exactly this. Nothing cites it today, so this guard is
+# currently proving a zero rather than reporting a problem; it exists so
+# that if a rule ever DOES cite an unopenable URL, it is caught here
+# instead of in front of a biller mid-appeal.
+# $SERVED names effective_date/expiration_date unqualified, and
+# source_document has an effective_date too — so the predicate must be
+# spelled out here rather than reused, or the join makes it ambiguous and
+# the check reports QUERY FAILED instead of a number.
+check "live rules citing a URL nobody can open" 0 \
+  "$(Q "SELECT count(*) FROM payer_rule r JOIN source_document d ON d.id = r.source_doc_id
+         WHERE r.effective_date <= $DOS_SQL
+           AND (r.expiration_date IS NULL OR r.expiration_date > $DOS_SQL)
+           AND (d.url LIKE '%example.test%' OR d.url LIKE '%fixture%'
+                OR d.url LIKE '%localhost%' OR d.url LIKE 'upload://%'
+                OR d.url NOT LIKE 'http%')")"
 # Older hand-inserted rows are reported, not failed: they predate the
 # grounding rule and cannot be fixed from here, but a biller opening one
 # gets an empty citation panel, so somebody should know the number.
