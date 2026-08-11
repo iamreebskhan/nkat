@@ -254,20 +254,49 @@ say "4/8  Dependencies"
 # is still serving from it. If the build then failed we would have taken
 # production down for a deploy that never shipped. So only reinstall when
 # the dependency set actually changed.
+# ASK WHAT IS INSTALLED, NOT WHAT GIT CHANGED.
+#
+# This used to compare package.json between PREV_SHA and HEAD. That is
+# void whenever the operator runs `git pull` before the deploy — PREV_SHA
+# is then captured AFTER the pull, the diff is empty, and the step reports
+# "deps unchanged" while a brand-new dependency sits uninstalled. That is
+# exactly how tsx was declared, committed, deployed, and never installed.
+#
+# The reliable question is whether node_modules actually satisfies
+# package.json right now, which is true regardless of how the working
+# tree got here.
+deps_satisfied() {
+  node -e '
+    const fs = require("fs");
+    const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+    const want = Object.keys({ ...(p.dependencies || {}), ...(p.devDependencies || {}) });
+    const missing = want.filter((d) => !fs.existsSync("node_modules/" + d));
+    if (missing.length) { console.error(missing.slice(0, 8).join(" ")); process.exit(1); }
+  ' 2>/tmp/pallio-missing-deps
+}
+
+# npm ci, not install: reproducible, and it fails loudly if the lockfile
+# and package.json disagree. Dev deps are required — next build needs
+# typescript and the tailwind toolchain, and verify-production needs tsx.
+#
+# npm ci DELETES node_modules before reinstalling and the live app is
+# still serving from it, so this only runs when something is genuinely
+# missing or the lockfile moved.
 if [ ! -d node_modules ]; then
   info "node_modules missing — installing"
   run "npm ci --no-audit --no-fund"
-elif [ "$DRY_RUN" = "1" ]; then
-  if git diff --quiet "$PREV_SHA" HEAD -- package.json package-lock.json 2>/dev/null; then
-    info "[dry-run] deps unchanged since $PREV_SHA — would skip npm ci"
+elif ! deps_satisfied; then
+  info "declared but NOT installed: $(cat /tmp/pallio-missing-deps 2>/dev/null)"
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "    [dry-run] would run npm ci"
   else
-    info "[dry-run] deps changed — would run npm ci"
+    npm ci --no-audit --no-fund
   fi
-elif git diff --quiet "$PREV_SHA" HEAD -- package.json package-lock.json 2>/dev/null; then
-  info "deps unchanged since ${PREV_SHA:0:7} — skipping npm ci"
-else
-  info "package.json/lock changed — reinstalling"
+elif [ "$DRY_RUN" != "1" ] && ! git diff --quiet "$PREV_SHA" HEAD -- package-lock.json 2>/dev/null; then
+  info "lockfile changed — reinstalling"
   npm ci --no-audit --no-fund
+else
+  info "every declared dependency is installed — skipping npm ci"
 fi
 
 # ---------------------------------------------------------------------
