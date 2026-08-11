@@ -443,7 +443,22 @@ SQL
     else
       recorded=""
     fi
-    [ "$recorded" = "$have" ] || SEED_PENDING="$SEED_PENDING $base"
+    # CASCADE. Once ANY seed is pending, every seed AFTER it in the
+    # manifest is applied too, whether or not its own content changed.
+    #
+    # The manifest says order is load-bearing, because a later rule seed
+    # supersedes an earlier one on the keys they share. That guarantee
+    # only holds when both actually run. Applying seeds selectively by
+    # content hash broke it: editing payer-rules-denial-attributes.sql
+    # made it re-run ALONE, where its supersession expired round 2's
+    # rules on 28 shared keys and its ON CONFLICT ... expiration_date =
+    # NULL revived its own. Round 2 was unchanged, so it never re-ran to
+    # re-assert itself, and production served the OLDER rule — with no
+    # error anywhere. Found by the service-level check, which reads the
+    # answer text rather than counting rows.
+    if [ "$recorded" != "$have" ] || [ -n "$SEED_PENDING" ]; then
+      SEED_PENDING="$SEED_PENDING $base"
+    fi
   done
 
   # A manifest naming a file that does not exist is a mistake worth

@@ -1,3 +1,24 @@
+-- WHY THIS FILE CARRIES A DEPLOY NOTE
+--
+-- Editing this seed once broke production, and the mechanism is worth
+-- keeping in front of whoever edits it next.
+--
+-- This file supersedes rules on the keys it writes, and payer-rules-
+-- denial-attributes-2.sql supersedes THIS file on the keys they share.
+-- The manifest order encodes that. But deploy.sh applies seeds by
+-- content hash, so when only this file changed it re-ran ALONE: its
+-- supersession expired round 2 on 28 shared keys, and its
+-- ON CONFLICT (id) DO UPDATE ... expiration_date = NULL revived its own
+-- rows. Round 2 was unchanged, never re-ran, and production quietly
+-- served the OLDER UnitedHealthcare Ohio rule — the one without the TIN
+-- edit and without the telehealth-list warning. No error anywhere; the
+-- row counts were all correct. It was caught by the service-level check
+-- that reads the ANSWER TEXT rather than counting rows.
+--
+-- deploy.sh now CASCADES: once any seed is pending, every seed after it
+-- in the manifest is applied too. Touching this line is what makes that
+-- cascade run once more and restore round 2 on the 28 affected keys.
+--
 -- Seed: the nine attributes that actually deny claims.
 --
 -- The platform exists because, per the plan, "no EMR shows the nurse
