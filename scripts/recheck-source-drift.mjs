@@ -96,13 +96,30 @@ const norm = (s) => String(s)
   .replace(/[\u2010-\u2015\u2212]/g, '-').replace(/[\u00a0\u2007\u202f]/g, ' ')
   .replace(/\s+/g, ' ')
   .replace(/(^|\s)[\u2022\u25cf\u25aa\u00b7\u2043\ufffd]+(?=\s)/g, '$1')
-  // PDF line wrapping splits words as "image- guided". Applied to BOTH the
-  // document and the quote, so it can only make a true match findable, never
-  // make a false one match: a real hyphenated term keeps its hyphen on both
-  // sides. Without this, quotes extracted from a PDF never match the same
-  // text served as HTML, and the report is a wall of false drift.
-  .replace(/([a-z])- ([a-z])/g, '$1$2')
   .replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * A PDF line break inside a word arrives from pdftotext as "image- guided",
+ * and it hides two different originals:
+ *   "image-guided"  — a real hyphenated compound, wrapped after the hyphen
+ *   "imageguided"   — one word, split with a soft hyphen
+ * The same text served as HTML has whichever it really was, so collapsing to
+ * a single guess is wrong half the time. Collapsing to "imageguided" is what
+ * put 43 Federal Register quotes in the failure column: the live HTML says
+ * "image-guided", which normalises to "image-guided", and they never matched.
+ *
+ * Both readings are tried instead. Only the QUOTE is expanded this way, never
+ * the document, so this can surface a true match that formatting hid — it
+ * cannot invent one, because both candidates still have to appear verbatim.
+ */
+const dehyphenations = (q) => {
+  const out = new Set([q]);
+  if (/[a-z]- [a-z]/.test(q)) {
+    out.add(q.replace(/([a-z])- ([a-z])/g, '$1-$2')); // hyphen was real
+    out.add(q.replace(/([a-z])- ([a-z])/g, '$1$2'));  // hyphen was a wrap
+  }
+  return [...out];
+};
 
 /**
  * Fee-schedule rules do not cite a sentence, because a spreadsheet has none.
@@ -363,9 +380,13 @@ async function main() {
             detail: ex.why || `${ex.kind}: only ${text.length} chars of text extracted (needs ${MIN_TEXT})` };
         } else {
           const missing = quotes.filter((q) => {
-            if (!isRowCitation(q)) return !text.includes(norm(q));
+            if (!isRowCitation(q)) {
+              return !dehyphenations(norm(q)).some((cand) => text.includes(cand));
+            }
             // A row citation survives if every checkable field is still there.
-            return rowCitationFields(q).some((f) => !text.includes(norm(f)));
+            return rowCitationFields(q).some(
+              (f) => !dehyphenations(norm(f)).some((cand) => text.includes(cand)),
+            );
           });
           // EVERY quote gone is a different signal from SOME quotes gone.
           // A payer that revises a page drops a few sentences; a payer does
