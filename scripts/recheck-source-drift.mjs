@@ -395,8 +395,18 @@ async function main() {
       SELECT coalesce(json_agg(row_to_json(d)), '[]')::text FROM (
         SELECT sd.id::text AS id, sd.url, coalesce(p.name,'(no payer)') AS payer,
                count(r.id) AS live_rules,
-               json_agg(DISTINCT r.source_quote) FILTER (
-                 WHERE r.source_quote IS NOT NULL AND length(trim(r.source_quote)) > 15) AS quotes
+               -- Each quote with the number of rules that actually cite it, so
+               -- the report can say how many rules LOST their citation rather
+               -- than how many happen to share a document with a lost one.
+               (SELECT coalesce(json_agg(json_build_object('q', q.source_quote, 'n', q.n)), '[]')
+                  FROM (SELECT r2.source_quote, count(*) AS n
+                          FROM payer_rule r2
+                         WHERE r2.source_doc_id = sd.id
+                           AND r2.effective_date <= CURRENT_DATE
+                           AND (r2.expiration_date IS NULL OR r2.expiration_date > CURRENT_DATE)
+                           AND r2.source_quote IS NOT NULL
+                           AND length(trim(r2.source_quote)) > 15
+                         GROUP BY r2.source_quote) q) AS quotes
           FROM source_document sd
           JOIN payer_rule r ON r.source_doc_id = sd.id
            AND r.effective_date <= CURRENT_DATE
@@ -446,7 +456,7 @@ async function main() {
             detail: ex.why || `${ex.kind}: only ${text.length} chars of text extracted (needs ${MIN_TEXT})` };
         } else {
           const textNoWs = text.replace(/\s+/g, '');
-          const missing = quotes.filter((q) => {
+          const missing = quotes.filter(({ q }) => {
             if (!isRowCitation(q)) return !stillPresent(text, textNoWs, norm(q));
             // A row citation survives if every checkable field is still there.
             return rowCitationFields(q).some(
@@ -471,7 +481,12 @@ async function main() {
           entry = { ...d, quotes: quotes.length,
             verdict: missing.length ? (allGone ? 'SUSPECT' : 'DRIFTED') : 'ok',
             kind: ex.kind, textChars: text.length, missingCount: missing.length,
-            missingSamples: missing.slice(0, 3).map((q) => q.slice(0, 150)) };
+            // Rules whose OWN citation is gone. Summing live_rules across
+            // drifted documents said "3,839 rules" when 5 quotes had moved on
+            // a document 259 rules happen to share — a number that reads as a
+            // catastrophe and describes a handful of rows.
+            rulesLosingCitation: missing.reduce((n, m) => n + Number(m.n || 0), 0),
+            missingSamples: missing.slice(0, 3).map((m) => String(m.q).slice(0, 150)) };
         }
       }
       delete entry.quotes_raw;
@@ -496,12 +511,13 @@ async function main() {
   const by = (v) => report.filter((r) => r.verdict === v);
   const drifted = by('DRIFTED');
   const suspect = by('SUSPECT');
-  const rulesAffected = drifted.reduce((n, d) => n + Number(d.live_rules), 0);
+  const rulesAffected = drifted.reduce((n, d) => n + Number(d.rulesLosingCitation || 0), 0);
+  const quotesLost = drifted.reduce((n, d) => n + Number(d.missingCount || 0), 0);
 
   console.log('');
   console.log('='.repeat(78));
   console.log(` ok ............ ${String(by('ok').length).padStart(3)} document(s)`);
-  console.log(` DRIFTED ....... ${String(drifted.length).padStart(3)} document(s)   ${rulesAffected} live rule(s) cite them`);
+  console.log(` DRIFTED ....... ${String(drifted.length).padStart(3)} document(s)   ${quotesLost} quote(s) gone, cited by ${rulesAffected} live rule(s)`);
   console.log(` SUSPECT ....... ${String(suspect.length).padStart(3)} document(s)   ${suspect.reduce((n, d) => n + Number(d.live_rules), 0)} rules — EVERY quote gone, so probably not the same document (NOT drift)`);
   console.log(` unreadable .... ${String(by('unreadable').length).padStart(3)} document(s)   (format not parseable here — NOT drift)`);
   console.log(` unreachable ... ${String(by('unreachable').length).padStart(3)} document(s)   (fetch failed — NOT drift)`);
