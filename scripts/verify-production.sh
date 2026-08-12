@@ -368,6 +368,48 @@ check "Ohio Appendix DD absent/discontinued codes answered by all 5 plans" 20 \
          WHERE r.state='OH' AND r.attribute='covered' AND r.product_line='medicaid_mco'
            AND r.code IN ('99343','G0179','G0180','G0181') AND $SERVED")"
 
+# G0318, prolonged home E/M, IS listed on Appendix DD — status code 1, with a
+# non-facility rate — so unlike the four above it must come back covered, on
+# every Ohio Medicaid plan. It is called out separately because it is the code
+# the reverted seed did the most damage to: it was downgraded to 'unknown' on
+# all five plans and served that way for two deploys.
+check "Ohio Medicaid plans answering G0318 as covered" 5 \
+  "$(Q "SELECT count(*) FROM payer_rule r
+         WHERE r.state='OH' AND r.attribute='covered' AND r.product_line='medicaid_mco'
+           AND r.code='G0318' AND coverage_status='covered' AND $SERVED")"
+
+# ---------------------------------------------------------------------------
+# A REPAIR MUST NOT LEAVE A HOLE WHERE IT FOUND A WRONG ANSWER
+#
+# migration_0074_purge_journal records every rule removed when the reverted
+# Ohio seed was purged. Each of those rows occupied a key that was being
+# answered — wrongly, but answered. After the purge, the repair, the seeds and
+# the maintenance scripts have all run, every one of those keys must answer
+# again. Silence is not an improvement on a wrong answer: the picker simply
+# shows nothing and the biller learns nothing.
+#
+# This is generic on purpose. The specific failure it was written for is that
+# 0074 revived whatever rule was newest without checking the author, picked a
+# hand-typed rule for UnitedHealthcare Community Plan Ohio on G0318, and
+# expire-ungrounded-rules then withdrew it — correctly — leaving that key dark
+# while the real determination sat expired underneath. Every other check in
+# this file passed on that deploy, including the two added directly above it.
+check "keys emptied by the 0074 purge that still answer nothing" 0 \
+  "$(Q "SELECT CASE WHEN to_regclass('public.migration_0074_purge_journal') IS NULL THEN 0 ELSE (
+           SELECT count(*) FROM (
+             SELECT DISTINCT (rule_row->>'payer_id')::uuid AS payer_id, rule_row->>'state' AS state,
+                    rule_row->>'code' AS code, rule_row->>'attribute' AS attribute,
+                    rule_row->>'product_line' AS product_line
+               FROM migration_0074_purge_journal) k
+            WHERE NOT EXISTS (
+              SELECT 1 FROM payer_rule live
+               WHERE live.payer_id IS NOT DISTINCT FROM k.payer_id
+                 AND live.state IS NOT DISTINCT FROM k.state
+                 AND live.code = k.code AND live.attribute = k.attribute
+                 AND live.product_line IS NOT DISTINCT FROM k.product_line
+                 AND live.effective_date <= $DOS_SQL
+                 AND (live.expiration_date IS NULL OR live.expiration_date > $DOS_SQL))) END")"
+
 # Every extracted rule must cite a verbatim sentence — that is the
 # library's core discipline and what a biller uses in an appeal.
 check "extracted live rules with no source_quote" 0 \
