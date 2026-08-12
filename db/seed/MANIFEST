@@ -107,3 +107,9 @@ payer-rules-oh-appendixdd-humana.sql
 # covered services are defined by the individual policy. Same treatment as
 # Aetna and Anthem.
 payer-rules-coverage-basis-medmutual.sql
+
+# Codes Ohio DELETED from Appendix DD that our rules still cited — G0318
+# among them, marked covered on a row that no longer exists. Re-grounded as
+# unknown with an adjacent-code bracket proving the deletion. Must run after
+# the fan-outs it corrects.
+payer-rules-oh-appendixdd-delisted.sql
