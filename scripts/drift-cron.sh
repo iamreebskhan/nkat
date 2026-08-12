@@ -20,10 +20,17 @@
 #
 #  INSTALL (as root on the VPS)
 #    crontab -e   and add:
-#      17 6 * * 1  /opt/pallio/app/scripts/drift-cron.sh
+#      17 6 * * 1  /bin/bash /opt/pallio/app/scripts/drift-cron.sh
 #
 #    Monday 06:17. The odd minute is deliberate: payer sites see a lot of
 #    traffic on the hour, and we fetch ~57 documents.
+#
+#    INVOKE IT THROUGH bash, and do NOT chmod +x this file. Every script in
+#    this repo is committed non-executable and run as `bash scripts/x.sh` —
+#    deploy.sh included. Setting the bit on the server makes git see a
+#    permanent mode change (100644 -> 100755), and deploy.sh refuses to run
+#    against a dirty working tree, so one chmod blocks every future deploy.
+#    That is not hypothetical; it is why this paragraph exists.
 #
 #  Reports are kept in /var/log/pallio/ so a drift can be compared against the
 #  previous week rather than argued about from memory.
