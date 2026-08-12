@@ -122,6 +122,25 @@ const dehyphenations = (q) => {
 };
 
 /**
+ * Whether a quote still appears, ignoring differences that are artefacts of
+ * how we turned the document into text rather than changes to what it says.
+ *
+ * Stripping tags replaces each one with a SPACE, so text that was adjacent
+ * across a tag boundary gains whitespace the quote never had. The Federal
+ * Register writes "(<span>3D</span> contour", which becomes "( 3d contour"
+ * while the quote says "(3d contour". That single space failed 40 quotes on a
+ * page that still contains every word of them — the longest matching prefix
+ * was 7 characters, and it stopped exactly at the parenthesis.
+ *
+ * Removing the tag instead of spacing it would merge words across block
+ * boundaries, which is worse. So a whitespace-free comparison is the last
+ * resort: every other character must still match, in order, and quotes are
+ * long (>15 chars, usually >100), which makes a spurious hit implausible.
+ */
+const stillPresent = (text, textNoWs, q) =>
+  dehyphenations(q).some((c) => text.includes(c) || textNoWs.includes(c.replace(/\s+/g, '')));
+
+/**
  * Fee-schedule rules do not cite a sentence, because a spreadsheet has none.
  * They cite a ROW, transcribed as
  *   <document>, "<tab>" tab \u2014 99349 | Home visit, established patient | ... | payment 70.13
@@ -160,6 +179,14 @@ function rowCitationFields(quote) {
 const htmlToText = (h) => h
   .replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
   .replace(/<[^>]+>/g, ' ')
+  // NUMERIC entities must be decoded, not dropped. The Federal Register's HTML
+  // is full of &#8201; (thin space) and &#8212; (em dash) inside the very
+  // sentences our quotes come from. Leaving them as literal "&#8201;" text
+  // broke 40 quotes mid-string on a page that genuinely still contains them —
+  // 0944T and "image-guided" are both present, they just had an undecoded
+  // entity sitting between the words.
+  .replace(/&#(\d+);/g, (_, d) => { try { return String.fromCodePoint(Number(d)); } catch { return ' '; } })
+  .replace(/&#x([0-9a-f]+);/gi, (_, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return ' '; } })
   .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#39;|&rsquo;|&lsquo;/g, "'")
   .replace(/&quot;|&ldquo;|&rdquo;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&[a-z]+;/gi, ' ');
@@ -379,14 +406,11 @@ async function main() {
           entry = { ...d, quotes: quotes.length, verdict: 'unreadable',
             detail: ex.why || `${ex.kind}: only ${text.length} chars of text extracted (needs ${MIN_TEXT})` };
         } else {
+          const textNoWs = text.replace(/\s+/g, '');
           const missing = quotes.filter((q) => {
-            if (!isRowCitation(q)) {
-              return !dehyphenations(norm(q)).some((cand) => text.includes(cand));
-            }
+            if (!isRowCitation(q)) return !stillPresent(text, textNoWs, norm(q));
             // A row citation survives if every checkable field is still there.
-            return rowCitationFields(q).some(
-              (f) => !dehyphenations(norm(f)).some((cand) => text.includes(cand)),
-            );
+            return rowCitationFields(q).some((f) => !stillPresent(text, textNoWs, norm(f)));
           });
           // EVERY quote gone is a different signal from SOME quotes gone.
           // A payer that revises a page drops a few sentences; a payer does
