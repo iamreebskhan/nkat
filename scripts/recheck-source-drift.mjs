@@ -184,12 +184,22 @@ function rowCitationFields(quote) {
       const m = f.split(/[\u2014\u2013]\s*/);
       f = m[m.length - 1].trim();
     }
-    if (/^(status|payment)\b/i.test(f)) {
-      const num = f.match(/[\d]+\.[\d]{2}|\b\d+\b/);
-      if (num) checkable.push(num[0]);
-      continue;
-    }
     if (/^\d{2}\/\d{2}\/\d{4}$/.test(f)) continue; // effective dates vary by tab
+
+    // A field that carries a NUMBER is checked on the number, not on the
+    // label wrapped around it. "non-facility total RVU 0.32" and "payment
+    // 70.13" are how we transcribe a cell; the document holds a columnar
+    // 0.32 with the label in a header row far away, so demanding the whole
+    // phrase can only fail. That is what put all 307 quotes of the CMS RVU
+    // file — 921 rules — in the failure column while the file plainly still
+    // contains 36415 and "Coll venous bld venipuncture".
+    const nums = f.match(/\d+\.\d+|\b\d{2,}\b/g);
+    if (nums) { checkable.push(...nums); continue; }
+
+    // No number and a bare label ("status code X") is unverifiable prose, not
+    // evidence — the value it labels is elsewhere in the row.
+    if (/^(status|payment|code|tab)\b/i.test(f)) continue;
+
     if (f.length >= 3) checkable.push(f);
   }
   return checkable;
