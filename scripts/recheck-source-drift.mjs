@@ -118,6 +118,18 @@ const dehyphenations = (q) => {
     out.add(q.replace(/([a-z])- ([a-z])/g, '$1-$2')); // hyphen was real
     out.add(q.replace(/([a-z])- ([a-z])/g, '$1$2'));  // hyphen was a wrap
   }
+  // A quote may open with a composed LABEL before the verbatim text:
+  //   "Rule SC157 — We limit reimbursement of charges for home visit E/M..."
+  // The document carries the sentence, but the label sits several lines
+  // above it under other fields (Rule number / Applies to / Category /
+  // Topic), so the two are never contiguous. Only a short leading label is
+  // stripped — a dash later in the sentence is part of the prose.
+  for (const c of [...out]) {
+    // A plain hyphen, because norm() has already folded en/em dashes to "-"
+    // by the time this runs. Matching [–—] here found nothing.
+    const m = /^.{0,80}?\s-\s(.+)$/s.exec(c);
+    if (m) out.add(m[1]);
+  }
   return [...out];
 };
 
@@ -137,8 +149,23 @@ const dehyphenations = (q) => {
  * resort: every other character must still match, in order, and quotes are
  * long (>15 chars, usually >100), which makes a spurious hit implausible.
  */
-const stillPresent = (text, textNoWs, q) =>
-  dehyphenations(q).some((c) => text.includes(c) || textNoWs.includes(c.replace(/\s+/g, '')));
+/** Only letters and digits — the last-resort comparison. */
+const alnum = (s) => s.replace(/[^a-z0-9]/g, '');
+
+const stillPresent = (text, textNoWs, q, textAlnum) =>
+  dehyphenations(q).some((c) => text.includes(c)
+    || textNoWs.includes(c.replace(/\s+/g, ''))
+    // Punctuation-blind, for characters pdftotext could not map. Humana's SC
+    // code-editing rules extract as "99341 � 99350" and "� 02 � Telehealth":
+    // the en-dashes and bullets arrive as U+FFFD, which the normaliser strips
+    // as list markers, while the quote's real en-dash becomes "-". Same
+    // sentence, never equal. The document plainly still carries Rule SC157
+    // verbatim — the place-of-service limit on all eight home-visit codes,
+    // which is the one drifted quote that touched a code a biller uses.
+    //
+    // Safe for the same reason the whitespace form is: every letter and digit
+    // must still appear in order, and these quotes run past 100 characters.
+    || (textAlnum && textAlnum.includes(alnum(c))));
 
 /**
  * A money field from a fee schedule needs comparing as a NUMBER, not a string.
@@ -456,9 +483,13 @@ async function main() {
             detail: ex.why || `${ex.kind}: only ${text.length} chars of text extracted (needs ${MIN_TEXT})` };
         } else {
           const textNoWs = text.replace(/\s+/g, '');
+          const textAlnum = alnum(text);
           const missing = quotes.filter(({ q }) => {
-            if (!isRowCitation(q)) return !stillPresent(text, textNoWs, norm(q));
+            if (!isRowCitation(q)) return !stillPresent(text, textNoWs, norm(q), textAlnum);
             // A row citation survives if every checkable field is still there.
+            // Row FIELDS are matched without the punctuation-blind fallback:
+            // a bare "2.70" stripped to "270" would match far too easily in a
+            // document full of numbers. Prose quotes are long enough to be safe.
             return rowCitationFields(q).some(
               (f) => !numericForms(norm(f)).some((v) => stillPresent(text, textNoWs, v)),
             );
