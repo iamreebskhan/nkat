@@ -141,6 +141,25 @@ const stillPresent = (text, textNoWs, q) =>
   dehyphenations(q).some((c) => text.includes(c) || textNoWs.includes(c.replace(/\s+/g, '')));
 
 /**
+ * A money field from a fee schedule needs comparing as a NUMBER, not a string.
+ * Excel stores 104.10 as the cell value 104.1, so a row citation that reads
+ * "payment 104.10" fails a substring test against a workbook that plainly
+ * still says 104.1 — the same amount, one trailing zero apart.
+ *
+ * That produced 21 "Ohio repriced these codes" findings, including 99344 and
+ * 99347, which are home-visit codes a biller would act on. Ohio had repriced
+ * nothing. Both spellings are tried.
+ */
+const numericForms = (v) => {
+  const out = new Set([v]);
+  if (/^\d+\.\d+$/.test(v)) {
+    out.add(String(Number(v)));            // 104.10 -> 104.1
+    out.add(Number(v).toFixed(2));         // 104.1  -> 104.10
+  }
+  return [...out];
+};
+
+/**
  * Fee-schedule rules do not cite a sentence, because a spreadsheet has none.
  * They cite a ROW, transcribed as
  *   <document>, "<tab>" tab \u2014 99349 | Home visit, established patient | ... | payment 70.13
@@ -410,7 +429,9 @@ async function main() {
           const missing = quotes.filter((q) => {
             if (!isRowCitation(q)) return !stillPresent(text, textNoWs, norm(q));
             // A row citation survives if every checkable field is still there.
-            return rowCitationFields(q).some((f) => !stillPresent(text, textNoWs, norm(f)));
+            return rowCitationFields(q).some(
+              (f) => !numericForms(norm(f)).some((v) => stillPresent(text, textNoWs, v)),
+            );
           });
           // EVERY quote gone is a different signal from SOME quotes gone.
           // A payer that revises a page drops a few sentences; a payer does
