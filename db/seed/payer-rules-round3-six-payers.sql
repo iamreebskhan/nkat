@@ -48,6 +48,23 @@
 -- 620 rules over 620 keys, 11 source documents.
 -- Idempotent: deterministic UUIDs + ON CONFLICT (id) DO UPDATE.
 
+-- AETNA DOCUMENT URLS
+-- Aetna MOVED both of its cited documents; it did not withdraw them. The old
+-- paths return 404 to every client:
+--   .../health-care-professionals/precert-lists/participating-provider-precertification-list.pdf
+--   .../health-care-professionals/office-manual-health-care-professionals.pdf
+-- The current ones live under aetnacom/ and the precert list is now
+-- year-stamped (2026_Precert_List.pdf), which makes it an annual artifact
+-- worth re-fetching each January rather than a stable URL.
+--
+-- All 3 distinct quotes from the two documents were re-verified verbatim
+-- against the NEW files before this change, so the rules stay grounded --
+-- 50 rules that had been citing a dead link.
+--
+-- Host is es.aetna.com: www.aetna.com returns 403 to automated clients and
+-- es serves the identical English asset. A browser User-Agent is required;
+-- a default curl UA gets 405 from the WAF.
+
 BEGIN;
 
 INSERT INTO source_document (id, payer_id, url, document_type, title, retrieved_at, content_hash, cms_license_token_used, source_metadata, extracted_at)
@@ -61,8 +78,8 @@ VALUES
   ('f1000000-0009-4000-8000-00000000a009'::uuid, 'a0000000-0000-4000-8000-000000000305'::uuid, 'https://www.caresource.com/oh/providers/tools-resources/provider-manual/mycare/', 'provider_manual', 'CareSource Ohio — MyCare / Next Generation MyCare Provider Manual (2026, dual-eligible line)', now(), 'sha256:102360620ea48d3e347ff93aca8c99ae5e4b56ae692c2b10e736582f110056ac', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
   ('f1000000-000a-4000-8000-00000000a00a'::uuid, 'a0000000-0000-4000-8000-000000000202'::uuid, 'https://www.selecthealthofsc.com/provider/prior-authorization.aspx', 'medical_policy', 'First Choice by Select Health of South Carolina — Prior Authorization Information (2025)', now(), 'sha256:19645d0e4040b127467a25623ba3703ca4846f82f0177f26e7f52169e43846c2', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
   ('f1000000-000b-4000-8000-00000000a00b'::uuid, 'a0000000-0000-4000-8000-000000000202'::uuid, 'https://www.selecthealthofsc.com/provider/claims.aspx', 'provider_manual', 'First Choice by Select Health of South Carolina — Claim Filing Manual', now(), 'sha256:65cf6208f7c0be3c90d4461f4af77ffb5c708eda8c215e58ccafcfd1ea4ca238', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
-  ('f1000000-000c-4000-8000-00000000a00c'::uuid, 'a0000000-0000-4000-8000-000000000301'::uuid, 'https://www.aetna.com/content/dam/aetna/pdfs/health-care-professionals/precert-lists/participating-provider-precertification-list.pdf', 'medical_policy', 'Aetna — Participating Provider Precertification List (updated August 1, 2026)', now(), 'sha256:2d186a716ea63980f5e3a4a3681f2ce5786f0b6b0bf6232d5df3f918c1158764', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
-  ('f1000000-000e-4000-8000-00000000a00e'::uuid, 'a0000000-0000-4000-8000-000000000301'::uuid, 'https://www.aetna.com/content/dam/aetna/pdfs/health-care-professionals/office-manual-health-care-professionals.pdf', 'provider_manual', 'Aetna — Office Manual for Health Care Professionals (23.20.801.1 L, 12/19)', now(), 'sha256:9117b02cb8a740ef2bd5a2feb195d333bcd25cf7a190d46cc0308870ab6f5403', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now())
+  ('f1000000-000c-4000-8000-00000000a00c'::uuid, 'a0000000-0000-4000-8000-000000000301'::uuid, 'https://es.aetna.com/content/dam/aetna/pdfs/aetnacom/healthcare-professionals/2026_Precert_List.pdf', 'medical_policy', 'Aetna — Participating Provider Precertification List (updated August 1, 2026)', now(), 'sha256:2d186a716ea63980f5e3a4a3681f2ce5786f0b6b0bf6232d5df3f918c1158764', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
+  ('f1000000-000e-4000-8000-00000000a00e'::uuid, 'a0000000-0000-4000-8000-000000000301'::uuid, 'https://es.aetna.com/content/dam/aetna/pdfs/aetnacom/health-care-professionals/office_manual_hcp.pdf', 'provider_manual', 'Aetna — Office Manual for Health Care Professionals (23.20.801.1 L, 12/19)', now(), 'sha256:9117b02cb8a740ef2bd5a2feb195d333bcd25cf7a190d46cc0308870ab6f5403', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now())
 ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, url = EXCLUDED.url,
   document_type = EXCLUDED.document_type, content_hash = EXCLUDED.content_hash, extracted_at = now();
 
