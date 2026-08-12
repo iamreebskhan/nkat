@@ -92,3 +92,8 @@ payer-rules-round3-six-payers.sql
 # determination, so coverage is plan-specific. Last, because it is the
 # newest reading and must win on any key it shares.
 payer-rules-coverage-basis-aetna-anthem.sql
+
+# Eleven care-management codes the SC Medicaid fee schedule does not list
+# at all. Each absence proved by an adjacent-row bracket, stored as
+# coverage_status=unknown — absent is not denied.
+payer-rules-sc-carecoord-absent.sql
