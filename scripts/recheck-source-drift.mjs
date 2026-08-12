@@ -367,7 +367,23 @@ async function main() {
             // A row citation survives if every checkable field is still there.
             return rowCitationFields(q).some((f) => !text.includes(norm(f)));
           });
-          entry = { ...d, quotes: quotes.length, verdict: missing.length ? 'DRIFTED' : 'ok',
+          // EVERY quote gone is a different signal from SOME quotes gone.
+          // A payer that revises a page drops a few sentences; a payer does
+          // not delete all 307 at once. When nothing matches, the likelier
+          // explanation is that this is not the same document — a redirect to
+          // a landing or login page, a different rendering (our quotes came
+          // from a PDF, the URL now serves HTML), or the wrong member of a
+          // zip. Calling that DRIFTED put 1,401 correct rules in the failure
+          // column on the first corrected run, which is the same crying-wolf
+          // failure as counting spreadsheet rows as sentences.
+          //
+          // So it is reported as SUSPECT: the check could not be performed,
+          // like unreadable and unreachable, rather than a finding against
+          // the data. Two or fewer quotes stays DRIFTED — losing both of two
+          // is ordinary, and there is no pattern to infer from.
+          const allGone = missing.length === quotes.length && quotes.length >= 3;
+          entry = { ...d, quotes: quotes.length,
+            verdict: missing.length ? (allGone ? 'SUSPECT' : 'DRIFTED') : 'ok',
             kind: ex.kind, textChars: text.length, missingCount: missing.length,
             missingSamples: missing.slice(0, 3).map((q) => q.slice(0, 150)) };
         }
@@ -376,9 +392,10 @@ async function main() {
       report.push(entry);
       if (!QUIET) {
         const tag = entry.verdict === 'ok' ? 'ok        '
-          : entry.verdict === 'DRIFTED' ? 'DRIFTED   ' : `${entry.verdict.padEnd(10)}`;
+          : entry.verdict === 'DRIFTED' ? 'DRIFTED   '
+          : entry.verdict === 'SUSPECT' ? 'SUSPECT   ' : `${entry.verdict.padEnd(10)}`;
         console.log(`  ${tag} ${String(entry.live_rules).padStart(5)} rules  ${entry.url.slice(0, 80)}`);
-        if (entry.verdict === 'DRIFTED') {
+        if (entry.verdict === 'DRIFTED' || entry.verdict === 'SUSPECT') {
           console.log(`             ${entry.missingCount} of ${entry.quotes} distinct quote(s) no longer present — ${entry.payer}`);
           for (const s of entry.missingSamples) console.log(`               missing: "${s}"`);
         } else if (entry.verdict !== 'ok') {
@@ -392,12 +409,14 @@ async function main() {
 
   const by = (v) => report.filter((r) => r.verdict === v);
   const drifted = by('DRIFTED');
+  const suspect = by('SUSPECT');
   const rulesAffected = drifted.reduce((n, d) => n + Number(d.live_rules), 0);
 
   console.log('');
   console.log('='.repeat(78));
   console.log(` ok ............ ${String(by('ok').length).padStart(3)} document(s)`);
   console.log(` DRIFTED ....... ${String(drifted.length).padStart(3)} document(s)   ${rulesAffected} live rule(s) cite them`);
+  console.log(` SUSPECT ....... ${String(suspect.length).padStart(3)} document(s)   ${suspect.reduce((n, d) => n + Number(d.live_rules), 0)} rules — EVERY quote gone, so probably not the same document (NOT drift)`);
   console.log(` unreadable .... ${String(by('unreadable').length).padStart(3)} document(s)   (format not parseable here — NOT drift)`);
   console.log(` unreachable ... ${String(by('unreachable').length).padStart(3)} document(s)   (fetch failed — NOT drift)`);
   console.log('='.repeat(78));
