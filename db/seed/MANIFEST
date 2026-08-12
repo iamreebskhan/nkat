@@ -118,3 +118,10 @@ payer-rules-nc-carecoord-absent.sql
 # management, G0181 home health supervision). Established with the corrected
 # xlsx parser; the earlier delisted seed built on the broken one is gone.
 payer-rules-oh-carecoord-absent.sql
+
+# Appendix DD determinations for the four Ohio Medicaid plans that never had
+# them (Buckeye, CareSource, Molina, UHC Community Plan): G0179/G0180 denied by
+# the blanket exclusion, 99343 discontinued since 2023. Humana is excluded —
+# it already carries these from its own seed, and two seeds on one key would
+# put two live rules on it.
+payer-rules-oh-appendixdd-mco4.sql

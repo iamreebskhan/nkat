@@ -95,7 +95,10 @@ UPDATE payer_rule pr
 
 DO $$
 DECLARE
-  n_purged INT; n_revived INT; n_dupes INT; n_unanswered INT; n_left INT;
+  n_purged INT; n_revived INT; n_dupes INT; n_left INT;
+  n_unanswered INT := 0;
+  n_empty INT := 0;
+  r RECORD;
 BEGIN
   SELECT count(*) INTO n_purged  FROM _bad;
   SELECT count(*) INTO n_revived FROM _revive;
@@ -117,25 +120,61 @@ BEGIN
     RAISE EXCEPTION '0074: % key(s) now have more than one live rule', n_dupes;
   END IF;
 
-  -- Every key the bad rows occupied had a real determination underneath.
-  -- Leaving one unanswered would trade a wrong answer for no answer.
-  SELECT count(*) INTO n_unanswered
-    FROM _keys k
-   WHERE NOT EXISTS (
-     SELECT 1 FROM payer_rule live
-      WHERE live.payer_id IS NOT DISTINCT FROM k.payer_id
-        AND live.state    IS NOT DISTINCT FROM k.state
-        AND live.code = k.code
-        AND live.attribute = k.attribute
-        AND live.product_line IS NOT DISTINCT FROM k.product_line
-        AND live.effective_date <= CURRENT_DATE
-        AND (live.expiration_date IS NULL OR live.expiration_date > CURRENT_DATE));
+  -- A key that still HAS a rule sitting under it must end up answering one.
+  -- If a candidate exists and nothing is live, the revive step above failed
+  -- and the purge has traded a wrong answer for no answer. That is a bug and
+  -- the deploy must stop.
+  --
+  -- A key with NO candidate at all is a different thing and is not an error.
+  -- On production there are eight: G0179 and G0180 across Buckeye, CareSource,
+  -- Molina and UnitedHealthcare Community Plan. The rules that used to answer
+  -- them were never produced by any seed — they came from an uncommitted
+  -- extraction run and existed only in a developer database, which is why
+  -- migration 0073 restored 8 rows locally and 0 here. Nothing survives to
+  -- revive, and db/seed/payer-rules-oh-appendixdd-mco4.sql supplies them
+  -- properly at deploy step 6, one step after this migration.
+  --
+  -- The distinction is the whole assertion, so it names every key it finds.
+  -- The first version of this file counted them and named none: it reported
+  -- "8 key(s) left with no live rule" on production, passed locally, and gave
+  -- no way to tell a broken revive from a legitimately empty key. Diagnosing
+  -- that cost a deploy and a round trip.
+  FOR r IN
+    SELECT p.name AS payer, k.code, k.attribute, k.product_line,
+           (SELECT count(*) FROM payer_rule o
+             WHERE o.payer_id IS NOT DISTINCT FROM k.payer_id
+               AND o.state    IS NOT DISTINCT FROM k.state
+               AND o.code = k.code AND o.attribute = k.attribute
+               AND o.product_line IS NOT DISTINCT FROM k.product_line) AS candidates
+      FROM _keys k JOIN payer p ON p.id = k.payer_id
+     WHERE NOT EXISTS (
+       SELECT 1 FROM payer_rule live
+        WHERE live.payer_id IS NOT DISTINCT FROM k.payer_id
+          AND live.state    IS NOT DISTINCT FROM k.state
+          AND live.code = k.code
+          AND live.attribute = k.attribute
+          AND live.product_line IS NOT DISTINCT FROM k.product_line
+          AND live.effective_date <= CURRENT_DATE
+          AND (live.expiration_date IS NULL OR live.expiration_date > CURRENT_DATE))
+     ORDER BY 1, 2
+  LOOP
+    IF r.candidates > 0 THEN
+      n_unanswered := n_unanswered + 1;
+      RAISE NOTICE '0074: REVIVE FAILED  % / % / %  — % rule(s) exist on this key and none is live',
+        r.payer, r.code, coalesce(r.product_line, '-'), r.candidates;
+    ELSE
+      n_empty := n_empty + 1;
+      RAISE NOTICE '0074: no rule ever existed for % / % — a seed must supply it at step 6',
+        r.payer, r.code;
+    END IF;
+  END LOOP;
+
   IF n_unanswered <> 0 THEN
-    RAISE EXCEPTION '0074: % key(s) left with no live rule after the purge', n_unanswered;
+    RAISE EXCEPTION '0074: % key(s) lost a determination the purge should have restored — see the NOTICE lines above', n_unanswered;
   END IF;
 
   RAISE NOTICE '0074: % reverted-seed row(s) purged, % displaced rule(s) returned to service', n_purged, n_revived;
-  RAISE NOTICE '0074: keys with more than one live rule: 0   keys left unanswered: 0';
+  RAISE NOTICE '0074: keys with more than one live rule: 0   revives that failed: 0   keys awaiting a seed: %', n_empty;
 END $$;
 
 COMMIT;

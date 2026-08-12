@@ -294,6 +294,80 @@ check "home-health-agency rule wrongly on a physician home visit" 0 \
 check "retired code 99343 marked COVERED" 0 \
   "$(Q "SELECT count(*) FROM payer_rule WHERE code='99343' AND $SERVED AND coverage_status='covered'")"
 
+# ---------------------------------------------------------------------------
+# A LIVE RULE THAT NO SEED PRODUCES IS NOT REALLY IN THE LIBRARY
+#
+# db/seed/MANIFEST is what builds a database. A rule whose created_by appears
+# in no seed file cannot be rebuilt: production, which is built by running the
+# manifest, will not have it, and replay-from-scratch will not reproduce it.
+# It exists only in whichever database the ad-hoc run happened to touch.
+#
+# This is not hypothetical. 'extract:state-fee-schedule-2026-08' put 113 rows
+# in one developer database, 12 of them live and answering — 99343, G0179 and
+# G0180 for four Ohio Medicaid plans. Locally the library answered all three.
+# Production had never heard of them. Every local check that read those cells
+# passed on data that existed nowhere else, and reported coverage the product
+# did not have. Nothing here caught it; it surfaced only because a migration
+# reported 8 rows repaired locally and 0 on production.
+#
+# Rules are compared by AUTHOR rather than by row because a seed's rows are
+# generated, so the author string is the only stable thing a file and a table
+# share.
+#
+# NOTE: this deliberately does NOT use Q(). Q ends in `tr -d '[:space:]'`,
+# which strips newlines as well as padding, so a multi-row result arrives as
+# one concatenated string. Q is for scalars only. The first version of this
+# check used it, read a single mangled line, matched the first author and
+# reported 0 orphans while an orphan was sitting in the table — a check that
+# silently could not fail. It is read row by row from psql directly instead.
+ORPHAN_ROWS=0
+ORPHAN_LIST=""
+while IFS='|' read -r _author _n; do
+  _author="$(printf '%s' "$_author" | tr -d '\r')"
+  _n="$(printf '%s' "$_n" | tr -cd '0-9')"
+  [ -z "$_author" ] && continue
+  [ -z "$_n" ] && continue
+  if ! grep -rqF -- "$_author" db/seed/ 2>/dev/null; then
+    ORPHAN_ROWS=$((ORPHAN_ROWS + _n))
+    ORPHAN_LIST="$ORPHAN_LIST
+    $_author  ($_n live rule(s))"
+  fi
+done <<EOF
+$($PSQL_BIN -X -tAq -d "$PG_DB" -c "SELECT created_by||'|'||count(*) FROM payer_rule WHERE $SERVED GROUP BY created_by ORDER BY 1" 2>/dev/null)
+EOF
+check "live rules no seed in db/seed/ can reproduce" 0 "$ORPHAN_ROWS"
+if [ "$ORPHAN_ROWS" != "0" ]; then
+  echo "        these authors appear in payer_rule but in no seed file:$ORPHAN_LIST"
+  echo "        commit the extraction as a seed, or withdraw the rows."
+fi
+
+# ---------------------------------------------------------------------------
+# ONE DOCUMENT MUST NOT PRODUCE TWO ANSWERS
+#
+# All five Ohio Medicaid plans are governed by the same state document,
+# Appendix DD to rule 5160-1-60. For a code the schedule does not list at all,
+# every plan must therefore reach the same conclusion. G0179, G0180 and G0181
+# are all absent from all eight tabs, and all three fall inside G0001-G9999 —
+# the first range named by the schedule's blanket exclusion note, which denies
+# unlisted codes in the ranges it enumerates. So all three are not_covered on
+# all five plans, and 99343 is not_covered because the schedule carries it with
+# status code 3, discontinued coverage, since 01/01/2023.
+#
+# The library once held G0179/G0180 as not_covered and G0181 as unknown, from
+# that same sentence, because the seed that wrote G0181 claimed these codes
+# "cannot be shown to fall inside" the enumerated ranges. G0181 falls inside
+# the first one. Nothing failed — both answers were well-formed and unique.
+# A disagreement between plans reading one document is the detectable symptom.
+check "Ohio Appendix DD absent/discontinued codes not uniformly denied" 0 \
+  "$(Q "SELECT count(*) FROM payer_rule r JOIN payer p ON p.id = r.payer_id
+         WHERE r.state='OH' AND r.attribute='covered' AND r.product_line='medicaid_mco'
+           AND r.code IN ('99343','G0179','G0180','G0181') AND $SERVED
+           AND r.coverage_status <> 'not_covered'")"
+check "Ohio Appendix DD absent/discontinued codes answered by all 5 plans" 20 \
+  "$(Q "SELECT count(*) FROM payer_rule r
+         WHERE r.state='OH' AND r.attribute='covered' AND r.product_line='medicaid_mco'
+           AND r.code IN ('99343','G0179','G0180','G0181') AND $SERVED")"
+
 # Every extracted rule must cite a verbatim sentence — that is the
 # library's core discipline and what a biller uses in an appeal.
 check "extracted live rules with no source_quote" 0 \
