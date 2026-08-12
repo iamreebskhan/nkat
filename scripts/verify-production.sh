@@ -379,6 +379,34 @@ check "Ohio Medicaid plans answering G0318 as covered" 5 \
            AND r.code='G0318' AND coverage_status='covered' AND $SERVED")"
 
 # ---------------------------------------------------------------------------
+# A BUNDLED CODE MUST NOT REACH THE PICKER UNANNOUNCED
+#
+# Fee schedules mark some codes bundled — Ohio's Appendix DD spells indicator
+# B as "BUNDLED PROCEDURE WITH NO SEPARATE PAYMENT", and Medicare's RVU file
+# uses status code B the same way. Billing one is not a denial; it pays zero.
+# 101 live rules are in that state and every one of them records it correctly
+# in its prose answer.
+#
+# The picker, though, shows the status badge and the citation, not the answer.
+# A bundled code appearing there would read 'varies' beside a quote ending
+# "| payment B", and the key that decodes B is in the payer's spreadsheet
+# rather than anywhere in this app.
+#
+# Today that cannot happen: payer_allowed_codes_v joins the `code` catalog,
+# which is the 112 in-scope codes, and all 14 bundled codes (99377, 99379,
+# 99380, 99358, 99359, 99366-99368, 99374, 99485, 99486, 99288, 36416, G0269)
+# sit outside it. So this is a tripwire, not a repair — it holds at 0 for free
+# and fires the day scope grows to include one, which is the day the picker
+# needs a way to say "bundled" out loud.
+#
+# I built that badge before measuring this, and it could never have rendered.
+# The measurement is the check.
+check "bundled codes reaching the picker with no way to say so" 0 \
+  "$(Q "SELECT count(*) FROM payer_allowed_codes_v
+         WHERE coverage_status = ANY(ARRAY['covered','varies'])
+           AND (source_quote ~ '\| payment B\s*\$' OR source_quote ~ 'status code B\y')")"
+
+# ---------------------------------------------------------------------------
 # A REPAIR MUST NOT LEAVE A HOLE WHERE IT FOUND A WRONG ANSWER
 #
 # migration_0074_purge_journal records every rule removed when the reverted

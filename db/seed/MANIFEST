@@ -125,3 +125,11 @@ payer-rules-oh-carecoord-absent.sql
 # it already carries these from its own seed, and two seeds on one key would
 # put two live rules on it.
 payer-rules-oh-appendixdd-mco4.sql
+
+# Aetna's telehealth position on all 25 in-scope codes, from its Telemedicine
+# and Direct Patient Contact Payment Policy: 13 codes on the policy's positive
+# eligible list ('varies' — the list is real but five years past its own review
+# date), 12 absent from the document ('unknown'). No frequency_limit rule: no
+# Aetna document publishes one, and inventing it is what got the hand-typed
+# rule withdrawn in the first place.
+payer-rules-aetna-telehealth.sql
