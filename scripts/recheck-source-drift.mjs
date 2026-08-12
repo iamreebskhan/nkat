@@ -96,7 +96,49 @@ const norm = (s) => String(s)
   .replace(/[\u2010-\u2015\u2212]/g, '-').replace(/[\u00a0\u2007\u202f]/g, ' ')
   .replace(/\s+/g, ' ')
   .replace(/(^|\s)[\u2022\u25cf\u25aa\u00b7\u2043\ufffd]+(?=\s)/g, '$1')
+  // PDF line wrapping splits words as "image- guided". Applied to BOTH the
+  // document and the quote, so it can only make a true match findable, never
+  // make a false one match: a real hyphenated term keeps its hyphen on both
+  // sides. Without this, quotes extracted from a PDF never match the same
+  // text served as HTML, and the report is a wall of false drift.
+  .replace(/([a-z])- ([a-z])/g, '$1$2')
   .replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * Fee-schedule rules do not cite a sentence, because a spreadsheet has none.
+ * They cite a ROW, transcribed as
+ *   <document>, "<tab>" tab \u2014 99349 | Home visit, established patient | ... | payment 70.13
+ * Treating that as a contiguous span marks every one of them missing: 1,036
+ * correct rules across four Ohio payers reported as drift on the first run.
+ *
+ * A row citation is instead verified field by field. The document must still
+ * contain the code, the descriptor and any money amount \u2014 which is exactly
+ * what would change if the payer altered or withdrew that row, so this still
+ * catches the thing worth catching.
+ */
+const isRowCitation = (q) => q.includes(' | ');
+
+function rowCitationFields(quote) {
+  const fields = quote.split('|').map((f) => f.trim()).filter(Boolean);
+  const checkable = [];
+  for (let i = 0; i < fields.length; i++) {
+    let f = fields[i];
+    // The first field carries the document title and tab before the code;
+    // keep only what follows the em/en dash separator.
+    if (i === 0) {
+      const m = f.split(/[\u2014\u2013]\s*/);
+      f = m[m.length - 1].trim();
+    }
+    if (/^(status|payment)\b/i.test(f)) {
+      const num = f.match(/[\d]+\.[\d]{2}|\b\d+\b/);
+      if (num) checkable.push(num[0]);
+      continue;
+    }
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(f)) continue; // effective dates vary by tab
+    if (f.length >= 3) checkable.push(f);
+  }
+  return checkable;
+}
 
 const htmlToText = (h) => h
   .replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -141,9 +183,22 @@ function unzipEntries(buf) {
   return out;
 }
 
-function xlsxToText(buf) {
+function xlsxToText(buf, depth = 0) {
   const entries = unzipEntries(buf);
   if (entries.size === 0) return '';
+
+  // A plain .zip distribution (CMS ships the RVU file this way — 921 live
+  // rules cite it) has no xl/ tree of its own; it CONTAINS the workbooks.
+  // Without this it extracted 0 characters and was written off as
+  // "unreadable", which is honest but leaves a sixth of the library unchecked.
+  if (![...entries.keys()].some((k) => k.startsWith('xl/')) && depth < 2) {
+    const parts = [];
+    for (const [name, data] of entries) {
+      if (/\.(xlsx|xlsm)$/i.test(name)) parts.push(xlsxToText(data, depth + 1));
+      else if (/\.(txt|csv)$/i.test(name)) parts.push(data.toString('utf8'));
+    }
+    return parts.join(' ');
+  }
   const strings = [];
   const ss = entries.get('xl/sharedStrings.xml');
   if (ss) {
@@ -155,12 +210,21 @@ function xlsxToText(buf) {
   for (const [name, data] of entries) {
     if (!/^xl\/worksheets\/.*\.xml$/.test(name)) continue;
     const xml = data.toString('utf8');
-    for (const c of xml.matchAll(/<c\b[^>]*?(?:\st="([^"]*)")?[^>]*>([\s\S]*?)<\/c>/g)) {
-      const type = c[1];
-      const v = /<v>([\s\S]*?)<\/v>/.exec(c[2]);
+    // The attribute block is captured whole and t= read out of it separately.
+    // A lazy optional group inline (…[^>]*?(?:\st="([^"]*)")?[^>]*…) does NOT
+    // reliably capture t when attributes come in the order r,s,t — so every
+    // shared-string cell fell through to the numeric branch and emitted its
+    // INDEX. The Ohio fee schedule extracted as "99349 5216 45292 2 70.13":
+    // codes and money present, not one word of any descriptor. Every
+    // text-based quote check against a spreadsheet was doomed to fail.
+    for (const c of xml.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+      const type = /\bt="([^"]*)"/.exec(c[1])?.[1];
+      const body = c[2];
+      const v = /<v>([\s\S]*?)<\/v>/.exec(body);
       if (type === 's' && v) parts.push(strings[Number(v[1])] ?? '');
-      else if (type === 'inlineStr') parts.push([...c[2].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => t[1]).join(''));
-      else if (v) parts.push(v[1]);
+      else if (type === 'inlineStr' || type === 'str') {
+        parts.push([...body.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => t[1]).join('') || (v ? v[1] : ''));
+      } else if (v) parts.push(v[1]);
     }
   }
   return parts.join(' ')
@@ -298,7 +362,11 @@ async function main() {
           entry = { ...d, quotes: quotes.length, verdict: 'unreadable',
             detail: ex.why || `${ex.kind}: only ${text.length} chars of text extracted (needs ${MIN_TEXT})` };
         } else {
-          const missing = quotes.filter((q) => !text.includes(norm(q)));
+          const missing = quotes.filter((q) => {
+            if (!isRowCitation(q)) return !text.includes(norm(q));
+            // A row citation survives if every checkable field is still there.
+            return rowCitationFields(q).some((f) => !text.includes(norm(f)));
+          });
           entry = { ...d, quotes: quotes.length, verdict: missing.length ? 'DRIFTED' : 'ok',
             kind: ex.kind, textChars: text.length, missingCount: missing.length,
             missingSamples: missing.slice(0, 3).map((q) => q.slice(0, 150)) };
