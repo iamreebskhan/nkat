@@ -108,8 +108,13 @@ payer-rules-oh-appendixdd-humana.sql
 # Aetna and Anthem.
 payer-rules-coverage-basis-medmutual.sql
 
-# Codes Ohio DELETED from Appendix DD that our rules still cited — G0318
-# among them, marked covered on a row that no longer exists. Re-grounded as
-# unknown with an adjacent-code bracket proving the deletion. Must run after
-# the fan-outs it corrects.
-payer-rules-oh-appendixdd-delisted.sql
+
+# Sixteen codes NC Medicaid does not list a rate for. Absence proved by
+# adjacent-code brackets; recorded as unknown because NC states a rate is
+# not a coverage determination, so the absence of one is not a denial.
+payer-rules-nc-carecoord-absent.sql
+
+# Five codes Appendix DD does not list (99424-99427 principal care
+# management, G0181 home health supervision). Established with the corrected
+# xlsx parser; the earlier delisted seed built on the broken one is gone.
+payer-rules-oh-carecoord-absent.sql
