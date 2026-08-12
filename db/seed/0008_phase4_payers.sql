@@ -15,6 +15,12 @@ INSERT INTO payer (id, name, parent_org, payer_type, states_served, policy_index
   ('a0000000-0000-4000-8000-000000000105', 'EBCI Tribal Option',              'EBCI',           'tribal',       '{NC}', 'https://ebci.com/tribal-option/',       'Eastern Band of Cherokee Indians')
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name, parent_org = EXCLUDED.parent_org,
+  -- payer_type was omitted here, which made it write-once: correcting a
+  -- misclassified payer in this file did nothing on any database that
+  -- already had the row. The app derives product_line from payer_type
+  -- (PAYER_TYPE_PRODUCT_LINE), so a wrong type silently serves the wrong
+  -- line of business rather than failing.
+  payer_type = EXCLUDED.payer_type,
   states_served = EXCLUDED.states_served, policy_index_url = EXCLUDED.policy_index_url,
   notes = EXCLUDED.notes;
 
@@ -27,6 +33,12 @@ INSERT INTO payer (id, name, parent_org, payer_type, states_served, policy_index
   ('a0000000-0000-4000-8000-000000000205', 'Molina Healthcare of South Carolina',    'Molina',      'medicaid_mco', '{SC}', 'https://www.molinahealthcare.com/sc')
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name, parent_org = EXCLUDED.parent_org,
+  -- payer_type was omitted here, which made it write-once: correcting a
+  -- misclassified payer in this file did nothing on any database that
+  -- already had the row. The app derives product_line from payer_type
+  -- (PAYER_TYPE_PRODUCT_LINE), so a wrong type silently serves the wrong
+  -- line of business rather than failing.
+  payer_type = EXCLUDED.payer_type,
   states_served = EXCLUDED.states_served, policy_index_url = EXCLUDED.policy_index_url;
 
 -- Ohio commercial + Medicaid payers per artifact research
@@ -38,7 +50,37 @@ INSERT INTO payer (id, name, parent_org, payer_type, states_served, policy_index
   ('a0000000-0000-4000-8000-000000000305', 'CareSource Ohio',                'CareSource',   'medicaid_mco', '{OH}',       'https://www.caresource.com/doc-category/oh-med-reimbursement-policy'),
   ('a0000000-0000-4000-8000-000000000306', 'Buckeye Health Plan',            'Centene',      'medicaid_mco', '{OH}',       'https://www.buckeyehealthplan.com/providers/resources/clinical-payment-policies'),
   ('a0000000-0000-4000-8000-000000000307', 'Molina Healthcare of Ohio',      'Molina',       'medicaid_mco', '{OH}',       'https://www.molinahealthcare.com/providers/oh/medicaid/policies'),
-  ('a0000000-0000-4000-8000-000000000308', 'Humana Ohio',                    'Humana',       'commercial',   '{OH}',       'https://mcp.humana.com/tad/tad_new/home.aspx')
+  -- Was filed as 'Humana Ohio' / commercial. It is neither. Every artifact
+  -- attached to this payer names the Medicaid product: the document is
+  -- titled "Humana Healthy Horizons Ohio - Provider Manual", its own scope
+  -- line reads "Humana Healthy Horizons in Ohio is a Medicaid product of
+  -- Humana Health Plan of Ohio, Inc.", and all 141 rules quote Healthy
+  -- Horizons policy. Only this row said commercial.
+  --
+  -- That mislabel served MEDICAID rules to anyone looking up a Humana
+  -- COMMERCIAL patient in Ohio, and left an actual Healthy Horizons member
+  -- with nothing, because the app derives product_line from payer_type
+  -- (PAYER_TYPE_PRODUCT_LINE in payer-rule.repository.ts). Humana also
+  -- exited Employer Group Commercial Medical entirely -- announced Feb
+  -- 2023, finalized H1 2025 per its 10-K -- so the commercial reading did
+  -- not describe a product that still exists.
+  --
+  -- Reclassified to match its sibling, 'Humana Healthy Horizons of South
+  -- Carolina' (medicaid_mco). The 141 rules move to product_line
+  -- 'medicaid_mco' in payer-rules-denial-attributes.sql, in the same
+  -- change -- payer_type and product_line have to move together or the
+  -- rules become invisible.
+  --
+  -- source_url points at the manual we actually hold and can fetch. The
+  -- old value, mcp.humana.com/tad, is Humana's commercial coverage portal
+  -- and returns 403 to every client.
+  ('a0000000-0000-4000-8000-000000000308', 'Humana Healthy Horizons of Ohio', 'Humana',      'medicaid_mco', '{OH}',       'https://assets.humana.com/is/content/humana/2025_OH_Provider_Manualpdf')
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name, parent_org = EXCLUDED.parent_org,
+  -- payer_type was omitted here, which made it write-once: correcting a
+  -- misclassified payer in this file did nothing on any database that
+  -- already had the row. The app derives product_line from payer_type
+  -- (PAYER_TYPE_PRODUCT_LINE), so a wrong type silently serves the wrong
+  -- line of business rather than failing.
+  payer_type = EXCLUDED.payer_type,
   states_served = EXCLUDED.states_served, policy_index_url = EXCLUDED.policy_index_url;

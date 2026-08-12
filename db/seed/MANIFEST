@@ -97,3 +97,8 @@ payer-rules-coverage-basis-aetna-anthem.sql
 # at all. Each absence proved by an adjacent-row bracket, stored as
 # coverage_status=unknown — absent is not denied.
 payer-rules-sc-carecoord-absent.sql
+
+# Ohio Appendix DD fanned out to the fifth Ohio Medicaid MCO. The
+# fee-schedules-full fan-out skipped it because the payer row wrongly said
+# commercial; 0008 now classifies it correctly, so it belongs in the set.
+payer-rules-oh-appendixdd-humana.sql
