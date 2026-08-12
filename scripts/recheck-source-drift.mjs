@@ -290,9 +290,19 @@ function xlsxToText(buf, depth = 0) {
     // INDEX. The Ohio fee schedule extracted as "99349 5216 45292 2 70.13":
     // codes and money present, not one word of any descriptor. Every
     // text-based quote check against a spreadsheet was doomed to fail.
-    for (const c of xml.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+    // An EMPTY cell is written self-closing: <c r="B10022" s="76"/>. A regex
+    // that only knows <c ...>…</c> cannot see it, so the empty cell swallows
+    // everything up to the NEXT closing tag — taking the following cell's
+    // <v> as its body while contributing its own attributes, which have no
+    // t="s". The shared-string index then leaks through as a bare number.
+    //
+    // NC's fee schedule reads "99349 | 6434 | 103.31" for exactly this
+    // reason: 6434 is the index of "Home Visit Est Patient". 128 of 160 NC
+    // quotes were reported missing from a file that contains them verbatim.
+    // Every workbook with blank cells — which is most of them — was affected.
+    for (const c of xml.matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
       const type = /\bt="([^"]*)"/.exec(c[1])?.[1];
-      const body = c[2];
+      const body = c[2] ?? '';
       const v = /<v>([\s\S]*?)<\/v>/.exec(body);
       if (type === 's' && v) parts.push(strings[Number(v[1])] ?? '');
       else if (type === 'inlineStr' || type === 'str') {
