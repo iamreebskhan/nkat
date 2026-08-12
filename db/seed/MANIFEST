@@ -102,3 +102,8 @@ payer-rules-sc-carecoord-absent.sql
 # fee-schedules-full fan-out skipped it because the payer row wrongly said
 # commercial; 0008 now classifies it correctly, so it belongs in the set.
 payer-rules-oh-appendixdd-humana.sql
+
+# Medical Mutual publishes no per-code coverage — its own manual says
+# covered services are defined by the individual policy. Same treatment as
+# Aetna and Anthem.
+payer-rules-coverage-basis-medmutual.sql
