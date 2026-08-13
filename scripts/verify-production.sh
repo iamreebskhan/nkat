@@ -407,6 +407,35 @@ check "bundled codes reaching the picker with no way to say so" 0 \
            AND (source_quote ~ '\| payment B\s*\$' OR source_quote ~ 'status code B\y')")"
 
 # ---------------------------------------------------------------------------
+# WHAT WAS COPIED OUT OF THE LIBRARY IS PART OF THE LIBRARY
+#
+# Every other check in this file reads payer_rule. org_rulebook_row does not:
+# it holds a tenant's OWN copy of a rule — rule_value, coverage_status,
+# confidence and source_quote — with only a pointer back to where it came
+# from. Withdrawing a payer_rule therefore changes nothing about what that org
+# sees. A rule can be found fabricated, expired, purged and guarded against,
+# and the copy a practice actually reads carries on unchanged.
+#
+# That is not hypothetical. Seven hand-typed rules authored by 'test@pallio.io'
+# were withdrawn from service days ago for being uncitable — well formed,
+# confident, and untrue. Their copies sat in 185 rulebook rows across 28 orgs,
+# last touched 13 July 2026, and nothing noticed until a migration tried to
+# delete the sources and a foreign key stopped it. Four separate fixes to the
+# payer_rule layer had all missed this, because none of them asked what had
+# already been copied out.
+#
+# The source rule being EXPIRED is not the defect — a rulebook is a snapshot
+# and its source is superseded in the normal course. The defect is a rulebook
+# row descended from a rule no pipeline ever produced.
+check "tenant rulebook rows sourced from a hand-typed rule" 0 \
+  "$(Q "SELECT count(*) FROM org_rulebook_row r
+         WHERE r.source_payer_rule_id IS NOT NULL
+           AND EXISTS (SELECT 1 FROM payer_rule pr
+                        WHERE pr.id = r.source_payer_rule_id
+                          AND pr.created_by NOT LIKE 'extract:%'
+                          AND pr.created_by NOT LIKE 'crawler:%')")"
+
+# ---------------------------------------------------------------------------
 # A REPAIR MUST NOT LEAVE A HOLE WHERE IT FOUND A WRONG ANSWER
 #
 # migration_0074_purge_journal records every rule removed when the reverted
