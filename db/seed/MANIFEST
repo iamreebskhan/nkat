@@ -133,3 +133,10 @@ payer-rules-oh-appendixdd-mco4.sql
 # Aetna document publishes one, and inventing it is what got the hand-typed
 # rule withdrawn in the first place.
 payer-rules-aetna-telehealth.sql
+
+# Aetna's frequency position on all 25 in-scope codes. Aetna publishes no
+# per-code cap; its Clinical Policy Bulletin notes say the benefit plan
+# defines what is "subject to dollar caps or other limits". Recorded as
+# unknown, with no maxOccurrences/windowDays, because inventing a cap would
+# feed the denial scorer a fabricated prediction.
+payer-rules-aetna-frequency.sql

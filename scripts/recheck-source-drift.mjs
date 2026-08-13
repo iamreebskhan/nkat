@@ -45,6 +45,12 @@
  *   --url SUBSTRING  only documents whose url contains SUBSTRING
  *   --json PATH      write the full machine-readable report
  *   --quiet          summary only
+ *   --explain        for each missing quote, show where it stops matching the
+ *                    document — the longest matching prefix, then both sides
+ *   --since PATH     compare against a previous --json report and list what
+ *                    DEGRADED: a document that was readable and is not any
+ *                    more. Losing the ability to check a rule is a change
+ *                    worth an email even though it is not a finding.
  *
  * Same PG_DB + PSQL_BIN pair as verify-production.sh / audit-*.sh.
  *
@@ -70,6 +76,24 @@ const URL_FILTER = argOf('--url', null);
 const JSON_OUT = argOf('--json', null);
 const QUIET = argv.includes('--quiet');
 const EXPLAIN = argv.includes('--explain');
+const SINCE = argOf('--since', null);
+
+/**
+ * How BAD a verdict is, for detecting decay between runs.
+ *
+ * The weekly job alerts on DRIFTED and SUSPECT — findings against a document.
+ * It says nothing when a document we could read last week has become one we
+ * cannot, and that is the same loss wearing a quieter label: a payer that
+ * starts refusing robots, a file that grows past the size limit, or a URL that
+ * stops answering so the check falls back to an archive. Each of those means
+ * the library quietly lost the ability to verify rules it could verify before,
+ * which is exactly the slow decay this job exists to catch.
+ */
+const VERDICT_RANK = {
+  ok: 0, oversized: 2, blocked: 3, unreachable: 4, unreadable: 5, SUSPECT: 6, DRIFTED: 7,
+};
+const rankOf = (e) => (e.verdict === 'ok' && e.readVia ? 1 : (VERDICT_RANK[e.verdict] ?? 9));
+const describe = (e) => (e.verdict === 'ok' && e.readVia ? 'ok (mirror)' : e.verdict);
 
 const PG_DB = process.env.PG_DB || 'pallio';
 const PSQL_BIN = process.env.PSQL_BIN || 'sudo -u postgres psql';
@@ -830,6 +854,50 @@ async function main() {
   console.log(` oversized ..... ${String(by('oversized').length).padStart(3)} document(s)   (answers 200, too large to verify weekly — NOT drift)`);
   console.log(` unreachable ... ${String(by('unreachable').length).padStart(3)} document(s)   (fetch failed — NOT drift)`);
   console.log('='.repeat(78));
+
+  // --- what changed since the last run ------------------------------------
+  if (SINCE) {
+    let prev = null;
+    try { prev = JSON.parse(fs.readFileSync(SINCE, 'utf8')); } catch { /* no usable previous run */ }
+    if (!prev || !Array.isArray(prev.report)) {
+      console.log('');
+      console.log(` no comparable previous run at ${SINCE} — nothing to compare against`);
+    } else {
+      const before = new Map(prev.report.map((r) => [r.url, r]));
+      const worse = [];
+      const better = [];
+      const gone = [];
+      for (const now of report) {
+        const was = before.get(now.url);
+        if (!was) continue;                       // new document, not a regression
+        const d = rankOf(now) - rankOf(was);
+        if (d > 0) worse.push({ now, was });
+        else if (d < 0) better.push({ now, was });
+      }
+      for (const was of prev.report) {
+        if (!report.some((r) => r.url === was.url)) gone.push(was);
+      }
+      console.log('');
+      if (worse.length) {
+        console.log(` DEGRADED SINCE ${String(prev.checkedAt || '').slice(0, 10)} — ${worse.length} document(s) got harder or impossible to verify`);
+        for (const { now, was } of worse) {
+          console.log(`   ${describe(was)} -> ${describe(now)}   ${String(now.live_rules).padStart(4)} rules  ${now.url.slice(0, 74)}`);
+          if (now.detail) console.log(`     ${now.detail}`);
+        }
+      } else {
+        console.log(` nothing degraded since ${String(prev.checkedAt || '').slice(0, 10)}`);
+      }
+      if (better.length) {
+        console.log(` improved: ${better.length} document(s)`);
+        for (const { now, was } of better) console.log(`   ${describe(was)} -> ${describe(now)}   ${now.url.slice(0, 74)}`);
+      }
+      if (gone.length) {
+        console.log(` no longer cited by any live rule: ${gone.length} document(s)`);
+        for (const g of gone) console.log(`   ${g.url.slice(0, 88)}`);
+      }
+      console.log('='.repeat(78));
+    }
+  }
 
   if (JSON_OUT) {
     fs.writeFileSync(JSON_OUT, JSON.stringify({ database: PG_DB, checkedAt: new Date().toISOString(), report }, null, 1));

@@ -59,7 +59,18 @@ if ! command -v pdftotext >/dev/null 2>&1; then
   echo "            install it:  apt-get install -y poppler-utils"
 fi
 
-node scripts/recheck-source-drift.mjs --json "$JSON" > "$LOG" 2>&1
+# The newest report from a previous run, found BEFORE this run writes its own.
+# Without it the job can only see today: it would report nine documents as
+# unverifiable every week and never mention that one of them was verifiable
+# last week. A document sliding from ok to blocked is the library losing the
+# ability to check rules it could check before, and nobody would be told.
+PREV="$(ls -1t "$LOG_DIR"/drift-*.json 2>/dev/null | head -1)"
+
+if [ -n "$PREV" ]; then
+  node scripts/recheck-source-drift.mjs --json "$JSON" --since "$PREV" > "$LOG" 2>&1
+else
+  node scripts/recheck-source-drift.mjs --json "$JSON" > "$LOG" 2>&1
+fi
 RC=$?
 
 # Prune old reports, newest kept.
@@ -78,9 +89,15 @@ n_drift="$(grep -cE '^  DRIFTED ' "$LOG" || true)"
 n_susp="$(grep -cE '^  SUSPECT ' "$LOG" || true)"
 n_unreach="$(grep -cE '^  unreachable' "$LOG" || true)"
 
+# A document that got HARDER to verify since last week. Always worth an email,
+# even with ALERT_UNREACHABLE off: the steady-state list of blocked documents
+# is noise, but a NEW one is a payer that just started refusing us.
+n_degraded="$(grep -cE '^ DEGRADED SINCE ' "$LOG" || true)"
+
 speak=0
 [ "${n_drift:-0}" -gt 0 ] && speak=1
 [ "${n_susp:-0}" -gt 0 ] && speak=1
+[ "${n_degraded:-0}" -gt 0 ] && speak=1
 [ "$ALERT_UNREACHABLE" = "1" ] && [ "${n_unreach:-0}" -gt 0 ] && speak=1
 
 if [ "$speak" = "0" ]; then
@@ -99,6 +116,18 @@ echo
 echo "Documents needing attention:"
 grep -E "^  (DRIFTED|SUSPECT) " -A 1 "$LOG" | grep -vE "^--$" | sed 's/^/  /'
 echo
+
+# Printed whether or not anything drifted: a document that stopped being
+# readable is the other way this library decays, and it is the half that used
+# to go unreported.
+if [ "${n_degraded:-0}" -gt 0 ]; then
+  echo "Got harder to verify since the last run:"
+  sed -n '/^ DEGRADED SINCE /,/^=\{10,\}$/p' "$LOG" | grep -vE '^=+$' | sed 's/^/  /'
+  echo
+  echo "A document sliding to blocked, unreachable or oversized does not mean the"
+  echo "payer changed anything. It means we can no longer prove they did not."
+  echo
+fi
 echo "Full log:    $LOG"
 echo "Machine-readable: $JSON"
 exit 0   # a finding is not a failure of the JOB; do not let cron retry-spam
