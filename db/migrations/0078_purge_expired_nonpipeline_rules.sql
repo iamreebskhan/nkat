@@ -23,12 +23,31 @@
 -- rule onto UnitedHealthcare's G0318, and only expire-ungrounded-rules.sql
 -- catching it later kept it away from a biller.
 --
+-- ROWS THAT SOMETHING ELSE POINTS AT ARE KEPT
+-- "Nothing serves them" was not the same as "nothing references them", and I
+-- had them confused. The first attempt at this migration failed on
+-- production against org_rulebook_row: a TENANT's rulebook row carries a
+-- source_payer_rule_id pointing at one of these typed rules. Eight tables
+-- reference payer_rule -- org_rulebook_row, client_rule, alert, rule_dispute,
+-- era_835_record, extraction_candidate, attestation_reverification, and
+-- payer_rule itself through superseded_by -- and one of them cascades on
+-- delete, so a careless purge would have taken tenant records with it.
+--
+-- So any candidate that anything still points at is LEFT ALONE and named in
+-- the output. The referencing tables are read from the catalog rather than
+-- listed here, so a foreign key added later is covered without editing this.
+--
+-- A rulebook row whose source is a withdrawn typed rule is a real finding and
+-- deliberately NOT resolved here: the tenant's own copy of the value is in
+-- that row, and deciding what to tell them is a product decision, not a
+-- migration's.
+--
 -- SAFETY
 -- Refuses to run if any matching row is LIVE -- withdrawing a served rule is
 -- a different decision and belongs to expire-ungrounded-rules.sql, which
 -- journals its own reasons. Whole rows are journalled before deletion, so the
 -- audit trail of what was once claimed survives the rows themselves.
--- Idempotent: a second run finds nothing.
+-- Idempotent: a second run finds nothing left that is safe to remove.
 -- ============================================================================
 
 BEGIN;
@@ -68,32 +87,74 @@ BEGIN
   END IF;
 END $$;
 
+-- Anything still pointed at by any table, found from the catalog rather than
+-- from a list somebody has to remember to update.
+CREATE TEMP TABLE _referenced (rule_id UUID, by_table TEXT, by_column TEXT) ON COMMIT DROP;
+
+DO $$
+DECLARE fk RECORD;
+BEGIN
+  FOR fk IN
+    SELECT c.conrelid::regclass::text AS tbl, a.attname AS col
+      FROM pg_constraint c
+      JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON TRUE
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+     WHERE c.contype = 'f' AND c.confrelid = 'payer_rule'::regclass
+  LOOP
+    EXECUTE format(
+      'INSERT INTO _referenced (rule_id, by_table, by_column)
+         SELECT DISTINCT t.%I, %L, %L FROM %s t JOIN _residue x ON x.id = t.%I',
+      fk.col, fk.tbl, fk.col, fk.tbl, fk.col);
+  END LOOP;
+END $$;
+
 INSERT INTO migration_0078_purge_journal (rule_id, author, rule_row)
 SELECT pr.id, pr.created_by, to_jsonb(pr)
-  FROM payer_rule pr JOIN _residue x ON x.id = pr.id;
+  FROM payer_rule pr JOIN _residue x ON x.id = pr.id
+ WHERE NOT EXISTS (SELECT 1 FROM _referenced f WHERE f.rule_id = pr.id);
 
-DELETE FROM payer_rule pr USING _residue x WHERE pr.id = x.id;
+DELETE FROM payer_rule pr USING _residue x
+ WHERE pr.id = x.id
+   AND NOT EXISTS (SELECT 1 FROM _referenced f WHERE f.rule_id = pr.id);
 
 DO $$
 DECLARE
-  n INT; n_left INT; r RECORD;
+  n_total INT; n_kept INT; n_purged INT; n_left INT; r RECORD;
 BEGIN
-  SELECT count(*) INTO n FROM _residue;
+  SELECT count(*) INTO n_total FROM _residue;
+  SELECT count(DISTINCT rule_id) INTO n_kept FROM _referenced;
+  n_purged := n_total - n_kept;
 
-  SELECT count(*) INTO n_left FROM payer_rule
-   WHERE created_by NOT LIKE 'extract:%' AND created_by NOT LIKE 'crawler:%';
+  SELECT count(*) INTO n_left FROM payer_rule pr
+   WHERE pr.created_by NOT LIKE 'extract:%' AND pr.created_by NOT LIKE 'crawler:%'
+     AND NOT EXISTS (SELECT 1 FROM _referenced f WHERE f.rule_id = pr.id);
   IF n_left <> 0 THEN
-    RAISE EXCEPTION '0078: % non-pipeline row(s) survived the purge', n_left;
+    RAISE EXCEPTION '0078: % unreferenced non-pipeline row(s) survived the purge', n_left;
   END IF;
 
-  IF n = 0 THEN
+  IF n_total = 0 THEN
     RAISE NOTICE '0078: no non-pipeline rules present — nothing to purge';
   ELSE
-    FOR r IN SELECT created_by, count(*) AS c FROM _residue GROUP BY created_by ORDER BY 2 DESC LOOP
-      RAISE NOTICE '0078:   % rows removed from author %', r.c, r.created_by;
+    FOR r IN
+      SELECT x.created_by, count(*) AS c,
+             count(*) FILTER (WHERE EXISTS (SELECT 1 FROM _referenced f WHERE f.rule_id = x.id)) AS kept
+        FROM _residue x GROUP BY x.created_by ORDER BY 2 DESC
+    LOOP
+      RAISE NOTICE '0078:   author %  —  % removed, % kept (still referenced)',
+        r.created_by, r.c - r.kept, r.kept;
     END LOOP;
-    RAISE NOTICE '0078: % expired non-pipeline rule(s) purged, all journalled', n;
+    RAISE NOTICE '0078: % expired non-pipeline rule(s) purged and journalled, % kept because something points at them',
+      n_purged, n_kept;
   END IF;
+
+  -- Named individually, because a tenant rulebook sourced from a hand-typed
+  -- rule is worth someone's attention rather than a line in a total.
+  FOR r IN
+    SELECT f.by_table, f.by_column, count(DISTINCT f.rule_id) AS c
+      FROM _referenced f GROUP BY f.by_table, f.by_column ORDER BY 3 DESC
+  LOOP
+    RAISE NOTICE '0078:   still referenced from %.% — % rule(s)', r.by_table, r.by_column, r.c;
+  END LOOP;
 END $$;
 
 COMMIT;
