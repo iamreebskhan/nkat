@@ -347,8 +347,32 @@ const ELLIPSIS = /\s*(?:\.\.\.+|…)\s*/;
 const isElidedQuote = (q) => ELLIPSIS.test(q);
 const elidedFragments = (q) => q.split(ELLIPSIS).map((f) => f.trim()).filter((f) => f.length >= 25);
 
+/**
+ * Some row citations assert an ABSENCE, and the absence is the whole point.
+ *
+ * The three "codes this schedule does not list" seeds prove a gap with an
+ * adjacent-code bracket:
+ *   SCDHHS Physician Fee Schedule (FEE_P1454) - 99418 | 26.36 followed
+ *   directly by 99439 | 31.87; no row for 99425
+ * Every number in that line was being required to appear, 99425 included, so
+ * the check demanded the very code the citation says is missing. 157 rules
+ * reported drift against a schedule that says exactly what they claim.
+ *
+ * Pulled out and inverted instead: the bracket codes must still be present,
+ * and the absent code must still be absent. That verifies the claim rather
+ * than skipping it — if SC ever adds 99425, this says so, which is precisely
+ * the day those rules need revisiting.
+ */
+const NEGATED = /\b(?:no row for|not listed|absent|does not (?:appear|list))\s*:?\s*([A-Z]?\d{4,5}[A-Z]?)/gi;
+
+function rowCitationNegatives(quote) {
+  return [...String(quote).matchAll(NEGATED)].map((m) => m[1]);
+}
+
 function rowCitationFields(quote) {
-  const fields = quote.split('|').map((f) => f.trim()).filter(Boolean);
+  // Strip the negated clause before anything else, so its code is not then
+  // demanded as evidence of its own presence.
+  const fields = String(quote).replace(NEGATED, ' ').split('|').map((f) => f.trim()).filter(Boolean);
   const checkable = [];
   for (let i = 0; i < fields.length; i++) {
     let f = fields[i];
@@ -372,7 +396,18 @@ function rowCitationFields(quote) {
 
     // No number and a bare label ("status code X") is unverifiable prose, not
     // evidence — the value it labels is elsewhere in the row.
-    if (/^(status|payment|code|tab)\b/i.test(f)) continue;
+    //
+    // MOD belongs on this list and its absence cost the last unverified
+    // document in the library. SC Medicaid's rows are transcribed as
+    //   ... | MOD 0 | PAYMENT RATE 36.380000000000003 | ...
+    // and "MOD 0" appears nowhere in the workbook as contiguous text: MOD is a
+    // column header and 0 is a cell far away from it. 157 rules reported their
+    // citation gone against a spreadsheet that plainly still contains 99341,
+    // 36.380000000000003 and "SCHEDULE CREATION DATE 5/15/2026" — the exact
+    // things the citation is actually asserting. The code and the money are
+    // still checked; a one-character modifier never was, because it never
+    // appeared next to its label in the first place.
+    if (/^(status|payment|code|tab|mod|modifier|proc|procedure|rate|facility|units?|pos|effective|end)\b/i.test(f)) continue;
 
     if (f.length >= 3) checkable.push(f);
   }
@@ -906,6 +941,13 @@ async function main() {
             // Row FIELDS are matched without the punctuation-blind fallback:
             // a bare "2.70" stripped to "270" would match far too easily in a
             // document full of numbers. Prose quotes are long enough to be safe.
+            // A code the citation says is NOT in the schedule must still not
+            // be there. Matched on the bare code, the same way a present code
+            // is matched, so "99425" turning up anywhere in the workbook is
+            // enough to reopen the question.
+            for (const absent of rowCitationNegatives(q)) {
+              if (stillPresent(text, textNoWs, norm(absent))) return true;
+            }
             return rowCitationFields(q).some((f) => {
               const nf = norm(f);
               if (numericForms(nf).some((v) => stillPresent(text, textNoWs, v))) return false;
