@@ -73,7 +73,17 @@ VALUES
   ('f1000000-0001-4000-8000-00000000a001'::uuid, 'a0000000-0000-4000-8000-000000000307'::uuid, 'https://www.molinahealthcare.com/-/media/Molina/PublicWebsite/PDF/Providers/oh/medicaid/manual/2025-Molina-OH-Medicaid-ODM-Provider-Manual.ashx', 'provider_manual', 'Molina Healthcare of Ohio Medicaid — Provider Manual + Addendum (July 1, 2025)', now(), 'sha256:8226fddeb4e9ddef1fada4ee39c5277c1e99a108a004d9947e674ee35b0f2df6', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
   ('f1000000-0004-4000-8000-00000000a004'::uuid, 'a0000000-0000-4000-8000-000000000205'::uuid, 'https://www.molinahealthcare.com/providers/sc/medicaid/manual/', 'provider_manual', 'Molina Healthcare of South Carolina — 2026 Medicaid Provider Manual', now(), 'sha256:9d5b66c09261808d86998d0271615dfd70e4b54fc51f3f5e32bf71e618231e14', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
   ('f1000000-0005-4000-8000-00000000a005'::uuid, 'a0000000-0000-4000-8000-000000000205'::uuid, 'https://www.molinahealthcare.com/providers/sc/medicaid/forms/', 'medical_policy', 'Molina Healthcare of South Carolina Medicaid — Pre-Service Review Guide, effective 02/01/2026', now(), 'sha256:34c77dc0c05817ac9651966e506b46fa6ef56cf4593e17d2b8a2a1eb3681ca03', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
-  ('f1000000-0006-4000-8000-00000000a006'::uuid, 'a0000000-0000-4000-8000-000000000304'::uuid, 'https://www.medmutual.com/Provider/Resources/Provider-Manual.aspx', 'provider_manual', 'Medical Mutual of Ohio — Provider Manual (October 2025, Z6640 R10/25)', now(), 'sha256:0460ffb155e3c32ea6e4ad7a2fb152770b157f99bf4071634d44b9ceabf907bc', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
+  -- Same manual as f2000000-0003 — identical title and identical content_hash,
+  -- one row per address: this .aspx landing page and the .pdf it serves. Both
+  -- are on medmutual.com, which drops packets from every network we have.
+  -- The Internet Archive has the PDF but has never captured the .aspx, so both
+  -- rows verify through the PDF snapshot. That is the same document by the
+  -- hash already recorded here, not an assumption.
+  --
+  -- The archive LAGS the payer, so the drift report counts anything read this
+  -- way under "ok (mirror)" and prints the URL it actually read, rather than
+  -- letting it pass as verified at the address the rules cite.
+  ('f1000000-0006-4000-8000-00000000a006'::uuid, 'a0000000-0000-4000-8000-000000000304'::uuid, 'https://www.medmutual.com/Provider/Resources/Provider-Manual.aspx', 'provider_manual', 'Medical Mutual of Ohio — Provider Manual (October 2025, Z6640 R10/25)', now(), 'sha256:0460ffb155e3c32ea6e4ad7a2fb152770b157f99bf4071634d44b9ceabf907bc', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host","verifyVia":"https://web.archive.org/web/2/https://www.medmutual.com/-/media/MedMutual/Files/Providers/Provider-Manual.pdf","sameDocumentAs":"f2000000-0003-4000-8000-00000000b003 — identical content_hash; this URL is the landing page, that one the PDF"}'::jsonb, now()),
   -- CareSource cited two landing pages, and those pages stopped carrying the
   -- manual. They now answer 200 with 176 KB and 173 KB of HTML that extracts
   -- to 8 KB of navigation — "Skip to main content / Login / Find A Doctor" —
@@ -100,8 +110,15 @@ VALUES
   ('f1000000-000b-4000-8000-00000000a00b'::uuid, 'a0000000-0000-4000-8000-000000000202'::uuid, 'https://www.selecthealthofsc.com/provider/claims.aspx', 'provider_manual', 'First Choice by Select Health of South Carolina — Claim Filing Manual', now(), 'sha256:65cf6208f7c0be3c90d4461f4af77ffb5c708eda8c215e58ccafcfd1ea4ca238', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
   ('f1000000-000c-4000-8000-00000000a00c'::uuid, 'a0000000-0000-4000-8000-000000000301'::uuid, 'https://es.aetna.com/content/dam/aetna/pdfs/aetnacom/healthcare-professionals/2026_Precert_List.pdf', 'medical_policy', 'Aetna — Participating Provider Precertification List (updated August 1, 2026)', now(), 'sha256:2d186a716ea63980f5e3a4a3681f2ce5786f0b6b0bf6232d5df3f918c1158764', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now()),
   ('f1000000-000e-4000-8000-00000000a00e'::uuid, 'a0000000-0000-4000-8000-000000000301'::uuid, 'https://es.aetna.com/content/dam/aetna/pdfs/aetnacom/health-care-professionals/office_manual_hcp.pdf', 'provider_manual', 'Aetna — Office Manual for Health Care Professionals (23.20.801.1 L, 12/19)', now(), 'sha256:9117b02cb8a740ef2bd5a2feb195d333bcd25cf7a190d46cc0308870ab6f5403', FALSE, '{"retrievedVia":"origin blocks automated access; obtained via the Internet Archive or a sibling asset host"}'::jsonb, now())
+-- source_metadata is in this list deliberately. It was omitted, and omitted
+-- columns are write-once: adding "verifyVia" to a document here changed
+-- nothing on a database that already had the row, silently, because the
+-- INSERT conflicted and the UPDATE did not mention the column. The same
+-- omission on payer.payer_type and payer_rule.product_line is how a
+-- misclassified payer survived every re-seed earlier in this project.
 ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, url = EXCLUDED.url,
-  document_type = EXCLUDED.document_type, content_hash = EXCLUDED.content_hash, extracted_at = now();
+  document_type = EXCLUDED.document_type, content_hash = EXCLUDED.content_hash,
+  source_metadata = EXCLUDED.source_metadata, extracted_at = now();
 
 -- Close anything already live on these keys. None of these payers has a
 -- rule today, so this should touch nothing on a first run — it is here so

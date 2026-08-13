@@ -531,14 +531,25 @@ const hash = (s) => { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.ch
  */
 const MAX_BYTES = 40 * 1024 * 1024;
 
-async function fetchDoc(url) {
+/**
+ * `bare` sends no headers of our own.
+ *
+ * Payer origins want a browser User-Agent and refuse a default one. The
+ * Internet Archive is the exact opposite: with our spoofed Chrome string it
+ * answers 503 with a 107-byte body every time, and with no headers at all it
+ * serves the document — a browser UA arriving over a Node TLS fingerprint
+ * reads as a bot pretending, which is worse than a bot that says so. Measured
+ * four ways: checker headers, plus Accept-Encoding, full browser set, and
+ * bare. Only bare returned 200.
+ */
+async function fetchDoc(url, { bare = false } = {}) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 90_000);
   try {
     const res = await fetch(url, {
       redirect: 'follow',
       signal: ctl.signal,
-      headers: { 'User-Agent': UA, Accept: '*/*', 'Accept-Language': 'en-US,en;q=0.9' },
+      ...(bare ? {} : { headers: { 'User-Agent': UA, Accept: '*/*', 'Accept-Language': 'en-US,en;q=0.9' } }),
     });
     // Checked BEFORE the body is consumed, so an 85 MB download is declined
     // rather than started and abandoned.
@@ -583,6 +594,26 @@ async function main() {
     const raw = psql(`
       SELECT coalesce(json_agg(row_to_json(d)), '[]')::text FROM (
         SELECT sd.id::text AS id, sd.url, coalesce(p.name,'(no payer)') AS payer,
+               -- NOTE: this query is passed to psql with -c, so keep it ASCII.
+               -- A non-ASCII character in a comment here is enough to produce
+               -- 'invalid byte sequence for encoding "UTF8"' and take the
+               -- whole check down.
+               --
+               -- A document can be readable at an address that is not the one
+               -- a biller should be sent to. Medical Mutual's provider manual
+               -- forced this: medmutual.com drops packets from this VPS and
+               -- from a home connection alike (DNS resolves, TCP never
+               -- completes, on 80 and 443), while the manual itself is live
+               -- and unchanged, still carrying all seven sentences its 141
+               -- live rules cite. The citation must stay on the payer's own
+               -- URL, because that is where a biller has to go; the CHECK
+               -- needs somewhere it can actually read.
+               --
+               -- Only ever a route to the SAME document, recorded per document
+               -- with how it was established. Never a different document, and
+               -- never a guess: an unverifiable citation is better than one
+               -- verified against the wrong thing.
+               sd.source_metadata->>'verifyVia' AS verify_via,
                count(r.id) AS live_rules,
                -- Each quote with the number of rules that actually cite it, so
                -- the report can say how many rules LOST their citation rather
@@ -602,7 +633,7 @@ async function main() {
            AND (r.expiration_date IS NULL OR r.expiration_date > CURRENT_DATE)
           LEFT JOIN payer p ON p.id = sd.payer_id
          WHERE sd.url LIKE 'http%'
-         GROUP BY sd.id, sd.url, p.name
+         GROUP BY sd.id, sd.url, p.name, sd.source_metadata->>'verifyVia'
          HAVING count(r.id) > 0
          ORDER BY count(r.id) DESC
       ) d`);
@@ -632,7 +663,23 @@ async function main() {
     while (cursor < docs.length) {
       const d = docs[cursor++];
       const quotes = (d.quotes || []).filter(Boolean);
-      const got = await fetchDoc(d.url);
+      // Try the payer's own URL first, always. The mirror is a fallback, so a
+      // document that starts working directly stops depending on one.
+      let got = await fetchDoc(d.url);
+      let readVia = null;
+      if (d.verify_via && (!got.buf || got.status < 200 || got.status >= 300) && !got.tooLarge) {
+        // Bare first: the only mirror in use is the Internet Archive, which
+        // refuses our browser User-Agent outright. Headered second, so a
+        // mirror on a payer-style origin still works. A short wait between,
+        // because either host may be throttling rather than refusing.
+        for (const attempt of [{ bare: true }, { bare: false }]) {
+          const alt = await fetchDoc(d.verify_via, attempt);
+          if (alt.buf && alt.status >= 200 && alt.status < 300) {
+            got = alt; readVia = d.verify_via; break;
+          }
+          await new Promise((r) => setTimeout(r, 4000));
+        }
+      }
       let entry;
       if (got.tooLarge) {
         // Reachable, answered 200, and too big to verify on a schedule. Saying
@@ -726,12 +773,17 @@ async function main() {
         }
       }
       delete entry.quotes_raw;
+      if (readVia) entry.readVia = readVia;
       report.push(entry);
       if (!QUIET) {
         const tag = entry.verdict === 'ok' ? 'ok        '
           : entry.verdict === 'DRIFTED' ? 'DRIFTED   '
           : entry.verdict === 'SUSPECT' ? 'SUSPECT   ' : `${entry.verdict.padEnd(10)}`;
         console.log(`  ${tag} ${String(entry.live_rules).padStart(5)} rules  ${entry.url.slice(0, 80)}`);
+        // Said out loud on every run. A quote verified somewhere other than
+        // the address the rule cites is a weaker fact than one verified at
+        // it, and burying that would make the report claim more than it did.
+        if (entry.readVia) console.log(`             read via ${entry.readVia.slice(0, 88)} — the cited URL did not answer`);
         if (entry.verdict === 'DRIFTED' || entry.verdict === 'SUSPECT') {
           console.log(`             ${entry.missingCount} of ${entry.quotes} distinct quote(s) no longer present — ${entry.payer}`);
           for (const s of entry.missingSamples) console.log(`               missing: "${s}"`);
@@ -760,7 +812,17 @@ async function main() {
 
   console.log('');
   console.log('='.repeat(78));
-  console.log(` ok ............ ${String(by('ok').length).padStart(3)} document(s)`);
+  // A document read through a mirror is NOT the same fact as one read at the
+  // address its rules cite, and must not disappear into the same total. The
+  // mirror is an archive: it lags the payer, so a manual replaced last month
+  // still matches until the archive re-crawls. Counted apart, and named, so
+  // "ok" keeps meaning "verified where the citation points".
+  const viaMirror = report.filter((r) => r.readVia && r.verdict === 'ok');
+  console.log(` ok ............ ${String(by('ok').length - viaMirror.length).padStart(3)} document(s)   verified at the URL the rules cite`);
+  if (viaMirror.length) {
+    console.log(` ok (mirror) ... ${String(viaMirror.length).padStart(3)} document(s)   quotes still present, but read from an archive because`);
+    console.log(`                     the payer's own URL does not answer — lags the live document`);
+  }
   console.log(` DRIFTED ....... ${String(drifted.length).padStart(3)} document(s)   ${quotesLost} quote(s) gone, cited by ${rulesAffected} live rule(s)`);
   console.log(` SUSPECT ....... ${String(suspect.length).padStart(3)} document(s)   ${suspect.reduce((n, d) => n + Number(d.live_rules), 0)} rules — EVERY quote gone, so probably not the same document (NOT drift)`);
   console.log(` unreadable .... ${String(by('unreadable').length).padStart(3)} document(s)   (format not parseable here — NOT drift)`);
