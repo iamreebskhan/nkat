@@ -593,7 +593,31 @@ const MAX_BYTES = 40 * 1024 * 1024;
  * four ways: checker headers, plus Accept-Encoding, full browser set, and
  * bare. Only bare returned 200.
  */
-async function fetchDoc(url, { bare = false } = {}) {
+/**
+ * A NETWORK-level failure is retried; an HTTP answer is not.
+ *
+ * CareSource serves its two Ohio manuals slowly and drops the connection part
+ * way through: curl gets "HTTP/2 stream 1 was not closed cleanly:
+ * PROTOCOL_ERROR" and still finishes with 200 and 2.2 MB after 130 seconds,
+ * while this process gets undici's "terminated" and reports the document
+ * unreachable. 51 live rules on in-scope codes hang off those two files.
+ *
+ * Raising the timeout did not help, because it was never a timeout — the
+ * clock was my first guess and the error text said so once it changed from
+ * "aborted" to "terminated". A dropped connection is worth another go; a 403
+ * is not, and retrying one would just be knocking harder on a locked door.
+ */
+async function fetchDoc(url, opts = {}) {
+  let last = null;
+  for (const waitMs of [0, 5000, 15000]) {
+    if (waitMs) await new Promise((r) => setTimeout(r, waitMs));
+    last = await fetchOnce(url, opts);
+    if (last.status !== 0) return last;      // any HTTP answer, including an error, is final
+  }
+  return last;
+}
+
+async function fetchOnce(url, { bare = false } = {}) {
   const ctl = new AbortController();
   // 180s, not 90s. CareSource's MyCare manual answers 200 and takes 130
   // seconds to deliver 2.2 MB — with an HTTP/2 PROTOCOL_ERROR on the way —
