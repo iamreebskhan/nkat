@@ -607,12 +607,39 @@ const MAX_BYTES = 40 * 1024 * 1024;
  * "aborted" to "terminated". A dropped connection is worth another go; a 403
  * is not, and retrying one would just be knocking harder on a locked door.
  */
+/**
+ * Hard ceiling on everything spent for one document, retries and curl
+ * included. Per-attempt limits are not enough: a host that refuses at the TCP
+ * layer can burn its own connect timeout on each try, and three of those plus
+ * a curl is however long the operating system feels like taking.
+ */
+const DOC_BUDGET_MS = 240_000;
+
 async function fetchDoc(url, opts = {}) {
+  const startedAt = Date.now();
+  const spent = () => Date.now() - startedAt;
   let last = null;
   for (const waitMs of [0, 5000, 15000]) {
-    if (waitMs) await new Promise((r) => setTimeout(r, waitMs));
+    if (waitMs) {
+      if (spent() > DOC_BUDGET_MS) return last;
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
     last = await fetchOnce(url, opts);
     if (last.status !== 0) return last;      // any HTTP answer, including an error, is final
+    if (spent() > DOC_BUDGET_MS) return last;
+
+    // A TIMEOUT is not worth repeating, and this is where I nearly buried the
+    // weekly job. Three retries at 180 seconds, then curl retrying twice more
+    // at 180, is a quarter of an hour spent on one host that is silently
+    // dropping packets — and img1.scdhhs.gov does exactly that. The sweep sat
+    // there long enough to look hung, because it was.
+    //
+    // The two failures are already distinguishable and I was not using the
+    // distinction: CareSource fails FAST with "terminated" (a dropped
+    // connection, which another attempt or curl genuinely fixes), while a
+    // blackholed host fails only when the clock runs out. Waiting the full
+    // budget twice more tells us nothing we did not know at 180 seconds.
+    if (last.timedOut) return last;
   }
   // Three dropped connections in a row, and curl can still get the file.
   //
@@ -631,10 +658,21 @@ async function fetchDoc(url, opts = {}) {
   // So: fall back to curl, which this machine already relies on for nothing
   // but is present wherever pdftotext is. Only after the network has failed
   // outright three times, never in place of an HTTP answer.
-  const viaCurl = curlFetch(url);
+  if (spent() > DOC_BUDGET_MS) return last;
+  const viaCurl = curlFetch(url, Math.max(20, Math.floor((DOC_BUDGET_MS - spent()) / 1000)));
   if (viaCurl) return viaCurl;
   return last;
 }
+
+/**
+ * WORST CASE, DELIBERATELY BOUNDED
+ *   answered (any status)          one request
+ *   dropped connection             3 requests + 20s of waiting, then one curl
+ *   silent blackhole (timeout)     ONE request, 180s, then done
+ * A weekly job may be slow. It may not look hung, and it did: stacking a
+ * 180-second budget, three retries and a curl that retried twice more came to
+ * roughly fifteen minutes on a single unreachable host.
+ */
 
 function findCurl() {
   for (const cand of ['curl', '/usr/bin/curl', '/bin/curl']) {
@@ -643,15 +681,18 @@ function findCurl() {
   return null;
 }
 
-function curlFetch(url) {
+function curlFetch(url, maxSeconds = 150) {
   const exe = findCurl();
   if (!exe) return null;
   const tmp = path.join(os.tmpdir(), `drift-curl-${process.pid}-${Math.abs(hash(url))}.bin`);
   try {
+    // One attempt, no --retry. Node has already tried three times by the point
+    // this runs; curl is here because it recovers from a protocol error node
+    // cannot, not because more attempts help.
     const out = execFileSync(exe, [
-      '-sS', '-L', '--compressed', '--max-time', '180', '--retry', '2', '--retry-all-errors',
+      '-sS', '-L', '--compressed', '--max-time', String(maxSeconds),
       '-A', UA, '-o', tmp, '-w', '%{http_code} %{content_type}', url,
-    ], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+    ], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: (maxSeconds + 10) * 1000 });
     const [code, ...ct] = String(out).trim().split(/\s+/);
     const status = Number(code) || 0;
     const buf = fs.existsSync(tmp) ? fs.readFileSync(tmp) : null;
@@ -693,7 +734,11 @@ async function fetchOnce(url, { bare = false } = {}) {
     }
     return { status: res.status, buf, contentType: res.headers.get('content-type') || '' };
   } catch (e) {
-    return { status: 0, buf: null, contentType: '', error: String(e.message || e).slice(0, 120) };
+    const msg = String(e.message || e);
+    // Distinguishing these two is what keeps the sweep from waiting a quarter
+    // of an hour on a host that will never answer.
+    const timedOut = ctl.signal.aborted || /abort/i.test(msg);
+    return { status: 0, buf: null, contentType: '', timedOut, error: msg.slice(0, 120) };
   } finally {
     clearTimeout(timer);
   }
