@@ -73,7 +73,7 @@ if [ "$RC" -eq 2 ]; then
   exit 2
 fi
 
-summary() { grep -E "^ (ok|DRIFTED|SUSPECT|unreadable|unreachable) \.+" "$LOG"; }
+summary() { grep -E "^ (ok|DRIFTED|SUSPECT|unreadable|blocked|oversized|unreachable) \.+" "$LOG"; }
 n_drift="$(grep -cE '^  DRIFTED ' "$LOG" || true)"
 n_susp="$(grep -cE '^  SUSPECT ' "$LOG" || true)"
 n_unreach="$(grep -cE '^  unreachable' "$LOG" || true)"

@@ -343,6 +343,42 @@ const htmlToText = (h) => h
   .replace(/&quot;|&ldquo;|&rdquo;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&[a-z]+;/gi, ' ');
 
+/**
+ * Some pages ship their body as HTML-escaped markup inside a JSON string
+ * inside a <script> tag, and render it client-side. htmlToText drops script
+ * blocks whole — correctly, for tracking and configuration — so the document
+ * is thrown away and the page reports "only 13 chars of text extracted".
+ *
+ * Anthem's Ohio prior-authorisation quick guide is exactly that. Its HTML
+ * plainly contains the sentence 25 live rules cite:
+ *   &lt;li&gt;All unlisted miscellaneous and manually priced codes (including
+ *   but not limited to codes ending in 99)&lt;\/li&gt;
+ * escaped twice over — once as JSON, once as HTML entities.
+ *
+ * Used ONLY as a fallback when normal extraction comes out under MIN_TEXT, so
+ * a page that renders its content properly is never matched against its own
+ * script payload. That restraint matters: a quote found in a configuration
+ * blob rather than in the visible document would be a false pass, which is
+ * the one kind of error this checker must not make.
+ */
+const embeddedJsonText = (h) => h
+  // JSON string escapes first: \/ -> /, \n -> space, \uXXXX -> the character.
+  .replace(/\\u([0-9a-f]{4})/gi, (_, c) => { try { return String.fromCharCode(parseInt(c, 16)); } catch { return ' '; } })
+  .replace(/\\n|\\r|\\t/g, ' ').replace(/\\"/g, '"').replace(/\\\//g, '/')
+  // Then entities, BEFORE tags are stripped rather than after. That order is
+  // the whole trick: the payload lives in an attribute, so &lt;li&gt; is not
+  // yet markup and survives, while the <div> wrapping it does not. Decoding
+  // afterwards, as htmlToText does, is too late — the tag and everything
+  // inside its quotes is already gone. &amp; is decoded last so a
+  // double-escaped &amp;lt; does not turn into a tag.
+  .replace(/&#(\d+);/g, (_, d) => { try { return String.fromCodePoint(Number(d)); } catch { return ' '; } })
+  .replace(/&#x([0-9a-f]+);/gi, (_, x) => { try { return String.fromCodePoint(parseInt(x, 16)); } catch { return ' '; } })
+  .replace(/&quot;/g, '"').replace(/&nbsp;/g, ' ')
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+  .replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
+  .replace(/<[^>]+>/g, ' ')
+  .replace(/\s+/g, ' ').trim();
+
 // --- minimal xlsx reader ----------------------------------------------------
 // 1,138 live rules cite spreadsheets. Skipping them would leave a fifth of the
 // library unchecked while the report still said "ok", so the zip container is
@@ -484,6 +520,17 @@ function pdfToText(buf) {
 const hash = (s) => { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) | 0; return h; };
 
 // ---------------------------------------------------------------------------
+/**
+ * Documents this big cannot be verified on a weekly schedule, and pretending
+ * otherwise is what produced three "fetch failed" lines that were not failures.
+ * The CY2026 Physician Fee Schedule final rule is 85 MB as a govinfo PDF: it
+ * answers HTTP 200 and was still streaming when a 300-second probe gave up, so
+ * the 90-second budget aborts it every week and reports it as unreachable.
+ * It is not unreachable. It is enormous, and the SAME rule is already verified
+ * through its federalregister.gov HTML rendering, which is 7 MB and passes.
+ */
+const MAX_BYTES = 40 * 1024 * 1024;
+
 async function fetchDoc(url) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 90_000);
@@ -493,7 +540,19 @@ async function fetchDoc(url) {
       signal: ctl.signal,
       headers: { 'User-Agent': UA, Accept: '*/*', 'Accept-Language': 'en-US,en;q=0.9' },
     });
+    // Checked BEFORE the body is consumed, so an 85 MB download is declined
+    // rather than started and abandoned.
+    const declared = Number(res.headers.get('content-length') || 0);
+    if (declared > MAX_BYTES) {
+      ctl.abort();
+      return { status: res.status, buf: null, contentType: res.headers.get('content-type') || '',
+               tooLarge: declared };
+    }
     const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > MAX_BYTES) {
+      return { status: res.status, buf: null, contentType: res.headers.get('content-type') || '',
+               tooLarge: buf.length };
+    }
     return { status: res.status, buf, contentType: res.headers.get('content-type') || '' };
   } catch (e) {
     return { status: 0, buf: null, contentType: '', error: String(e.message || e).slice(0, 120) };
@@ -507,7 +566,14 @@ function extract(url, contentType, buf) {
   if (sniff === '%PDF') return { kind: 'pdf', text: pdfToText(buf), why: findPdftotext() ? null : 'pdftotext not installed' };
   if (sniff.startsWith('PK')) return { kind: 'xlsx', text: xlsxToText(buf), why: null };
   if (/pdf/i.test(contentType)) return { kind: 'pdf', text: pdfToText(buf), why: findPdftotext() ? null : 'pdftotext not installed' };
-  return { kind: 'html', text: htmlToText(buf.toString('utf8')), why: null };
+  const html = buf.toString('utf8');
+  const visible = htmlToText(html);
+  if (visible.length >= MIN_TEXT) return { kind: 'html', text: visible, why: null };
+  const embedded = embeddedJsonText(html);
+  if (embedded.length > visible.length) {
+    return { kind: 'html+json', text: embedded, why: null };
+  }
+  return { kind: 'html', text: visible, why: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -568,7 +634,22 @@ async function main() {
       const quotes = (d.quotes || []).filter(Boolean);
       const got = await fetchDoc(d.url);
       let entry;
-      if (!got.buf || got.status < 200 || got.status >= 300) {
+      if (got.tooLarge) {
+        // Reachable, answered 200, and too big to verify on a schedule. Saying
+        // "fetch failed" about a document that responded correctly sends
+        // someone to look for an outage that is not there.
+        entry = { ...d, quotes: quotes.length, verdict: 'oversized',
+          detail: `HTTP ${got.status}, ${(got.tooLarge / 1048576).toFixed(0)} MB — over the ${(MAX_BYTES / 1048576).toFixed(0)} MB verification limit` };
+      } else if (got.status === 403 || got.status === 406 || got.status === 451 || got.status === 429) {
+        // The origin refused a robot. That is a standing property of the site,
+        // not a change in the document, and it does not resolve itself: nine
+        // of this library's documents are permanently in this state, which is
+        // why several seeds record "origin blocks automated access" against
+        // them. Grouping them with real fetch failures buries the ones worth
+        // looking at.
+        entry = { ...d, quotes: quotes.length, verdict: 'blocked',
+          detail: `HTTP ${got.status} — origin refuses automated clients` };
+      } else if (!got.buf || got.status < 200 || got.status >= 300) {
         entry = { ...d, quotes: quotes.length, verdict: 'unreachable',
           detail: got.error ? `fetch failed: ${got.error}` : `HTTP ${got.status}` };
       } else {
@@ -610,7 +691,21 @@ async function main() {
           // like unreadable and unreachable, rather than a finding against
           // the data. Two or fewer quotes stays DRIFTED — losing both of two
           // is ordinary, and there is no pattern to infer from.
-          const allGone = missing.length === quotes.length && quotes.length >= 3;
+          // A JavaScript-rendered page answers 200 with a lot of HTML and
+          // almost no text: the navigation chrome survives tag-stripping and
+          // the document does not. CareSource's two Ohio manual pages return
+          // 176 KB and 173 KB of HTML that extract to 8 KB of "Skip to main
+          // content / Login / Find A Doctor" — enough to clear the readability
+          // gate, so every quote is then reported gone and 51 live rules on
+          // in-scope codes are told their citation moved. CareSource had
+          // changed nothing; the manual is a PDF the page loads by script.
+          //
+          // Losing EVERY quote off a page whose text is a sliver of its bytes
+          // is that failure, not drift. Judging it DRIFTED would tell someone
+          // to re-extract or retire rules that are correct.
+          const textRatio = got.buf.length ? text.length / got.buf.length : 1;
+          const shellOnly = ex.kind === 'html' && textRatio < 0.10;
+          const allGone = missing.length === quotes.length && (quotes.length >= 3 || shellOnly);
           entry = { ...d, quotes: quotes.length,
             verdict: missing.length ? (allGone ? 'SUSPECT' : 'DRIFTED') : 'ok',
             kind: ex.kind, textChars: text.length, missingCount: missing.length,
@@ -669,6 +764,8 @@ async function main() {
   console.log(` DRIFTED ....... ${String(drifted.length).padStart(3)} document(s)   ${quotesLost} quote(s) gone, cited by ${rulesAffected} live rule(s)`);
   console.log(` SUSPECT ....... ${String(suspect.length).padStart(3)} document(s)   ${suspect.reduce((n, d) => n + Number(d.live_rules), 0)} rules — EVERY quote gone, so probably not the same document (NOT drift)`);
   console.log(` unreadable .... ${String(by('unreadable').length).padStart(3)} document(s)   (format not parseable here — NOT drift)`);
+  console.log(` blocked ....... ${String(by('blocked').length).padStart(3)} document(s)   (origin refuses robots — standing, NOT drift)`);
+  console.log(` oversized ..... ${String(by('oversized').length).padStart(3)} document(s)   (answers 200, too large to verify weekly — NOT drift)`);
   console.log(` unreachable ... ${String(by('unreachable').length).padStart(3)} document(s)   (fetch failed — NOT drift)`);
   console.log('='.repeat(78));
 
