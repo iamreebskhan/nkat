@@ -614,7 +614,54 @@ async function fetchDoc(url, opts = {}) {
     last = await fetchOnce(url, opts);
     if (last.status !== 0) return last;      // any HTTP answer, including an error, is final
   }
+  // Three dropped connections in a row, and curl can still get the file.
+  //
+  // CareSource serves its two Ohio manuals over a connection that undici loses
+  // mid-body — "terminated" — while curl reports the same HTTP/2 protocol
+  // error, recovers, and finishes with 200 and the whole document. Retrying
+  // in-process helped on some runs and not others, which is worse than either
+  // outcome: 51 live rules on in-scope codes flickering between verified and
+  // unreachable week to week.
+  //
+  // The archive is no answer here. Its only capture of that manual is the
+  // December 2024 edition, and it is missing one of the two sentences these
+  // rules cite -- wiring it in would report CareSource as having changed
+  // something they have not.
+  //
+  // So: fall back to curl, which this machine already relies on for nothing
+  // but is present wherever pdftotext is. Only after the network has failed
+  // outright three times, never in place of an HTTP answer.
+  const viaCurl = curlFetch(url);
+  if (viaCurl) return viaCurl;
   return last;
+}
+
+function findCurl() {
+  for (const cand of ['curl', '/usr/bin/curl', '/bin/curl']) {
+    try { execFileSync(cand, ['--version'], { stdio: 'ignore' }); return cand; } catch { /* keep looking */ }
+  }
+  return null;
+}
+
+function curlFetch(url) {
+  const exe = findCurl();
+  if (!exe) return null;
+  const tmp = path.join(os.tmpdir(), `drift-curl-${process.pid}-${Math.abs(hash(url))}.bin`);
+  try {
+    const out = execFileSync(exe, [
+      '-sS', '-L', '--compressed', '--max-time', '180', '--retry', '2', '--retry-all-errors',
+      '-A', UA, '-o', tmp, '-w', '%{http_code} %{content_type}', url,
+    ], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+    const [code, ...ct] = String(out).trim().split(/\s+/);
+    const status = Number(code) || 0;
+    const buf = fs.existsSync(tmp) ? fs.readFileSync(tmp) : null;
+    if (!buf || !buf.length || status < 200 || status >= 300) return null;
+    return { status, buf, contentType: ct.join(' ') || '', viaCurl: true };
+  } catch {
+    return null;
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
 }
 
 async function fetchOnce(url, { bare = false } = {}) {
