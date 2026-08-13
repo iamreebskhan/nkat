@@ -69,6 +69,7 @@ const LIMIT = Number(argOf('--limit', '0')) || 0;
 const URL_FILTER = argOf('--url', null);
 const JSON_OUT = argOf('--json', null);
 const QUIET = argv.includes('--quiet');
+const EXPLAIN = argv.includes('--explain');
 
 const PG_DB = process.env.PG_DB || 'pallio';
 const PSQL_BIN = process.env.PSQL_BIN || 'sudo -u postgres psql';
@@ -96,6 +97,40 @@ const norm = (s) => String(s)
   .replace(/[\u2010-\u2015\u2212]/g, '-').replace(/[\u00a0\u2007\u202f]/g, ' ')
   .replace(/\s+/g, ' ')
   .replace(/(^|\s)[\u2022\u25cf\u25aa\u00b7\u2043\ufffd]+(?=\s)/g, '$1')
+  // ---- Federal Register: two renderings of one document -------------------
+  // The same final rule is published as govinfo plain text and as HTML on
+  // federalregister.gov, and our quotes came from one while the URL now
+  // serves the other. The wording is identical; the typography is not:
+  //
+  //   govinfo text                     federalregister.gov HTML
+  //   [[Page 49404]] mid-sentence      (no pagination markers)
+  //   Leukine[supreg]                  Leukine(R)
+  //   ``designated ... service''       curly quotes
+  //   Sec. 405.2464(g)                 SS 405.2464(g)
+  //
+  // That put 8 quotes and 45 live rules in the failure column on a page that
+  // still contains every one of them \u2014 "designated care management service"
+  // occurs ten times in the HTML we fetched. Verified by searching the live
+  // page for the substance of each missing quote before writing this.
+  //
+  // Applied to BOTH sides, so it can only make two renderings of the same
+  // sentence comparable; it cannot make two different sentences equal.
+  // Pagination markers, in both spellings: govinfo injects "[[Page 49404]]"
+  // mid-sentence, federalregister.gov injects "(Printed page 49404)" at the
+  // same place. Either one splits a sentence the other keeps whole.
+  .replace(/\[\[\s*page\s+[ivxlcdm\d]+\s*\]?\]?/gi, ' ')
+  .replace(/\(\s*printed page\s+[\d,]+\s*\)/gi, ' ')
+  .replace(/\[(supreg|reg|trade|tm|deg|dagger|ddagger|bull|sect|para|amp)\]/gi, ' ')
+  // The section marker before a regulation number does not survive HTML
+  // extraction at all \u2014 federalregister.gov emits it as markup the tag
+  // stripper removes, so its text reads "at 425.400(c)(1)(x)" where govinfo
+  // reads "at Sec. 425.400(c)(1)(x)". Dropped from both sides rather than
+  // translated between them: mapping one spelling onto the other still leaves
+  // "sec." on the quote side and nothing on the document side. The regulation
+  // NUMBER, which is the part that identifies the provision, still has to
+  // match. This alone accounted for 6 of the 8 Federal Register quotes.
+  .replace(/(^|\s)(\u00a7|sec\.)\s*(?=\d)/gi, '$1')
+  .replace(/``|''/g, '"')                                     // TeX-style quoting
   .replace(/\s+/g, ' ').trim().toLowerCase();
 
 /**
@@ -152,6 +187,33 @@ const dehyphenations = (q) => {
 /** Only letters and digits — the last-resort comparison. */
 const alnum = (s) => s.replace(/[^a-z0-9]/g, '');
 
+/**
+ * WHERE does a missing quote stop matching?
+ *
+ * "This quote is gone" is a verdict, not a lead. Acting on it means finding
+ * the point of divergence by hand, and the answer is usually that the payer
+ * changed nothing and the two texts are renderings of one document that
+ * disagree about a page marker, a symbol or a quotation style. Every drift
+ * false positive fixed in this file was diagnosed that way, one at a time, by
+ * re-deriving what the tool already knew and would not say.
+ *
+ * Binary-searches the longest prefix of the quote that still appears, then
+ * shows what follows it on each side. --explain prints it.
+ */
+function divergence(text, q) {
+  let lo = 0, hi = q.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (text.includes(q.slice(0, mid))) lo = mid; else hi = mid - 1;
+  }
+  const at = lo ? text.indexOf(q.slice(0, lo)) : -1;
+  return {
+    matched: lo,
+    quote: q.slice(Math.max(0, lo - 30), lo + 60),
+    document: at >= 0 ? text.slice(Math.max(0, at + lo - 30), at + lo + 60) : '(no prefix of this quote appears at all)',
+  };
+}
+
 const stillPresent = (text, textNoWs, q, textAlnum) =>
   dehyphenations(q).some((c) => text.includes(c)
     || textNoWs.includes(c.replace(/\s+/g, ''))
@@ -184,6 +246,40 @@ const numericForms = (v) => {
     out.add(Number(v).toFixed(2));         // 104.1  -> 104.10
   }
   return [...out];
+};
+
+/**
+ * Money in a spreadsheet has to be compared as a NUMBER, because a cell holds
+ * a binary double and the writer may serialise its full expansion instead of
+ * the displayed value:
+ *
+ *   Ohio Appendix DD   65.49 -> 65.489999999999995   284.59 -> 284.58999999999997
+ *   NC fee schedule    28.58 -> 28.579999999999995   19.03  -> 19.029999999999998
+ *
+ * A row citation reading "payment 65.49" then finds no such substring in a
+ * document holding precisely that amount. That is 40 of the 71 quotes this
+ * sweep called drift — 20 on Ohio's schedule and 20 on North Carolina's,
+ * across five payer copies of each — with the descriptor, effective date and
+ * status code all unchanged. Neither state had repriced anything.
+ *
+ * Expanding the QUOTE is not enough, and that was my first attempt at this.
+ * Number('28.58').toPrecision(17) is 28.579999999999998, while the workbook
+ * holds 28.579999999999995 — one unit in the last place apart, because the
+ * cell is a computed result rather than the nearest double to the printed
+ * string. No amount of respelling the quote reaches a value it was never
+ * derived from. Rounding both sides to cents does.
+ *
+ * This is no weaker than the substring test it backs up: that test already
+ * accepts the amount appearing ANYWHERE in the document, so matching the same
+ * amount numerically grants nothing extra.
+ */
+const centsInText = (t) => {
+  const s = new Set();
+  for (const m of t.matchAll(/\d+\.\d+/g)) {
+    const n = Number(m[0]);
+    if (Number.isFinite(n)) s.add(n.toFixed(2));
+  }
+  return s;
 };
 
 /**
@@ -484,15 +580,21 @@ async function main() {
         } else {
           const textNoWs = text.replace(/\s+/g, '');
           const textAlnum = alnum(text);
+          const textCents = centsInText(text);
           const missing = quotes.filter(({ q }) => {
             if (!isRowCitation(q)) return !stillPresent(text, textNoWs, norm(q), textAlnum);
             // A row citation survives if every checkable field is still there.
             // Row FIELDS are matched without the punctuation-blind fallback:
             // a bare "2.70" stripped to "270" would match far too easily in a
             // document full of numbers. Prose quotes are long enough to be safe.
-            return rowCitationFields(q).some(
-              (f) => !numericForms(norm(f)).some((v) => stillPresent(text, textNoWs, v)),
-            );
+            return rowCitationFields(q).some((f) => {
+              const nf = norm(f);
+              if (numericForms(nf).some((v) => stillPresent(text, textNoWs, v))) return false;
+              // Money survives if the document still holds the same amount,
+              // whatever binary expansion it was written in. See centsInText.
+              if (/^\d+\.\d+$/.test(nf) && textCents.has(Number(nf).toFixed(2))) return false;
+              return true;
+            });
           });
           // EVERY quote gone is a different signal from SOME quotes gone.
           // A payer that revises a page drops a few sentences; a payer does
@@ -517,7 +619,15 @@ async function main() {
             // a document 259 rules happen to share — a number that reads as a
             // catastrophe and describes a handful of rows.
             rulesLosingCitation: missing.reduce((n, m) => n + Number(m.n || 0), 0),
-            missingSamples: missing.slice(0, 3).map((m) => String(m.q).slice(0, 150)) };
+            missingSamples: missing.slice(0, 3).map((m) => String(m.q).slice(0, 150)),
+            // The console prints three samples to stay readable. The JSON is
+            // what someone acts FROM, and truncating it there means a document
+            // reporting "4 of 259 gone" hands you three of the four and no way
+            // to get the fourth without re-running the whole sweep. Whole
+            // quotes, untruncated, plus how many live rules each one carries,
+            // so the report can be worked straight through.
+            missingQuotes: missing.map((m) => ({ quote: String(m.q), rules: Number(m.n || 0),
+              ...(EXPLAIN ? { divergence: divergence(text, norm(String(m.q))) } : {}) })) };
         }
       }
       delete entry.quotes_raw;
@@ -530,6 +640,14 @@ async function main() {
         if (entry.verdict === 'DRIFTED' || entry.verdict === 'SUSPECT') {
           console.log(`             ${entry.missingCount} of ${entry.quotes} distinct quote(s) no longer present — ${entry.payer}`);
           for (const s of entry.missingSamples) console.log(`               missing: "${s}"`);
+          if (EXPLAIN) {
+            for (const m of entry.missingQuotes || []) {
+              if (!m.divergence) continue;
+              console.log(`               -- diverges after ${m.divergence.matched} chars`);
+              console.log(`                  quote....: ...${m.divergence.quote}`);
+              console.log(`                  document.: ...${m.divergence.document}`);
+            }
+          }
         } else if (entry.verdict !== 'ok') {
           console.log(`             ${entry.detail}`);
         }
