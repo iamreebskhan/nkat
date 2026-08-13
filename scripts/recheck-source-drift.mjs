@@ -320,6 +320,33 @@ const centsInText = (t) => {
  */
 const isRowCitation = (q) => q.includes(' | ');
 
+/**
+ * A quote containing an ELLIPSIS is not one span, it is several with something
+ * deliberately left out between them. Demanding it match contiguously demands
+ * the document contain the ellipsis itself, which nothing ever will.
+ *
+ * The CY2026 Physician Fee Schedule extraction composes quotes this way:
+ *   "For CPT code 52648, we proposed to remove the 6 minutes of clinical
+ *    labor time for CA021... Since CPT code 52648 is only performed in the
+ *    facility setting"
+ * where the document reads "...for CA021 (perform procedures/services not
+ * directly related to..." and continues for another clause before the second
+ * fragment. 11 live Medicare rules cite that way.
+ *
+ * This was invisible until now, and not because the payer changed anything:
+ * those rules cite a 211 MB PDF that was too large to fetch, so their quotes
+ * had never once been checked. Giving that document a readable route did not
+ * create the finding, it uncovered it — the same quotes would have failed
+ * against govinfo itself.
+ *
+ * Each fragment must still appear verbatim. Fragments under 25 characters are
+ * dropped rather than matched: "the facility set" would find a hit in almost
+ * any long document and prove nothing.
+ */
+const ELLIPSIS = /\s*(?:\.\.\.+|…)\s*/;
+const isElidedQuote = (q) => ELLIPSIS.test(q);
+const elidedFragments = (q) => q.split(ELLIPSIS).map((f) => f.trim()).filter((f) => f.length >= 25);
+
 function rowCitationFields(quote) {
   const fields = quote.split('|').map((f) => f.trim()).filter(Boolean);
   const checkable = [];
@@ -568,7 +595,12 @@ const MAX_BYTES = 40 * 1024 * 1024;
  */
 async function fetchDoc(url, { bare = false } = {}) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 90_000);
+  // 180s, not 90s. CareSource's MyCare manual answers 200 and takes 130
+  // seconds to deliver 2.2 MB — with an HTTP/2 PROTOCOL_ERROR on the way —
+  // so a 90-second budget reported "fetch failed: This operation was aborted"
+  // for a document that is served, just slowly. A weekly job can wait; being
+  // told a payer is unreachable when it is merely slow costs more.
+  const timer = setTimeout(() => ctl.abort(), 180_000);
   try {
     const res = await fetch(url, {
       redirect: 'follow',
@@ -746,6 +778,13 @@ async function main() {
           const textAlnum = alnum(text);
           const textCents = centsInText(text);
           const missing = quotes.filter(({ q }) => {
+            if (!isRowCitation(q) && isElidedQuote(q)) {
+              // Every fragment must survive; the gap between them is the
+              // author's, not the document's.
+              const frags = elidedFragments(norm(q));
+              if (!frags.length) return !stillPresent(text, textNoWs, norm(q), textAlnum);
+              return frags.some((f) => !stillPresent(text, textNoWs, f, textAlnum));
+            }
             if (!isRowCitation(q)) return !stillPresent(text, textNoWs, norm(q), textAlnum);
             // A row citation survives if every checkable field is still there.
             // Row FIELDS are matched without the punctuation-blind fallback:
