@@ -691,12 +691,24 @@ async function main() {
       // document that starts working directly stops depending on one.
       let got = await fetchDoc(d.url);
       let readVia = null;
-      if (d.verify_via && (!got.buf || got.status < 200 || got.status >= 300) && !got.tooLarge) {
-        // Bare first: the only mirror in use is the Internet Archive, which
-        // refuses our browser User-Agent outright. Headered second, so a
-        // mirror on a payer-style origin still works. A short wait between,
-        // because either host may be throttling rather than refusing.
-        for (const attempt of [{ bare: true }, { bare: false }]) {
+      // Oversized counts as "could not read it", so it falls back too. The
+      // first version excluded it, on the reasoning that a document answering
+      // 200 is not a fetch failure and a mirror would mask that. It masks
+      // nothing: the 211 MB govinfo PDF is unreadable on a weekly schedule
+      // whatever its status code, and its 7 MB HTML rendering is the same
+      // Federal Register text. Refusing the mirror there left 22 Medicare
+      // rules permanently unverified in order to preserve a label.
+      const directUnusable = !got.buf || got.status < 200 || got.status >= 300 || Boolean(got.tooLarge);
+      if (d.verify_via && directUnusable) {
+        // Headered first, exactly as every other document is fetched, then
+        // bare. Bare-first was wrong: it was chosen for the Internet Archive,
+        // which refuses our browser User-Agent, and then applied to every
+        // mirror. federalregister.gov is an ordinary origin and answers a
+        // bare request with something thinner than the article, so the quotes
+        // came back missing and a document that matches perfectly was
+        // reported DRIFTED. The Archive is the exception; it costs one extra
+        // request to treat it as one.
+        for (const attempt of [{ bare: false }, { bare: true }]) {
           const alt = await fetchDoc(d.verify_via, attempt);
           if (alt.buf && alt.status >= 200 && alt.status < 300) {
             got = alt; readVia = d.verify_via; break;
