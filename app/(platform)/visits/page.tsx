@@ -115,7 +115,12 @@ export default function VisitsPage() {
                           href={`/patients/${v.patientId}`}
                           className="text-xs text-slate-500 hover:underline"
                         >
-                          patient
+                          {/* The row said the literal word "patient" for every
+                              visit, so a clinician scanning the day's list
+                              could not tell whose visit was whose without
+                              opening each one. patientName is already on every
+                              row the API returns; it was simply never read. */}
+                          {v.patientName ?? "patient"}
                         </Link>
                       </div>
                       <Link
