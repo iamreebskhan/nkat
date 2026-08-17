@@ -18,7 +18,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   const r = await confirmReset({ rawToken: body.token, newPassword: body.newPassword, ip });
   if ("error" in r) {
     if (r.error === "weak_password") {
-      return fail("Password must be at least 12 characters.", { status: 422 });
+      return fail(r.reason ?? "Password must be at least 12 characters.", { status: 422 });
     }
     return fail("Reset link expired or invalid.", { status: 410 });
   }

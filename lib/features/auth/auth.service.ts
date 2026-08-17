@@ -26,12 +26,12 @@ import { prisma, withBreakglass, withOrgContext } from "@/lib/db";
 import {
   ROLE_DEFAULT_PERMISSIONS,
 } from "@/lib/features/team/team.types";
+import { checkPassword } from "@/lib/features/auth/password-policy";
 import { DEFAULT_VISIT_SERVICES } from "@/lib/features/visits/visit-services.service";
 import { DEFAULT_VISIT_TYPES } from "@/lib/features/visits/visit-types.service";
 import type { Session } from "@/lib/auth";
 
 const BCRYPT_ROUNDS = 12;
-const MIN_PASSWORD_LEN = 12;
 
 export interface LoginInput {
   email: string;
@@ -162,7 +162,8 @@ export interface SignupInput {
 export type SignupResult =
   | { session: Session }
   | { error: "email_taken" }
-  | { error: "weak_password" }
+  /** `reason` says WHICH rule failed, so the form can be specific. */
+  | { error: "weak_password"; reason?: string }
   | { error: "baa_required" }
   | { error: "org_name_taken" };
 
@@ -171,7 +172,14 @@ export type SignupResult =
  * entry transactionally so a failure leaves no half-state.
  */
 export async function signup(input: SignupInput): Promise<SignupResult> {
-  if (input.password.length < MIN_PASSWORD_LEN) return { error: "weak_password" };
+  // Length was the ONLY rule here, so "aaaaaaaaaaaa" and a password equal to
+  // the user's own email were both accepted for an account holding PHI.
+  const strength = checkPassword(input.password, {
+    email: input.email,
+    orgName: input.orgName,
+    fullName: input.fullName,
+  });
+  if (!strength.ok) return { error: "weak_password", reason: strength.reason };
   if (!input.baaAccepted) return { error: "baa_required" };
 
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);

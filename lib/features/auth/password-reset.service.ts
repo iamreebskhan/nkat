@@ -19,6 +19,7 @@
  *     service is unit-testable).
  */
 import { createHash, randomBytes } from "crypto";
+import { checkPassword } from "@/lib/features/auth/password-policy";
 import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/db";
@@ -71,10 +72,12 @@ export interface ConfirmResetInput {
 export type ConfirmResetResult =
   | { userId: string; email: string }
   | { error: "expired_or_invalid" }
-  | { error: "weak_password" };
+  | { error: "weak_password"; reason?: string };
 
 export async function confirmReset(input: ConfirmResetInput): Promise<ConfirmResetResult> {
-  if (input.newPassword.length < 12) return { error: "weak_password" };
+  // Third and last way to set a password, and it had its own bare `< 12`.
+  const strength = checkPassword(input.newPassword);
+  if (!strength.ok) return { error: "weak_password", reason: strength.reason };
 
   const tokenHash = sha256(input.rawToken);
 

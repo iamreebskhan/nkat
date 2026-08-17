@@ -33,7 +33,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       weak_password: "Password must be at least 12 characters.",
       baa_required: "You must accept the Business Associate Agreement.",
     };
-    return fail(messages[result.error] ?? "Signup failed.", { status: 422 });
+    // The policy says WHICH rule failed; prefer that over the generic line.
+    // Telling someone "must be at least 12 characters" about a 16-character
+    // password they just typed is how a form gets abandoned.
+    const reason = "reason" in result ? result.reason : undefined;
+    return fail(reason ?? messages[result.error] ?? "Signup failed.", { status: 422 });
   }
 
   const token = await signSession(result.session);

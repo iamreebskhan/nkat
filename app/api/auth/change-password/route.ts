@@ -34,7 +34,8 @@ export async function POST(req: NextRequest): Promise<Response> {
       return fail("Current password is incorrect.", { status: 401 });
     }
     if (r.error === "weak_password") {
-      return fail("New password must be at least 12 characters.", { status: 422 });
+      // Specific reason from the shared policy; generic line as a fallback.
+      return fail(r.reason ?? "New password must be at least 12 characters.", { status: 422 });
     }
     return fail("Could not change password.", { status: 422 });
   }
