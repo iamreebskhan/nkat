@@ -9,6 +9,7 @@
  */
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { prisma, withOrgContext } from "@/lib/db";
+import { changedFieldNames, writeAudit } from "@/lib/features/audit/audit-write";
 import { applyPhiKeyIfConfigured } from "@/lib/hipaa/pgp";
 import type {
   CareTeam,
@@ -125,6 +126,23 @@ export async function createPatient(args: {
       RETURNING id
     `;
     if (!rows[0]) throw new Error("createPatient: insert returned no row.");
+    // In the same transaction as the INSERT: a chart that exists without a
+    // record of who created it is the gap this closes. Ids and flags only —
+    // never the name, address or member id that were just written.
+    await writeAudit(tx, {
+      orgId,
+      userId: createdByUserId,
+      action: "patient_create",
+      targetType: "patient",
+      targetId: rows[0].id,
+      payload: {
+        hasInsurance: Boolean(i.primaryPayerId),
+        payerId: i.primaryPayerId ?? null,
+        insuranceState: i.insuranceState ?? d.state ?? null,
+        hasDiagnosis: Boolean(c.primaryDiagnosisIcd10),
+        acuity: c.acuity ?? null,
+      },
+    });
     return { id: rows[0].id };
   });
 }
@@ -465,6 +483,28 @@ export async function updatePatient(args: {
         WHERE id = ${args.id}::uuid
       `;
       touched = true;
+    }
+    if (touched) {
+      // WHICH SECTIONS changed, never what they changed to. The row itself
+      // holds the new values and is already access-controlled; copying them
+      // here would only double the amount of PHI to protect, in a table every
+      // org admin can read.
+      await writeAudit(tx, {
+        orgId: args.orgId,
+        userId: args.userId ?? null,
+        action: "patient_update",
+        targetType: "patient",
+        targetId: args.id,
+        payload: {
+          sections: changedFieldNames({
+            demographics: args.payload.demographics,
+            insurance: args.payload.insurance,
+            clinical: args.payload.clinical,
+            careTeam: args.payload.careTeam,
+            status: args.payload.status,
+          }),
+        },
+      });
     }
     return { updated: touched };
   });

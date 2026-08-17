@@ -5,6 +5,7 @@
  */
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
+import { writeAudit } from "@/lib/features/audit/audit-write";
 import {
   VISIT_TYPES,
   type DocumentVisit,
@@ -330,6 +331,19 @@ export async function transitionVisit(args: {
         WHERE id = ${args.id}::uuid
       `;
     }
+
+    // Signing is the clinically significant one: it locks the note and
+    // releases it for billing, and it is the event an investigator asks about
+    // first. Every other transition is recorded too, because "who moved this
+    // to billed" has the same shape of answer.
+    await writeAudit(tx, {
+      orgId: args.orgId,
+      userId: args.signedByUserId ?? null,
+      action: args.to === "documented" ? "visit_sign" : "visit_document",
+      targetType: "visit",
+      targetId: args.id,
+      payload: { from, to: args.to },
+    });
     return { from, to: args.to };
   });
 }

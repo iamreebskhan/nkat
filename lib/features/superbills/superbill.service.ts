@@ -10,6 +10,7 @@
  */
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
+import { writeAudit } from "@/lib/features/audit/audit-write";
 import { predictSuperbill } from "@/lib/features/billing/predict-superbill.service";
 import { applyPhiKeyIfConfigured } from "@/lib/hipaa/pgp";
 import { buildSuperbill, type DraftSuperbill, type ProviderTier } from "./superbill-pure";
@@ -217,6 +218,25 @@ export async function persistDraft(args: {
         SELECT 1 FROM superbill_activity WHERE superbill_id = ${id}::uuid
       )
     `;
+    // superbill_activity is the biller's own timeline for one claim. This is
+    // the org-wide trail an investigator reads, and a superbill is PHI on its
+    // way to a payer, so it belongs in both. Codes and amounts only — those
+    // are the claim, not the chart.
+    await writeAudit(tx, {
+      orgId,
+      userId: args.actorUserId ?? null,
+      action: "superbill_create",
+      targetType: "superbill",
+      targetId: id,
+      payload: {
+        visitId: draft.visitId,
+        patientId: draft.patientId,
+        payerId: draft.payerId ?? null,
+        cptCodes: draft.cptCodes,
+        billedAmountCents: draft.billedAmountCents,
+        riskScored: predictedRisk !== null,
+      },
+    });
     return { id };
   });
 }
