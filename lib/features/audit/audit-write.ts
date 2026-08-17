@@ -30,12 +30,20 @@ import type { Prisma } from "@prisma/client";
 
 import { withOrgContext } from "@/lib/db";
 
-/** Actions worth a row. Kept as a union so a typo cannot invent an action. */
+/**
+ * Actions worth a row. Kept as a union so a typo cannot invent an action.
+ *
+ * READS ARE NOT IN HERE, DELIBERATELY. Opening a chart is already recorded by
+ * logPhiAccess() into phi_access_log, a purpose-built table with its own
+ * retention and its own §164.528 accounting. I briefly added a 'patient_view'
+ * member here before finding that, which would have grown a second, competing
+ * read log alongside the working one. Reads go to phi_access_log; this table
+ * is for changes and for events an org admin reads day to day.
+ */
 export type AuditAction =
   | "login"
   | "patient_create"
   | "patient_update"
-  | "patient_view"
   | "patient_export"
   | "visit_document"
   | "visit_sign"
