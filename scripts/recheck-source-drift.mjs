@@ -878,10 +878,10 @@ async function main() {
   const report = [];
   const CONCURRENCY = 4;
   let cursor = 0;
-  async function worker() {
-    while (cursor < docs.length) {
-      const d = docs[cursor++];
-      const quotes = (d.quotes || []).filter(Boolean);
+  // ONE complete read-and-judge of a single document: the payer's own URL
+  // first, the mirror if that fails, then the verdict. Lifted out of the loop
+  // below so it can be called a second time — see the SUSPECT re-read there.
+  async function readOnce(d, quotes) {
       // Try the payer's own URL first, always. The mirror is a fallback, so a
       // document that starts working directly stops depending on one.
       let got = await fetchDoc(d.url);
@@ -1039,6 +1039,38 @@ async function main() {
       if (readVia) entry.readVia = readVia;
       if (mirrorHost) entry.mirrorHost = mirrorHost;
       if (mirrorFailed) entry.mirrorFailed = true;
+      return entry;
+  }
+
+  async function worker() {
+    while (cursor < docs.length) {
+      const d = docs[cursor++];
+      const quotes = (d.quotes || []).filter(Boolean);
+      let entry = await readOnce(d, quotes);
+      // SUSPECT says EVERY quote missed, which is a claim about a RESPONSE,
+      // not about a payer — so it earns a second opinion before it reaches
+      // anybody. Three rows cite the same 7 MB Federal Register rendering,
+      // all three were read in one sweep, exactly one matched nothing at all,
+      // and re-running that document put all four back at ok. One bad
+      // response had mailed a human about ten Medicare rules whose document
+      // had not changed a word.
+      //
+      // Only SUSPECT is re-read. ok, DRIFTED, blocked and unreachable are all
+      // answers; asking them again would just double the traffic. A document
+      // that genuinely changed says so twice, so nothing real is hidden by
+      // this — it is recorded either way, and a confirmed one says so.
+      if (entry.verdict === 'SUSPECT') {
+        await new Promise((r) => setTimeout(r, 5000));
+        const second = await readOnce(d, quotes);
+        if (second.verdict === 'SUSPECT') {
+          second.suspectRecheck = 'confirmed';
+          second.detail = `${second.detail ? `${second.detail} — ` : ''}confirmed by a second read`;
+        } else {
+          second.suspectRecheck = 'recovered';
+          second.recoveredAfterSuspect = true;
+        }
+        entry = second;
+      }
       report.push(entry);
       if (!QUIET) {
         const tag = entry.verdict === 'ok' ? 'ok        '
