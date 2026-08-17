@@ -767,6 +767,18 @@ async function fetchOnce(url, { bare = false } = {}) {
       return { status: res.status, buf: null, contentType: res.headers.get('content-type') || '',
                tooLarge: buf.length };
     }
+    // A body SHORTER than the server declared is a truncated download, not a
+    // shorter document — and grading one compares a payer's rules against half
+    // a page, then reports every quote past the cut as gone. That is not
+    // hypothetical: three rows cite the 7 MB Federal Register rendering, all
+    // three were read in the same sweep, and one came back short. Its ten
+    // Medicare rules were called SUSPECT against a document that had not
+    // changed a word. `declared` was already being read here and only ever
+    // compared upward, against the size ceiling.
+    if (declared > 0 && buf.length < declared) {
+      return { status: res.status, buf: null, contentType: res.headers.get('content-type') || '',
+               truncated: { got: buf.length, declared } };
+    }
     return { status: res.status, buf, contentType: res.headers.get('content-type') || '' };
   } catch (e) {
     const msg = String(e.message || e);
@@ -925,7 +937,9 @@ async function main() {
           detail: `HTTP ${got.status} — origin refuses automated clients` };
       } else if (!got.buf || got.status < 200 || got.status >= 300) {
         entry = { ...d, quotes: quotes.length, verdict: 'unreachable',
-          detail: got.error ? `fetch failed: ${got.error}` : `HTTP ${got.status}` };
+          detail: got.truncated
+            ? `truncated download — received ${got.truncated.got} of the ${got.truncated.declared} bytes the server declared`
+            : got.error ? `fetch failed: ${got.error}` : `HTTP ${got.status}` };
       } else {
         const ex = extract(d.url, got.contentType, got.buf);
         const text = norm(ex.text || '');

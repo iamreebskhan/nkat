@@ -108,7 +108,12 @@ if [ "$RC" -eq 2 ]; then
   exit 2
 fi
 
-summary() { grep -E "^ (ok|DRIFTED|SUSPECT|unreadable|blocked|oversized|unreachable) \.+" "$LOG"; }
+# The whole summary block, from the "ok" tally to the "unreachable" one. This
+# used to grep for '^ (ok|DRIFTED|...) \.+', which silently dropped the
+# "ok (mirror) ..." line — it does not match that shape — so a mail could
+# report 46 ok and never mention the 10 documents that were readable only
+# through an archive. Those are the ones most worth naming.
+summary() { awk '/^ ok \.{4,}/{f=1} f; /^ unreachable \.{3,}/{f=0}' "$LOG"; }
 n_drift="$(grep -cE '^  DRIFTED ' "$LOG" || true)"
 n_susp="$(grep -cE '^  SUSPECT ' "$LOG" || true)"
 n_unreach="$(grep -cE '^  unreachable' "$LOG" || true)"
