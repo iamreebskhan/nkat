@@ -128,14 +128,43 @@ export async function persistDraft(args: {
   // Phase B — capture the predictor result at save-time. Best-effort:
   // if predict fails (e.g. payer rules missing) we persist with NULL
   // and the nightly feedback cron just skips this row.
+  // The scorer keys payer rules on (payer, STATE, code). Passing null state
+  // matched nothing, so every superbill created by signing a visit stored
+  // "No rule on file for 99349 with this payer" and "confidence 0.00" for
+  // codes the very same screen had just shown as Covered with a citation.
+  //
+  // The old note here said the picker path would supply the state on update.
+  // Nothing updates a superbill that came from signing a visit, so that
+  // correction never arrived and the wrong risk was what the biller saw.
+  // Worse, it read SAFER than the truth: without rules the scorer cannot see
+  // missing_modifier or prior_auth_missing, so a line that is actually a
+  // block came out medium — this feature exists to catch exactly those two.
+  //
+  // The state is not on the draft, but the patient is. Read it, preferring
+  // the coverage state over the residence state, since that is what the
+  // rules are keyed on. Best-effort: on any failure fall back to the old
+  // null and let the scorer flag coverage_unknown as before.
+  let coverageState: string | null = null;
+  try {
+    coverageState = await withOrgContext(orgId, async (tx) => {
+      const rows = await tx.$queryRaw<{ state: string | null }[]>`
+        SELECT COALESCE(insurance_state, state) AS state
+          FROM patient
+         WHERE id = ${draft.patientId}::uuid
+         LIMIT 1
+      `;
+      return rows[0]?.state ?? null;
+    });
+  } catch {
+    /* leave null — previous behaviour */
+  }
+
   let predictedRisk: unknown = null;
   try {
     predictedRisk = await predictSuperbill({
       orgId,
       payerId: draft.payerId,
-      state: null, // patient state isn't on the draft; the picker
-      // path will pass it on update — for first-save we leave null
-      // and the scorer flags coverage_unknown until edits provide it.
+      state: coverageState,
       patientId: draft.patientId,
       dos: draft.dateOfService,
       cptCodes: draft.cptCodes,
