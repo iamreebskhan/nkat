@@ -72,10 +72,28 @@ fi
 # ability to check rules it could check before, and nobody would be told.
 PREV="$(ls -1t "$LOG_DIR"/drift-*.json 2>/dev/null | head -1)"
 
-if [ -n "$PREV" ]; then
-  node scripts/recheck-source-drift.mjs --json "$JSON" --since "$PREV" > "$LOG" 2>&1
+# Under cron there is no terminal, everything goes to the log, and the job is
+# meant to be silent. Run by hand it behaved identically — six minutes of no
+# output at all while it fetches ~58 documents, several of which sit on origins
+# that take a full 60s to time out. That is indistinguishable from a hang, and
+# the natural response is to kill it, which is exactly what happened. When
+# there IS a terminal, mirror the run to it as well as to the log.
+#
+# The mail path does not change: every decision below reads "$LOG", which is
+# written in both cases. tee is only a second destination, never the source.
+if [ -t 1 ]; then
+  echo "drift-cron: checking ~58 documents, this takes several minutes." >&2
+  echo "drift-cron: log -> $LOG" >&2
+  echo >&2
+  run_check() { "$@" 2>&1 | tee "$LOG"; return "${PIPESTATUS[0]}"; }
 else
-  node scripts/recheck-source-drift.mjs --json "$JSON" > "$LOG" 2>&1
+  run_check() { "$@" > "$LOG" 2>&1; }
+fi
+
+if [ -n "$PREV" ]; then
+  run_check node scripts/recheck-source-drift.mjs --json "$JSON" --since "$PREV"
+else
+  run_check node scripts/recheck-source-drift.mjs --json "$JSON"
 fi
 RC=$?
 
