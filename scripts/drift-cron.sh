@@ -17,6 +17,12 @@
 #                  and a weekly mail about Molina blocking us is noise. Set
 #                  ALERT_UNREACHABLE=1 to include it.
 #    unreadable    no — a format we cannot parse is our limitation, not a change
+#    degraded      yes — a document we could verify last week and cannot now
+#    mirror host   only when it does NOT clear. One dead archive degrades every
+#                  document that falls back to it in the same run; those payers
+#                  did not change anything and their origins were already
+#                  failing, so the first run is noted and stays silent. A route
+#                  still dead on the next run is one that has to be replaced.
 #
 #  INSTALL (as root on the VPS)
 #    crontab -e   and add:
@@ -94,10 +100,24 @@ n_unreach="$(grep -cE '^  unreachable' "$LOG" || true)"
 # is noise, but a NEW one is a payer that just started refusing us.
 n_degraded="$(grep -cE '^ DEGRADED SINCE ' "$LOG" || true)"
 
+# A shared fallback host that stopped answering is a DIFFERENT event, and
+# lumping it in with the line above is what made this job cry wolf. When the
+# Internet Archive goes down, every document that leans on it degrades in the
+# same run — nine at once, on a morning when nothing about any payer changed
+# and their own origins were already failing anyway. That is one third-party
+# outage, it is not actionable, and it is usually over before anyone reads the
+# mail. So it stays quiet on the first run and speaks when it does NOT clear,
+# because an archive route that is still dead a week later is a route that has
+# to be replaced. Real drift is untouched by this: DRIFTED and SUSPECT always
+# mail, on the first run, every run.
+n_mirror_new="$(grep -cE '^ MIRROR HOST UNAVAILABLE \(first run\)' "$LOG" || true)"
+n_mirror_stuck="$(grep -cE '^ MIRROR HOST UNAVAILABLE \(persistent\)' "$LOG" || true)"
+
 speak=0
 [ "${n_drift:-0}" -gt 0 ] && speak=1
 [ "${n_susp:-0}" -gt 0 ] && speak=1
 [ "${n_degraded:-0}" -gt 0 ] && speak=1
+[ "${n_mirror_stuck:-0}" -gt 0 ] && speak=1
 [ "$ALERT_UNREACHABLE" = "1" ] && [ "${n_unreach:-0}" -gt 0 ] && speak=1
 
 if [ "$speak" = "0" ]; then
@@ -122,10 +142,19 @@ echo
 # to go unreported.
 if [ "${n_degraded:-0}" -gt 0 ]; then
   echo "Got harder to verify since the last run:"
-  sed -n '/^ DEGRADED SINCE /,/^=\{10,\}$/p' "$LOG" | grep -vE '^=+$' | sed 's/^/  /'
+  awk '/^ DEGRADED SINCE /{f=1} /^ MIRROR HOST UNAVAILABLE /{f=0} /^={10,}$/{f=0} f' "$LOG" | sed 's/^/  /'
   echo
   echo "A document sliding to blocked, unreachable or oversized does not mean the"
   echo "payer changed anything. It means we can no longer prove they did not."
+  echo
+fi
+
+# Printed whenever present — including on a first run, which does not by itself
+# earn the email. If something else in this report already broke the silence,
+# the reader should see this too rather than wonder why a count moved.
+if [ "${n_mirror_new:-0}" -gt 0 ] || [ "${n_mirror_stuck:-0}" -gt 0 ]; then
+  echo "A shared fallback host did not answer:"
+  awk '/^ MIRROR HOST UNAVAILABLE /{f=1} /^={10,}$/{f=0} f' "$LOG" | sed 's/^/  /'
   echo
 fi
 echo "Full log:    $LOG"

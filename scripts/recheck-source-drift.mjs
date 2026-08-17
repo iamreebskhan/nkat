@@ -874,6 +874,12 @@ async function main() {
       // document that starts working directly stops depending on one.
       let got = await fetchDoc(d.url);
       let readVia = null;
+      // Which fallback host this document leans on, and whether it answered.
+      // Recorded even when it fails, because "this document got worse" and
+      // "the one host nine documents share is down" look identical in a
+      // verdict and could not be told apart without it.
+      let mirrorHost = null;
+      let mirrorFailed = false;
       // Oversized counts as "could not read it", so it falls back too. The
       // first version excluded it, on the reasoning that a document answering
       // 200 is not a fetch failure and a mirror would mask that. It masks
@@ -891,6 +897,7 @@ async function main() {
         // came back missing and a document that matches perfectly was
         // reported DRIFTED. The Archive is the exception; it costs one extra
         // request to treat it as one.
+        try { mirrorHost = new URL(d.verify_via).host; } catch { mirrorHost = null; }
         for (const attempt of [{ bare: false }, { bare: true }]) {
           const alt = await fetchDoc(d.verify_via, attempt);
           if (alt.buf && alt.status >= 200 && alt.status < 300) {
@@ -898,6 +905,7 @@ async function main() {
           }
           await new Promise((r) => setTimeout(r, 4000));
         }
+        mirrorFailed = !readVia;
       }
       let entry;
       if (got.tooLarge) {
@@ -1015,6 +1023,8 @@ async function main() {
       }
       delete entry.quotes_raw;
       if (readVia) entry.readVia = readVia;
+      if (mirrorHost) entry.mirrorHost = mirrorHost;
+      if (mirrorFailed) entry.mirrorFailed = true;
       report.push(entry);
       if (!QUIET) {
         const tag = entry.verdict === 'ok' ? 'ok        '
@@ -1081,6 +1091,19 @@ async function main() {
       console.log(` no comparable previous run at ${SINCE} — nothing to compare against`);
     } else {
       const before = new Map(prev.report.map((r) => [r.url, r]));
+      const today = new Date().toISOString().slice(0, 10);
+
+      // HOW LONG each unhealthy document has been unhealthy, carried forward
+      // across runs. A host that blinks out for one morning and a host that
+      // has been gone a month produce an identical verdict today; only this
+      // date separates them, and treating them the same is what turns a
+      // weekly mail into something people filter unread.
+      for (const now of report) {
+        if (rankOf(now) <= 1) continue;               // ok, or ok through a mirror
+        const was = before.get(now.url);
+        now.degradedSince = (was && rankOf(was) > 1 && was.degradedSince) ? was.degradedSince : today;
+      }
+
       const worse = [];
       const better = [];
       const gone = [];
@@ -1094,15 +1117,66 @@ async function main() {
       for (const was of prev.report) {
         if (!report.some((r) => r.url === was.url)) gone.push(was);
       }
+
+      // A document that cannot be read because its FALLBACK host is down is
+      // not evidence about the payer. The payer's own URL was already failing
+      // — that is why a mirror was in use at all — so nothing about them
+      // changed. Nine documents behind one dead archive is ONE fact, and
+      // printing it as nine payers getting worse is how the single real
+      // finding in a list gets lost.
+      //
+      // Grouped by HOST and asked of the host, not of the documents, because
+      // "is the archive still down" is the question that decides whether this
+      // is news. Asking each document instead would ask the wrong thing
+      // twice over: a document already blocked last week is not "worse" this
+      // week, so a still-dead archive would vanish from the report entirely
+      // after its first appearance — silence that reads as recovery.
+      const prevHostFailed = new Set();
+      for (const r of prev.report) if (r.mirrorFailed && r.mirrorHost) prevHostFailed.add(r.mirrorHost);
+
+      const byHost = new Map();
+      for (const now of report) {
+        if (!now.mirrorFailed || !now.mirrorHost) continue;
+        // If the payer's OWN url was serving this document directly last run,
+        // the news is that the payer stopped — not that the archive did, even
+        // though the archive is also down. That is a regression against the
+        // payer and belongs in the list above, which is never silenced.
+        // Without this, a payer could start refusing us on the same morning
+        // the archive went down and buy itself a week of quiet.
+        const wasDirect = before.get(now.url);
+        if (wasDirect && rankOf(wasDirect) === 0) continue;
+        if (!byHost.has(now.mirrorHost)) byHost.set(now.mirrorHost, []);
+        byHost.get(now.mirrorHost).push(now);
+      }
+      const mirrorUrls = new Set([...byHost.values()].flat().map((e) => e.url));
+      const ownFault = worse.filter(({ now }) => !mirrorUrls.has(now.url));
+
       console.log('');
-      if (worse.length) {
-        console.log(` DEGRADED SINCE ${String(prev.checkedAt || '').slice(0, 10)} — ${worse.length} document(s) got harder or impossible to verify`);
-        for (const { now, was } of worse) {
+      if (ownFault.length) {
+        console.log(` DEGRADED SINCE ${String(prev.checkedAt || '').slice(0, 10)} — ${ownFault.length} document(s) got harder or impossible to verify`);
+        for (const { now, was } of ownFault) {
           console.log(`   ${describe(was)} -> ${describe(now)}   ${String(now.live_rules).padStart(4)} rules  ${now.url.slice(0, 74)}`);
           if (now.detail) console.log(`     ${now.detail}`);
         }
-      } else {
+      } else if (!byHost.size) {
         console.log(` nothing degraded since ${String(prev.checkedAt || '').slice(0, 10)}`);
+      }
+
+      for (const [host, group] of byHost) {
+        const rules = group.reduce((n, e) => n + Number(e.live_rules || 0), 0);
+        const since = group.map((e) => e.degradedSince).filter(Boolean).sort()[0] || today;
+        const persistent = prevHostFailed.has(host);
+        console.log(` MIRROR HOST UNAVAILABLE (${persistent ? 'persistent' : 'first run'}) — ${host}`);
+        console.log(`   ${group.length} document(s), ${rules} rule(s) fall back to this host, and it did not answer.`);
+        console.log('   Their own origins were already failing before this, so this says');
+        console.log('   nothing about the payers and nothing about the rules.');
+        console.log(`   unverifiable since ${since}${persistent
+          ? ' — still down since the previous run, so this fallback route needs replacing'
+          : ' — first run to see it down; if it clears by the next run there was nothing to do'}`);
+        for (const e of group) {
+          const was = before.get(e.url);
+          console.log(`     ${was ? `${describe(was)} -> ` : ''}${describe(e)}   ${String(e.live_rules).padStart(4)} rules  ${e.url.slice(0, 66)}`);
+        }
       }
       if (better.length) {
         console.log(` improved: ${better.length} document(s)`);
