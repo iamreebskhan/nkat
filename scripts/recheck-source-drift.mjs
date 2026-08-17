@@ -695,7 +695,19 @@ async function fetchDoc(url, opts = {}) {
   // outright three times, never in place of an HTTP answer.
   if (spent() > DOC_BUDGET_MS) return last;
   const viaCurl = curlFetch(url, Math.max(20, Math.floor((DOC_BUDGET_MS - spent()) / 1000)));
-  if (viaCurl) return viaCurl;
+  if (viaCurl && viaCurl.buf) return viaCurl;
+  // curl could not get it either. Keep node's verdict, and carry curl's
+  // reason into it — that reason used to be printed loose and is usually the
+  // more specific of the two ("SSL certificate problem: unable to get local
+  // issuer certificate" says considerably more than "fetch failed").
+  if (viaCurl && viaCurl.curlError) {
+    // undici's own message for a refused connection is the bare string "fetch
+    // failed", which the caller already prefixes — repeating it reads as
+    // "fetch failed: fetch failed". Keep node's text only when it says
+    // something curl's does not.
+    const nodeWhy = last.error && last.error !== 'fetch failed' ? `${last.error}; ` : '';
+    return { ...last, error: `${nodeWhy}curl: ${viaCurl.curlError}` };
+  }
   return last;
 }
 
@@ -727,14 +739,30 @@ function curlFetch(url, maxSeconds = 150) {
     const out = execFileSync(exe, [
       '-sS', '-L', '--compressed', '--max-time', String(maxSeconds),
       '-A', UA, '-o', tmp, '-w', '%{http_code} %{content_type}', url,
-    ], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: (maxSeconds + 10) * 1000 });
+    ], {
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: (maxSeconds + 10) * 1000,
+      // stderr is CAPTURED here, not inherited. execFileSync sends a child's
+      // stderr to the parent unless stdio is given explicitly, so -S (which
+      // asks curl to explain itself, and is worth keeping) was printing six
+      // lines about SSL issuers and connect timeouts into the middle of the
+      // report — for documents that then succeeded through a mirror and were
+      // never in any trouble at all. The explanation is not noise in the
+      // right place: it belongs to the entry that actually failed.
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     const [code, ...ct] = String(out).trim().split(/\s+/);
     const status = Number(code) || 0;
     const buf = fs.existsSync(tmp) ? fs.readFileSync(tmp) : null;
-    if (!buf || !buf.length || status < 200 || status >= 300) return null;
+    if (!buf || !buf.length || status < 200 || status >= 300) {
+      return { curlError: status ? `HTTP ${status}` : 'no body' };
+    }
     return { status, buf, contentType: ct.join(' ') || '', viaCurl: true };
-  } catch {
-    return null;
+  } catch (e) {
+    // curl -S writes one line like "curl: (60) SSL certificate problem: ..."
+    const why = String(e.stderr || e.message || '').replace(/\s+/g, ' ').trim();
+    return { curlError: (why.replace(/^curl:\s*/, '') || 'curl failed').slice(0, 140) };
   } finally {
     try { fs.unlinkSync(tmp); } catch { /* ignore */ }
   }
