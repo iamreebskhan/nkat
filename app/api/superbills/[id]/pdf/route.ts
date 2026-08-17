@@ -4,7 +4,7 @@ import { type NextRequest } from "next/server";
 import { handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { generateSuperbillPdf } from "@/lib/features/superbills/superbill-pdf.service";
-import { logPhiAccess, logPhiExport } from "@/lib/hipaa/phi-access-log";
+import { logPhiAccess } from "@/lib/hipaa/phi-access-log";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -22,18 +22,13 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
       userId: session.userId,
       superbillId: id,
     });
-    // This PDF carries the patient's name, date of birth and member id to
-    // whoever downloads it. It was leaving with no record on either log —
-    // the superbill is the document that goes to the payer, so it is the
-    // disclosure most likely to be asked about.
-    await logPhiExport({
-      orgId: session.orgId,
-      userId: session.userId,
-      exportType: "superbill_pdf",
-      patientIds: [superbill.patient_id],
-      targetUri: `superbill-${id}.pdf`,
-      byteSize: pdfBytes.length,
-    });
+    // NOTE: phi_export_log is written by generateSuperbillPdf() itself — do
+    // not add a second call here, or one download becomes two disclosures in
+    // the §164.528 accounting.
+    //
+    // The access log was the genuinely missing half: this PDF carries the
+    // patient's name, date of birth and member id, and nothing recorded that
+    // it had been read.
     await logPhiAccess({
       orgId: session.orgId,
       userId: session.userId,

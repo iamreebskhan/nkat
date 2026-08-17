@@ -12,7 +12,7 @@ import { requireAuth } from "@/lib/auth";
 import { recordAuditDetached } from "@/lib/features/audit/audit-write";
 import { getBranding } from "@/lib/features/branding/branding.service";
 import { exportPatientRecord } from "@/lib/features/patients/patient-export.service";
-import { logPhiAccess, logPhiExport } from "@/lib/hipaa/phi-access-log";
+import { logPhiAccess } from "@/lib/hipaa/phi-access-log";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -52,21 +52,12 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
         ?? null,
       userAgent: req.headers.get("user-agent"),
     });
-    // phi_export_log is the §164.528 accounting table and is a different
-    // record from the line above: audit_log answers "what happened in this
-    // org", this answers "what left it, and whose data was in it". The
-    // function for it has existed since 0033 with no caller anywhere, so
-    // every export so far went unaccounted for.
-    await logPhiExport({
-      orgId: session.orgId,
-      userId: session.userId,
-      exportType: "patient_record_pdf",
-      patientIds: [id],
-      targetUri: `patient-record-${id}.pdf`,
-      byteSize: result.pdfBytes.length,
-    });
-    // An export is also a read of the whole chart, which the access log
-    // tracks separately from the disclosure.
+    // NOTE: phi_export_log is written by exportPatientRecord() itself — do
+    // not add a second call here. It is the §164.528 accounting table, and
+    // two rows for one download would overstate the disclosures.
+    //
+    // The access log is a different record and was genuinely missing: an
+    // export is also a read of the whole chart, and nothing recorded that.
     await logPhiAccess({
       orgId: session.orgId,
       userId: session.userId,
