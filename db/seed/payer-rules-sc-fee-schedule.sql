@@ -20,6 +20,26 @@
 --                    19,403 rows, 8,572 distinct procedure codes
 --   FEE_OMPANP.xlsx  PHYSICIAN ASSISTANT / NURSE PRACTITIONER 8/15/2025
 --
+-- HOW THE WEEKLY DRIFT JOB READS THIS, given the WAF
+-- P1454 carries a verifyVia pointing at the Internet Archive, so the job
+-- can re-read weekly what the cited host will not serve it. Before adding
+-- it, the archived bytes were run through the real checker: all 165 live
+-- rules verified, every quote present — the capture IS the edition these
+-- rules were built from, and the rules are what it says.
+--
+-- It points at the LATEST capture, not the timestamp that was verified.
+-- Pinning one timestamp would freeze the answer: the check would report ok
+-- forever, including on the day South Carolina republishes the schedule and
+-- these rates go stale. That is the failure this job exists to catch, so it
+-- must be able to see a new edition. The cost is that the archive could
+-- later hold something else at that address — but a capture of an error
+-- page loses EVERY quote, which the checker already reads as "not the same
+-- document" rather than as drift, and an unreachable archive is reported as
+-- unreachable. Neither accuses the payer of a change it did not make.
+--
+-- OMPANP gets NO mirror. Its one live rule carries no quote, so the job
+-- never reads it, and a mirror that has not been exercised is not shipped.
+--
 -- THE PA/NP DIFFERENTIAL IS THE POINT FOR THIS PRODUCT. South Carolina
 -- publishes a separate practitioner schedule paying exactly 80% of the
 -- physician rate — 99349 is $93.41 by a physician and $74.73 by an NP.
@@ -47,9 +67,13 @@ BEGIN;
 
 INSERT INTO source_document (id, payer_id, url, document_type, title, retrieved_at, content_hash, cms_license_token_used, source_metadata, extracted_at)
 VALUES
-  ('e5c1a7b2-0001-4d3a-9f10-2b6c8e4a1101'::uuid, NULL, 'https://img1.scdhhs.gov/fees/FEE_P1454.xlsx', 'state_medicaid_manual', 'SC DHHS — Base Physicians Fee Schedule (schedule creation date 5/15/2026)', now(), 'sha256:7c5de4e388a145757aeabe4378bf69bcc7ff1d94aca2e1c0c856b633b266e401', FALSE, '{"retrievedVia":"internet archive; img1.scdhhs.gov is behind a WAF"}'::jsonb, now()),
+  ('e5c1a7b2-0001-4d3a-9f10-2b6c8e4a1101'::uuid, NULL, 'https://img1.scdhhs.gov/fees/FEE_P1454.xlsx', 'state_medicaid_manual', 'SC DHHS — Base Physicians Fee Schedule (schedule creation date 5/15/2026)', now(), 'sha256:7c5de4e388a145757aeabe4378bf69bcc7ff1d94aca2e1c0c856b633b266e401', FALSE, '{"retrievedVia":"internet archive; img1.scdhhs.gov is behind a WAF","verifyVia":"https://web.archive.org/web/2/https://img1.scdhhs.gov/fees/FEE_P1454.xlsx"}'::jsonb, now()),
   ('e5c1a7b2-0002-4d3a-9f10-2b6c8e4a1102'::uuid, NULL, 'https://img1.scdhhs.gov/fees/FEE_OMPANP.xlsx', 'state_medicaid_manual', 'SC DHHS — Physician Assistant / Nurse Practitioner Fee Schedule (schedule creation date 8/15/2025)', now(), 'sha256:8faac33f123ae87014ded312896f6ce29582a2490777c66d0863fe1511d3abac', FALSE, '{"retrievedVia":"internet archive; img1.scdhhs.gov is behind a WAF"}'::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, url = EXCLUDED.url, document_type = EXCLUDED.document_type, content_hash = EXCLUDED.content_hash, extracted_at = now();
+-- source_metadata IS in this list. It was omitted, which made the column
+-- write-once: the row exists everywhere already, so a verifyVia added here
+-- would have been inserted only on a virgin database and silently ignored
+-- on the one that matters. Same shape as the round-3 seed's bug.
+ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, url = EXCLUDED.url, document_type = EXCLUDED.document_type, content_hash = EXCLUDED.content_hash, source_metadata = EXCLUDED.source_metadata, extracted_at = now();
 
 -- Close anything already live on these keys, at this seed's own start
 -- date, so no key is ever left without a rule.

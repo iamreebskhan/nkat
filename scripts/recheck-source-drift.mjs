@@ -945,8 +945,16 @@ async function main() {
             // be there. Matched on the bare code, the same way a present code
             // is matched, so "99425" turning up anywhere in the workbook is
             // enough to reopen the question.
+            // Matched on a WORD BOUNDARY, not as a substring. stillPresent is
+            // a substring test, which is right for a sentence and wrong for a
+            // bare five-digit code: SC's schedule holds 19,403 rows of numbers
+            // and "99424" turns up inside longer ones. Three absence claims
+            // reported drift on codes the workbook does not list, which is the
+            // opposite of what they assert.
             for (const absent of rowCitationNegatives(q)) {
-              if (stillPresent(text, textNoWs, norm(absent))) return true;
+              const bare = norm(absent).replace(/[^a-z0-9]/gi, '');
+              if (!bare) continue;
+              if (new RegExp(`(?<![a-z0-9])${bare}(?![a-z0-9])`, 'i').test(text)) return true;
             }
             return rowCitationFields(q).some((f) => {
               const nf = norm(f);
