@@ -1,10 +1,10 @@
 /**
- * /admin/ingestion-sources â€” operator dashboard for Sources 1 & 2 of
+ * /admin/ingestion-sources — operator dashboard for Sources 1 & 2 of
  * the rule corpus. List configured URLs, add new ones, see when each
  * was last fetched, what the last hash was, any error, and trigger
  * an on-demand re-ingest per row.
  *
- * Platform-admin only â€” the underlying API endpoints check
+ * Platform-admin only — the underlying API endpoints check
  * session.role === 'platform_admin'.
  */
 "use client";
@@ -125,7 +125,7 @@ export default function IngestionSourcesPage() {
       setMsg(
         summary.alreadyIngested
           ? `No change (same content hash).`
-          : `Ingested ${summary.ruleCount} rule${summary.ruleCount === 1 ? "" : "s"} Â· ${summary.chunkCount} chunk${summary.chunkCount === 1 ? "" : "s"} (embedded=${summary.embedded}).`,
+          : `Ingested ${summary.ruleCount} rule${summary.ruleCount === 1 ? "" : "s"} · ${summary.chunkCount} chunk${summary.chunkCount === 1 ? "" : "s"} (embedded=${summary.embedded}).`,
       );
       await load();
     } catch (e) {
@@ -142,7 +142,7 @@ export default function IngestionSourcesPage() {
         <div>
           <h1 className="font-display text-3xl tracking-tight">Ingestion sources</h1>
           <p className="text-slate-600 mt-1 text-sm max-w-3xl">
-            URLs the corpus engine re-checks on a cadence â€” Sources 1 (CMS)
+            URLs the corpus engine re-checks on a cadence — Sources 1 (CMS)
             and 2 (commercial payer policies) of the rulebook. New rules
             extracted from these documents land in <code>payer_rule</code>
             and surface in every org&rsquo;s lookups + rulebook.
@@ -197,7 +197,7 @@ export default function IngestionSourcesPage() {
                 <input value={stateCode} onChange={(e) => setStateCode(e.target.value)} maxLength={2} placeholder="OH" className="ip" />
               </Field>
               <Field label="Payer UUID (optional)">
-                <input value={payerId} onChange={(e) => setPayerId(e.target.value)} placeholder="a0000000-â€¦ (omit for CMS-wide)" className="ip font-mono text-xs" />
+                <input value={payerId} onChange={(e) => setPayerId(e.target.value)} placeholder="a0000000-… (omit for CMS-wide)" className="ip font-mono text-xs" />
               </Field>
               <div className="md:col-span-2">
                 <Field label="Notes">
@@ -222,10 +222,10 @@ export default function IngestionSourcesPage() {
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
-            <p className="px-4 py-6 text-sm text-slate-500">Loadingâ€¦</p>
+            <p className="px-4 py-6 text-sm text-slate-500">Loading…</p>
           ) : rows.length === 0 ? (
             <p className="px-4 py-6 text-sm text-slate-500">
-              No sources yet â€” click &ldquo;+ Add source&rdquo; to register one.
+              No sources yet — click &ldquo;+ Add source&rdquo; to register one.
             </p>
           ) : (
             <table className="w-full text-sm">
@@ -249,20 +249,20 @@ export default function IngestionSourcesPage() {
                     </td>
                     <td className="px-4 py-2 text-xs text-slate-700">
                       {r.documentType}
-                      {r.state && <span className="ml-1 text-slate-500">Â· {r.state}</span>}
+                      {r.state && <span className="ml-1 text-slate-500">· {r.state}</span>}
                     </td>
                     <td className="px-4 py-2 text-xs">{r.scheduleCadence}</td>
                     <td className="px-4 py-2 text-xs tabular text-slate-600">
-                      {r.lastCheckAt ? new Date(r.lastCheckAt).toISOString().slice(0, 19).replace("T", " ") : "â€”"}
+                      {r.lastCheckAt ? new Date(r.lastCheckAt).toISOString().slice(0, 19).replace("T", " ") : "—"}
                     </td>
                     <td className="px-4 py-2 text-xs tabular text-slate-600">
-                      {r.lastIngestedAt ? new Date(r.lastIngestedAt).toISOString().slice(0, 19).replace("T", " ") : "â€”"}
+                      {r.lastIngestedAt ? new Date(r.lastIngestedAt).toISOString().slice(0, 19).replace("T", " ") : "—"}
                     </td>
                     <td className="px-4 py-2 text-xs">
                       {r.lastError ? (
-                        <span title={r.lastError} className="text-red-700">âš  error</span>
+                        <span title={r.lastError} className="text-red-700">⚠ error</span>
                       ) : r.lastIngestedAt ? (
-                        <span className="text-emerald-700">âœ“ ok</span>
+                        <span className="text-emerald-700">✓ ok</span>
                       ) : (
                         <span className="text-slate-500">never run</span>
                       )}
