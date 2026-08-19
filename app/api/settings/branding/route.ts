@@ -22,7 +22,11 @@ export async function PUT(req: NextRequest): Promise<Response> {
   const body = await parseJson(req, BrandingSchema);
   if (body instanceof Response) return body;
   try {
-    const view = await updateBranding({ orgId: session.orgId, payload: body });
+    const view = await updateBranding({
+      orgId: session.orgId,
+      payload: body,
+      actorUserId: session.userId,
+    });
     return ok(view);
   } catch (err) {
     return handleServiceError(err);

@@ -16,6 +16,7 @@ import { z } from "zod";
 
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
+import { changedFieldNames, writeAudit } from "@/lib/features/audit/audit-write";
 import { VISIT_TYPES, type VisitType } from "./visit.types";
 
 export const CreateVisitTypeSchema = z.object({
@@ -122,6 +123,8 @@ export async function resolveCodingBasis(args: {
 export async function createVisitType(args: {
   orgId: string;
   payload: CreateVisitType;
+  /** Who did it — recorded on the audit trail. */
+  actorUserId?: string | null;
 }): Promise<{ id: string; slug: string }> {
   const slug = slugifyVisitType(args.payload.label);
   return withOrgContext(args.orgId, async (tx) => {
@@ -140,6 +143,14 @@ export async function createVisitType(args: {
       RETURNING id
     `;
     if (!rows[0]) throw new Error("createVisitType: insert returned no row.");
+    await writeAudit(tx, {
+      orgId: args.orgId,
+      userId: args.actorUserId ?? null,
+      action: "settings_update",
+      targetType: "visit_type",
+      targetId: rows[0].id,
+      payload: { change: "create", label: args.payload.label, codingBasis: args.payload.codingBasis },
+    });
     return { id: rows[0].id, slug };
   });
 }
@@ -148,6 +159,8 @@ export async function updateVisitType(args: {
   orgId: string;
   id: string;
   payload: UpdateVisitType;
+  /** Who did it — recorded on the audit trail. */
+  actorUserId?: string | null;
 }): Promise<{ updated: boolean }> {
   const p = args.payload;
   return withOrgContext(args.orgId, async (tx) => {
@@ -171,6 +184,20 @@ export async function updateVisitType(args: {
       WHERE id = ${args.id}::uuid
     `;
     if (n === 0) throw new NotFoundError("Visit type not found.");
+    // active is called out by name: switching one off removes it from the
+    // scheduling dropdown for everybody, and that is the change worth being
+    // able to attribute later.
+    await writeAudit(tx, {
+      orgId: args.orgId,
+      userId: args.actorUserId ?? null,
+      action: "settings_update",
+      targetType: "visit_type",
+      targetId: args.id,
+      payload: {
+        change: p.active === false ? "deactivate" : p.active === true ? "reactivate" : "edit",
+        fields: changedFieldNames({ label: p.label, codingBasis: p.codingBasis, active: p.active }),
+      },
+    });
     return { updated: true };
   });
 }

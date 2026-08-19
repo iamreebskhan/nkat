@@ -51,7 +51,11 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (body instanceof Response) return body;
 
   try {
-    const r = await createVisitType({ orgId: session.orgId, payload: body });
+    const r = await createVisitType({
+      orgId: session.orgId,
+      payload: body,
+      actorUserId: session.userId,
+    });
     return ok(r, { status: 201 });
   } catch (err) {
     return handleServiceError(err);

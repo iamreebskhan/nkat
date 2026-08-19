@@ -52,7 +52,15 @@ export type AuditAction =
   | "superbill_status_change"
   | "superbill_code_override"
   | "denial_decision"
-  | "rulebook_finalize";
+  | "rulebook_finalize"
+  /**
+   * Org configuration: visit types, visit services, branding. Added after a
+   * visit type was switched off during testing and there was no way to find
+   * out who did it or when — the row only carries its current state. These
+   * settings decide what a clinician can even select when scheduling, so
+   * "who turned this off" is a real question with no answer before this.
+   */
+  | "settings_update";
 
 export type AuditTargetType =
   | "patient"
@@ -60,7 +68,10 @@ export type AuditTargetType =
   | "superbill"
   | "denial"
   | "rulebook"
-  | "session";
+  | "session"
+  | "visit_type"
+  | "visit_service"
+  | "branding";
 
 export interface AuditEntry {
   orgId: string;

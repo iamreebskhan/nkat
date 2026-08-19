@@ -9,6 +9,7 @@
 import { z } from "zod";
 
 import { withOrgContext } from "@/lib/db";
+import { changedFieldNames, writeAudit } from "@/lib/features/audit/audit-write";
 
 export const BrandingSchema = z.object({
   displayName: z.string().min(1).max(120).nullable().optional(),
@@ -86,6 +87,8 @@ export async function getBranding(orgId: string): Promise<BrandingView> {
 export async function updateBranding(args: {
   orgId: string;
   payload: BrandingInput;
+  /** Who did it — recorded on the audit trail. */
+  actorUserId?: string | null;
 }): Promise<BrandingView> {
   const p = args.payload;
   return withOrgContext(args.orgId, async (tx) => {
@@ -122,6 +125,23 @@ export async function updateBranding(args: {
         updated_at = now()
       RETURNING *
     `;
+    // Field names only. A custom domain or a from-address changes what
+    // patients see in their inbox, so it is worth being able to attribute.
+    await writeAudit(tx, {
+      orgId: args.orgId,
+      userId: args.actorUserId ?? null,
+      action: "settings_update",
+      targetType: "branding",
+      targetId: null,
+      payload: {
+        change: "edit",
+        fields: changedFieldNames({
+          displayName: p.displayName, logoUrl: p.logoUrl, primaryColor: p.primaryColor,
+          customDomain: p.customDomain, emailFromName: p.emailFromName,
+          emailFromAddress: p.emailFromAddress,
+        }),
+      },
+    });
     return toView(rows[0]!);
   });
 }

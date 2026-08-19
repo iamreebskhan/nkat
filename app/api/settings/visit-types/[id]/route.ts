@@ -32,7 +32,12 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
   if (body instanceof Response) return body;
 
   try {
-    const r = await updateVisitType({ orgId: session.orgId, id, payload: body });
+    const r = await updateVisitType({
+      orgId: session.orgId,
+      id,
+      payload: body,
+      actorUserId: session.userId,
+    });
     return ok(r);
   } catch (err) {
     return handleServiceError(err);
