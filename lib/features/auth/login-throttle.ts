@@ -124,6 +124,54 @@ export function recordLoginSuccess(ip: string | null, email: string): void {
   buckets.delete(pairKey(ip, email));
 }
 
+// ---------------------------------------------------------------------------
+// signup
+// ---------------------------------------------------------------------------
+
+/**
+ * Signup attempts allowed from one IP per window, successful or not.
+ *
+ * SIGNUP TELLS YOU WHETHER AN ADDRESS IS REGISTERED — "An account with that
+ * email already exists." That is enumeration, and the usual cure is to answer
+ * vaguely and send an email instead. Not done here on purpose: a person who
+ * mistypes their own address would be left staring at a form that claims
+ * success and does nothing, and the email path is not something this codebase
+ * can currently prove works.
+ *
+ * The property that actually makes enumeration useful is SCALE — an address
+ * at a time is a curiosity, ten thousand is a mailing list. So the answer
+ * stays honest and the volume gets capped. A real person signs up once; this
+ * allows ten tries in a quarter hour and then stops answering. It also blunts
+ * signup spam, which a public form invites regardless.
+ *
+ * Login is unaffected and still refuses to say which half was wrong — that is
+ * where credential stuffing happens, and it remains silent.
+ */
+const MAX_SIGNUPS_PER_IP = 10;
+
+const signupKey = (ip: string): string => `signup:${ip}`;
+
+export function checkSignupAllowed(
+  ip: string | null,
+  now: number = Date.now(),
+): { allowed: true } | { allowed: false; retryAfterSec: number } {
+  // Same reasoning as login: no address, no budget to spend. Fail open rather
+  // than turn away a real customer we cannot identify.
+  if (!ip) return { allowed: true };
+  sweep(now);
+  const key = signupKey(ip);
+  if (peek(key, now) >= MAX_SIGNUPS_PER_IP) {
+    return { allowed: false, retryAfterSec: retryAfterSec([key], now) };
+  }
+  return { allowed: true };
+}
+
+/** Counts EVERY attempt, not just failures — enumeration probes look valid. */
+export function recordSignupAttempt(ip: string | null, now: number = Date.now()): void {
+  if (!ip) return;
+  bump(signupKey(ip), now);
+}
+
 /** Test seam. */
 export function __resetThrottle(): void {
   buckets.clear();
