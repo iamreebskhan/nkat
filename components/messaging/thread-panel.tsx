@@ -181,8 +181,19 @@ export function ThreadPanel({ patientId, selfUserId }: Props) {
           maxLength={5000}
           className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
         />
-        <Button size="sm" onClick={send} loading={sending} disabled={!body.trim()}>
-          <Send className="h-3.5 w-3.5" />
+        {/* Icon-only, so it needs a name of its own: with just the glyph a
+            screen reader announces "button" and nothing else, which is the
+            one control in this panel that actually sends. aria-hidden on the
+            icon stops the name being read twice. */}
+        <Button
+          size="sm"
+          onClick={send}
+          loading={sending}
+          disabled={!body.trim()}
+          aria-label="Send message"
+          title="Send message"
+        >
+          <Send className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       </div>
     </div>
