@@ -84,6 +84,11 @@ export interface IngestionResult {
    *  skipped so the rest of the document still lands. Should be 0 in normal
    *  operation; a non-zero value points at a data-shape edge case in logs. */
   skipped: number;
+  /** Rules this document was NOT entitled to replace, named with the reason:
+   *  the incumbent cites a different publisher, or a person authored it. Not
+   *  an error — the existing rule stands — but an operator has to be able to
+   *  see that a source is trying to overwrite someone else's answers. */
+  refused?: string[];
   /** If the extraction call itself errored (credit exhausted, model access,
    *  rate limit), the message — so a caller can distinguish an API failure
    *  from a genuinely rule-free document. null on success. */
@@ -281,6 +286,8 @@ export async function ingestDocumentFromUrl(
     sourceQuote: string;
   }> = [];
   const skipped: string[] = [];
+  /** Rules this document was not entitled to replace — see the guard below. */
+  const refused: string[] = [];
   if (extracted.length > 0 && args.payerId && args.state) {
     // product_line follows the PAYER, not a constant.
     //
@@ -333,6 +340,51 @@ export async function ingestDocumentFromUrl(
         // for — a bad row rolls back alone and the loop carries on.
         try {
           const inserted = await db.$transaction(async (tx) => {
+            // A DOCUMENT MAY ONLY REPLACE ANSWERS IT IS ENTITLED TO REPLACE.
+            //
+            // Until now this expired whatever was live on the key and inserted
+            // its own, with no test of where either document came from. That
+            // is how a test fixture served off app.pallio.io, pointed at
+            // Traditional Medicare, silently replaced ten rules whose
+            // citations had been verified against the Federal Register — the
+            // answers did not look wrong, they just pointed at the wrong
+            // paper, and the weekly drift check would have happily verified
+            // them against that fixture forever.
+            //
+            // The rule now: a replacement must come from the SAME PUBLISHER
+            // as the answer it replaces. Same host, or it is not a newer
+            // edition of anything — it is a different document making a
+            // competing claim, and this pipeline is not entitled to decide
+            // that argument silently. Mismatches are skipped and named, which
+            // leaves the existing rule standing.
+            //
+            // Person-authored rules are never displaced by a crawler at all.
+            const incumbent = await tx.$queryRaw<
+              { id: string; url: string; created_by: string }[]
+            >`
+              SELECT pr.id, sd.url, pr.created_by
+                FROM payer_rule pr
+                JOIN source_document sd ON sd.id = pr.source_doc_id
+               WHERE pr.payer_id = ${args.payerId}::uuid
+                 AND pr.state = ${args.state}
+                 AND pr.code = ${r.cptCode}
+                 AND pr.attribute = ${dbAttr}
+                 AND pr.expiration_date IS NULL
+               LIMIT 1
+            `;
+            const prior = incumbent[0];
+            if (prior) {
+              if (prior.created_by.includes("@")) {
+                throw new RuleDisplacementRefused(
+                  `held by a person-authored rule (${prior.created_by})`,
+                );
+              }
+              if (hostOf(prior.url) !== hostOf(args.url)) {
+                throw new RuleDisplacementRefused(
+                  `incumbent cites ${hostOf(prior.url)}, this document is ${hostOf(args.url)}`,
+                );
+              }
+            }
             await tx.$executeRaw`
               UPDATE payer_rule SET expiration_date = CURRENT_DATE
                WHERE payer_id = ${args.payerId}::uuid
@@ -375,13 +427,28 @@ export async function ingestDocumentFromUrl(
           // rolled itself back, so this only records what was dropped.
           const msg = e instanceof Error ? e.message : String(e);
           skipped.push(`${r.cptCode}/${dbAttr}`);
-          console.warn(
-            `ingest: skipped rule code=${r.cptCode} attr=${dbAttr} ` +
-              `coverage=${r.coverageStatus} conf=${confidence} — ${msg.replace(/\s+/g, " ").slice(0, 200)}`,
-          );
+          if (e instanceof RuleDisplacementRefused) {
+            // Not a failure — the guard doing its job. Logged distinctly so a
+            // refusal is never read as a broken extraction.
+            refused.push(`${r.cptCode}/${dbAttr}: ${e.message}`);
+            console.warn(
+              `ingest: REFUSED to replace ${r.cptCode}/${dbAttr} — ${e.message}`,
+            );
+          } else {
+            console.warn(
+              `ingest: skipped rule code=${r.cptCode} attr=${dbAttr} ` +
+                `coverage=${r.coverageStatus} conf=${confidence} — ${msg.replace(/\s+/g, " ").slice(0, 200)}`,
+            );
+          }
         }
       }
     }, "ingestion: write payer_rule rows");
+    if (refused.length) {
+      console.warn(
+        `ingest: ${refused.length}/${extracted.length} rule(s) REFUSED — this document is ` +
+          `not entitled to replace them: ${refused.slice(0, 10).join(" | ")}`,
+      );
+    }
     if (skipped.length) {
       console.warn(`ingest: ${skipped.length}/${extracted.length} rule(s) skipped: ${skipped.slice(0, 15).join(", ")}`);
     }
@@ -455,6 +522,8 @@ export async function ingestDocumentFromUrl(
     contentHash,
     alreadyIngested: false,
     skipped: skipped.length,
+    /** Named, not just counted: a refusal is a finding an operator must see. */
+    refused,
     extractError,
   };
 }
@@ -462,6 +531,35 @@ export async function ingestDocumentFromUrl(
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Thrown when a document tries to replace an answer it is not entitled to
+ * replace. Distinct from an ordinary insert failure: nothing is broken, the
+ * pipeline is declining, and the existing rule stays exactly as it was.
+ */
+class RuleDisplacementRefused extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "RuleDisplacementRefused";
+  }
+}
+
+/**
+ * Host of a URL, lowercased and without a leading "www.".
+ *
+ * Compared to decide whether one document may replace another's answers.
+ * www is stripped because uhcprovider.com and www.uhcprovider.com are the
+ * same publisher, and a refusal there would be noise rather than protection.
+ * Anything unparseable returns the raw string, which cannot equal a real
+ * host — so a malformed URL fails closed and replaces nothing.
+ */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
 
 async function fetchUrlBytes(
   url: string,
