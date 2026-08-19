@@ -282,6 +282,33 @@ export async function ingestDocumentFromUrl(
   }> = [];
   const skipped: string[] = [];
   if (extracted.length > 0 && args.payerId && args.state) {
+    // product_line follows the PAYER, not a constant.
+    //
+    // This was hardcoded to 'commercial' for every payer. Across the live
+    // library the column mirrors payer type exactly — medicaid_mco 3,741
+    // rules, medicare_ffs 2,610, tribal_638 213, commercial 334 — so the
+    // constant was right for one payer type in four and wrong for 95% of the
+    // rules by volume.
+    //
+    // It is not cosmetic. The expire statement below keys on
+    // (payer, state, code, attribute) and ignores product_line, so an ingest
+    // would retire a medicare_ffs rule and insert a commercial one on the same
+    // key. The two no longer pair up, which is exactly what defeated the first
+    // attempt to undo tonight's fixture run: a product_line-aware join found
+    // zero rows to restore.
+    const PRODUCT_LINE_BY_PAYER_TYPE: Record<string, string> = {
+      commercial: "commercial",
+      medicaid_mco: "medicaid_mco",
+      medicare_mac: "medicare_ffs",
+      tribal: "tribal_638",
+    };
+    const productLine = await withBreakglass(async (db) => {
+      const rows = await db.$queryRaw<{ payer_type: string | null }[]>`
+        SELECT payer_type FROM payer WHERE id = ${args.payerId}::uuid LIMIT 1
+      `;
+      return PRODUCT_LINE_BY_PAYER_TYPE[rows[0]?.payer_type ?? ""] ?? "commercial";
+    }, "ingestion: resolve product_line from payer type");
+
     await withBreakglass(async (db) => {
       for (const r of extracted) {
         const dbAttr =
@@ -322,7 +349,7 @@ export async function ingestDocumentFromUrl(
                 source_doc_id, source_quote,
                 created_by
               ) VALUES (
-                ${args.payerId}::uuid, ${args.state}, 'commercial',
+                ${args.payerId}::uuid, ${args.state}, ${productLine},
                 ${r.cptCode}, ${dbAttr},
                 ${JSON.stringify({ answer: r.answer })}::jsonb,
                 ${r.coverageStatus}, ${confidence},
