@@ -10,6 +10,7 @@
  */
 import { z } from "zod";
 
+import { NotFoundError } from "@/lib/api";
 import { withBreakglass } from "@/lib/db";
 import {
   ingestDocumentFromUrl,
@@ -126,6 +127,71 @@ export async function createSource(input: CreateSourceInput): Promise<IngestionS
     `;
     return toView(rows[0]!);
   }, "ingestion-source upsert (platform admin)");
+}
+
+/**
+ * Edit one source. Every field optional; only what is provided changes.
+ *
+ * There was no way to do this. An operator could register a source and then
+ * never touch it again — no edit, no deactivate, no delete, only "Run now".
+ * A source pointed at the wrong payer, or at a test fixture, was permanent
+ * from the UI, and the only remedy was SQL on the box. That is how the
+ * fixture source that displaced ten Medicare rules stayed registered.
+ */
+export const UpdateSourceSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  url: z.string().url().max(2000).optional(),
+  payerId: z.string().uuid().nullable().optional(),
+  state: z.string().length(2).nullable().optional(),
+  documentType: DocumentTypeSchema.optional(),
+  scheduleCadence: z.enum(["daily", "weekly", "monthly"]).optional(),
+  notes: z.string().max(2000).nullable().optional(),
+  /** Pause a source without losing its history. */
+  active: z.boolean().optional(),
+});
+export type UpdateSourceInput = z.infer<typeof UpdateSourceSchema>;
+
+export async function updateSource(
+  id: string,
+  input: UpdateSourceInput,
+): Promise<IngestionSourceView> {
+  return withBreakglass(async (tx) => {
+    const rows = await tx.$queryRaw<Row[]>`
+      UPDATE ingestion_source SET
+        name             = COALESCE(${input.name ?? null}, name),
+        url              = COALESCE(${input.url ?? null}, url),
+        payer_id         = CASE WHEN ${input.payerId === undefined}
+                                THEN payer_id ELSE ${input.payerId ?? null}::uuid END,
+        state            = CASE WHEN ${input.state === undefined}
+                                THEN state ELSE ${input.state ?? null} END,
+        document_type    = COALESCE(${input.documentType ?? null}, document_type),
+        schedule_cadence = COALESCE(${input.scheduleCadence ?? null}, schedule_cadence),
+        notes            = CASE WHEN ${input.notes === undefined}
+                                THEN notes ELSE ${input.notes ?? null} END,
+        active           = COALESCE(${input.active ?? null}::boolean, active),
+        updated_at       = now()
+      WHERE id = ${id}::uuid
+      RETURNING *
+    `;
+    if (!rows[0]) throw new NotFoundError("Ingestion source not found.");
+    return toView(rows[0]);
+  }, "ingestion-source update (platform admin)");
+}
+
+/**
+ * Delete a source. The documents and rules it already produced are left
+ * alone on purpose: they are cited by live rules, and removing the record of
+ * where an answer came from to tidy up a config row would be the worse bug.
+ * This only stops future re-checks.
+ */
+export async function deleteSource(id: string): Promise<{ deleted: boolean }> {
+  return withBreakglass(async (tx) => {
+    const n = await tx.$executeRaw`
+      DELETE FROM ingestion_source WHERE id = ${id}::uuid
+    `;
+    if (n === 0) throw new NotFoundError("Ingestion source not found.");
+    return { deleted: true };
+  }, "ingestion-source delete (platform admin)");
 }
 
 export async function listSources(): Promise<IngestionSourceView[]> {
