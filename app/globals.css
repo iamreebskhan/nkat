@@ -107,3 +107,30 @@ html, body {
 /* Numeric utilities — playbook §3.2 calls these out explicitly. */
 .tabular { font-variant-numeric: tabular-nums; }
 .slashed-zero { font-variant-numeric: tabular-nums slashed-zero; }
+
+/* ---------------------------------------------------------------------------
+   Wide tables scroll inside their own box, not by dragging the page sideways.
+
+   Measured on production at iPad width (810px): /patients renders an 864px
+   table inside a 554px column, so the whole layout — sidebar and header
+   included — slid 343px off-screen. 26 tables across 19 pages, exactly one of
+   which had a scroll wrapper. This is the bedside device for a home-visit
+   product, so it is not a cosmetic complaint.
+
+   :has() puts the scroll on whatever box directly contains the table, which
+   leaves the table's own display as `table`. The alternative — display:block
+   on the table itself — also stops the page scrolling but changes table
+   layout semantics, and there was no reason to accept that.
+
+   overflow-x:auto forces overflow-y to compute to auto as well, which would
+   clip anything escaping a cell. Checked first: no absolutely-positioned
+   elements inside any table on /patients, /billing/superbills or
+   /settings/rulebook, so there is nothing to clip. A table that already fits
+   gets no scrollbar, so desktop is unchanged.
+
+   NOT FIXED HERE, and worth a decision: the sidebar is a fixed 256px `w-64`
+   that never collapses. At 375px that leaves 119px of content, which no table
+   rule can rescue — phones need the nav to collapse, which is a design change
+   rather than a stylesheet one.
+   --------------------------------------------------------------------------- */
+main :where(div, section):has(> table) { overflow-x: auto; }
