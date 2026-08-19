@@ -282,47 +282,60 @@ export async function ingestDocumentFromUrl(
   }> = [];
   const skipped: string[] = [];
   if (extracted.length > 0 && args.payerId && args.state) {
-    await withBreakglass(async (tx) => {
+    await withBreakglass(async (db) => {
       for (const r of extracted) {
         const dbAttr =
           ATTRIBUTE_DB_MAP[r.attribute as keyof typeof ATTRIBUTE_DB_MAP] ??
           r.attribute;
-        // Isolate each rule in a SAVEPOINT so one bad row (e.g. a value that
-        // trips a CHECK constraint) is rolled back + logged rather than
-        // aborting the whole document's insert. Essential for large, varied
-        // docs (the 1,216-page final rule) where a stray row is inevitable.
+        // ONE TRANSACTION PER RULE — not a savepoint.
+        //
+        // This used to open a SAVEPOINT per rule, but withBreakglass hands
+        // back a PrismaClient, not a transaction: it ends in `return
+        // fn(target)` with no $transaction anywhere. So "SAVEPOINT rule_sp"
+        // failed with 25P01 (can only be used in transaction blocks), the
+        // catch then ran "ROLLBACK TO SAVEPOINT", which raised 25P01 AGAIN
+        // from inside the handler — uncaught, killing the whole document.
+        // The operator's own ingestion dashboard has been showing that error
+        // verbatim on a source, which is where this was found.
+        //
+        // The two statements still have to be atomic together: expiring the
+        // prior rule and failing to insert the replacement would leave the
+        // key answering nothing, which is the exact "key goes dark" failure
+        // this library has been bitten by before. A per-rule transaction
+        // gives that atomicity AND the isolation the savepoints were reaching
+        // for — a bad row rolls back alone and the loop carries on.
         try {
-          await tx.$executeRawUnsafe("SAVEPOINT rule_sp");
-          // Expire any prior active rule for the same key.
-          await tx.$executeRaw`
-            UPDATE payer_rule SET expiration_date = CURRENT_DATE
-             WHERE payer_id = ${args.payerId}::uuid
-               AND state = ${args.state}
-               AND code = ${r.cptCode}
-               AND attribute = ${dbAttr}
-               AND expiration_date IS NULL
-          `;
-          const ins = await tx.$queryRaw<{ id: string }[]>`
-            INSERT INTO payer_rule (
-              payer_id, state, product_line, code, attribute,
-              value, coverage_status, confidence,
-              effective_date, expiration_date,
-              source_doc_id, source_quote,
-              created_by
-            ) VALUES (
-              ${args.payerId}::uuid, ${args.state}, 'commercial',
-              ${r.cptCode}, ${dbAttr},
-              ${JSON.stringify({ answer: r.answer })}::jsonb,
-              ${r.coverageStatus}, ${confidence},
-              CURRENT_DATE, NULL,
-              ${docId}::uuid, ${r.sourceQuote},
-              ${"crawler:" + args.documentType}
-            )
-            RETURNING id
-          `;
-          await tx.$executeRawUnsafe("RELEASE SAVEPOINT rule_sp");
+          const inserted = await db.$transaction(async (tx) => {
+            await tx.$executeRaw`
+              UPDATE payer_rule SET expiration_date = CURRENT_DATE
+               WHERE payer_id = ${args.payerId}::uuid
+                 AND state = ${args.state}
+                 AND code = ${r.cptCode}
+                 AND attribute = ${dbAttr}
+                 AND expiration_date IS NULL
+            `;
+            const ins = await tx.$queryRaw<{ id: string }[]>`
+              INSERT INTO payer_rule (
+                payer_id, state, product_line, code, attribute,
+                value, coverage_status, confidence,
+                effective_date, expiration_date,
+                source_doc_id, source_quote,
+                created_by
+              ) VALUES (
+                ${args.payerId}::uuid, ${args.state}, 'commercial',
+                ${r.cptCode}, ${dbAttr},
+                ${JSON.stringify({ answer: r.answer })}::jsonb,
+                ${r.coverageStatus}, ${confidence},
+                CURRENT_DATE, NULL,
+                ${docId}::uuid, ${r.sourceQuote},
+                ${"crawler:" + args.documentType}
+              )
+              RETURNING id
+            `;
+            return ins[0]!.id;
+          });
           newPayerRuleIds.push({
-            ruleId: ins[0]!.id,
+            ruleId: inserted,
             cptCode: r.cptCode,
             dbAttribute: dbAttr,
             coverageStatus: r.coverageStatus,
@@ -331,7 +344,8 @@ export async function ingestDocumentFromUrl(
           });
           ruleCount++;
         } catch (e) {
-          await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT rule_sp");
+          // Nothing to unwind by hand: the per-rule transaction already
+          // rolled itself back, so this only records what was dropped.
           const msg = e instanceof Error ? e.message : String(e);
           skipped.push(`${r.cptCode}/${dbAttr}`);
           console.warn(
