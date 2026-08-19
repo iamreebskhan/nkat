@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
+import { changedFieldNames, writeAudit } from "@/lib/features/audit/audit-write";
 
 export const SERVICE_CATEGORIES = [
   "clinical",
@@ -162,6 +163,8 @@ export async function listServiceCatalog(args: {
 export async function createService(args: {
   orgId: string;
   payload: CreateService;
+  /** Who did it — recorded on the audit trail. */
+  actorUserId?: string | null;
 }): Promise<{ id: string }> {
   const p = args.payload;
   return withOrgContext(args.orgId, async (tx) => {
@@ -186,6 +189,14 @@ export async function createService(args: {
       RETURNING id
     `;
     if (!rows[0]) throw new Error("createService: insert returned no row.");
+    await writeAudit(tx, {
+      orgId: args.orgId,
+      userId: args.actorUserId ?? null,
+      action: "settings_update",
+      targetType: "visit_service",
+      targetId: rows[0].id,
+      payload: { change: "create", name: p.name, category: p.category ?? "clinical" },
+    });
     return { id: rows[0].id };
   });
 }
@@ -194,6 +205,8 @@ export async function updateService(args: {
   orgId: string;
   id: string;
   payload: UpdateService;
+  /** Who did it — recorded on the audit trail. */
+  actorUserId?: string | null;
 }): Promise<{ updated: boolean }> {
   const p = args.payload;
   return withOrgContext(args.orgId, async (tx) => {
@@ -219,6 +232,23 @@ export async function updateService(args: {
       WHERE id = ${args.id}::uuid
     `;
     if (n === 0) throw new NotFoundError("Service not found.");
+    // Deactivating a service removes it from the documentation picker for
+    // every clinician in the org, so it is named rather than filed as a
+    // generic edit — the same treatment visit types get.
+    await writeAudit(tx, {
+      orgId: args.orgId,
+      userId: args.actorUserId ?? null,
+      action: "settings_update",
+      targetType: "visit_service",
+      targetId: args.id,
+      payload: {
+        change: p.active === false ? "deactivate" : p.active === true ? "reactivate" : "edit",
+        fields: changedFieldNames({
+          name: p.name, description: p.description, category: p.category,
+          cptHint: p.cptHint, visitTypes: p.visitTypes, active: p.active,
+        }),
+      },
+    });
     return { updated: true };
   });
 }
