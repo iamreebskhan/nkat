@@ -146,3 +146,53 @@ describe("a page that did not render is not a document", () => {
     ).not.toThrow();
   });
 });
+
+describe("a PDF we cannot read is a PDF we cannot send", () => {
+  const { assertScreenablePdf, MIN_DOCUMENT_TEXT } = __testing;
+  const ok = { text: "word ".repeat(200), pages: 12, complete: true, reason: null };
+
+  it("passes a PDF with a real text layer", () => {
+    expect(() => assertScreenablePdf(ok, "https://example.test/a.pdf", 220_000))
+      .not.toThrow();
+  });
+
+  it("refuses a scan — arrived fine, but nothing to screen", () => {
+    expect(() =>
+      assertScreenablePdf(
+        { text: "  ", pages: 40, complete: true, reason: null },
+        "https://example.test/scan.pdf",
+        900_000,
+      ),
+    ).toThrowError(/could not be screened for PHI/);
+  });
+
+  it("refuses a partial read — the page we skipped is the one that matters", () => {
+    expect(() =>
+      assertScreenablePdf(
+        { text: "word ".repeat(500), pages: 4000, complete: false, reason: "timed out after 12 of 4000 pages" },
+        "https://example.test/huge.pdf",
+        30_000_000,
+      ),
+    ).toThrowError(/partial read is not a clean scan/);
+  });
+
+  it("does not confuse itself with the HTML render floor", () => {
+    // Same threshold, opposite diagnosis: an HTML page with no text never
+    // arrived and needs a different fetch; a PDF with no text arrived
+    // perfectly and needs OCR or a human vouching for the source. The two
+    // messages have to send the operator to different places.
+    try {
+      assertScreenablePdf(
+        { text: "", pages: 40, complete: true, reason: null },
+        "https://example.test/scan.pdf",
+        900_000,
+      );
+      expect.fail("Should have thrown.");
+    } catch (e) {
+      const msg = (e as Error).message;
+      expect(msg).toContain("almost certainly a scan");
+      expect(msg).not.toContain("did not render");
+      expect(msg).toContain(String(MIN_DOCUMENT_TEXT));
+    }
+  });
+});

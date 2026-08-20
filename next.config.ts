@@ -45,6 +45,10 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   // Stops advertising the framework on every response.
   poweredByHeader: false,
+  // pdf.js is loaded at runtime by the ingestion PHI screen and must be
+  // required from node_modules, not bundled: it ships its own worker and
+  // resolves font/cmap assets by path, both of which the bundler rewrites.
+  serverExternalPackages: ["pdfjs-dist"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

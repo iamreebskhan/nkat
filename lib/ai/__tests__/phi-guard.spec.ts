@@ -134,61 +134,104 @@ describe("assertNoPhi", () => {
 });
 
 describe('checkForPhi mode "document"', () => {
-  /** Policy prose: a handful of dates, each repeated, in a lot of text. */
-  const policyPage = [
-    "Clinical Policy Bulletin: Home Health Nursing Visits.",
-    "Effective 01/01/2026. Last review 09/11/2025. Next review 09/11/2026.",
-    "PRIOR AUTHORIZATION is required for TELEHEALTH SERVICES billed with",
-    "CPT 99341-99350. Aetna considers home visits medically necessary when",
-    "the criteria below are met. This policy supersedes the version dated",
-    "09/11/2025 and applies to claims with dates of service on or after",
-    "01/01/2026.",
-  ].join("\n") + " Additional coverage narrative. ".repeat(60);
+  /**
+   * Policy prose carrying the things a real payer document carries. Every
+   * line below is modelled on something measured in an actual source: the
+   * department mailbox from Ohio's telehealth billing guidelines, the
+   * provider-services line and sample member ID from the UHC Ohio manual,
+   * the policy number from the UHC prolonged-services policy, and the
+   * "Patient <Titlecase> <Titlecase>" headings that appear in four of the
+   * six documents measured.
+   */
+  const policyPage =
+    [
+      "Clinical Policy Bulletin: Home Health Nursing Visits.",
+      "Effective 01/01/2026. Last review 09/11/2025. Next review 09/11/2026.",
+      "PRIOR AUTHORIZATION is required for TELEHEALTH SERVICES billed with",
+      "CPT 99341-99350. Policy Number 2025R0003A supersedes the version dated",
+      "09/11/2025. Patient Monthly Liability is described in section 4.",
+      "Questions: call Provider Services at 800-600-9007 or email",
+      "medicaid@medicaid.ohio.gov. Sample member ID: 14A000000001.",
+    ].join("\n") + " Additional coverage narrative. ".repeat(60);
 
-  /** A roster: one distinct date per row, in very little text. */
-  const roster = Array.from(
-    { length: 40 },
-    (_, i) => `Row ${i + 1}\t0${(i % 9) + 1}/1${i % 10}/19${40 + i}\thome visit`,
-  ).join("\n");
+  /** A roster: name, birth date, member id and phone on every row. */
+  const roster = Array.from({ length: 60 }, (_, i) => {
+    const dob = `0${(i % 9) + 1}/1${i % 10}/19${40 + (i % 50)}`;
+    return `${i + 1}\tDoe${i}, John${i}\t${dob}\tA1B${200000 + i}C\t919-555-${1000 + i}`;
+  }).join("\n");
 
-  it("lets a real payer policy page through", () => {
+  it("lets a real payer document through", () => {
+    // This is the case that made the whole mode necessary. Under the first
+    // cut of document mode, five of six real payer PDFs were refused: the
+    // phone numbers, the mailboxes, the policy numbers and the headings
+    // were each treated as evidence of a person.
     const r = checkForPhi(policyPage, "document");
     expect(r.hits, JSON.stringify(r.hits)).toEqual([]);
     expect(r.ok).toBe(true);
   });
 
-  it("reports the dates it allowed instead of dropping them silently", () => {
-    const r = checkForPhi(policyPage, "document");
-    expect(r.warnings.some((w) => w.pattern === "dob_slash")).toBe(true);
+  it("reports every shape it allowed instead of dropping them silently", () => {
+    const seen = checkForPhi(policyPage, "document").warnings.map((w) => w.pattern);
+    for (const p of ["phone", "email", "mrn_like", "dob_slash", "name_trigger"]) {
+      expect(seen, p).toContain(p);
+    }
   });
 
-  it("still refuses a record set — many distinct dates in little text", () => {
+  it("names the density in the warning, so the bar can be judged", () => {
+    const w = checkForPhi(policyPage, "document").warnings.find(
+      (x) => x.pattern === "dob_slash",
+    )!;
+    expect(w.excerpt).toMatch(/×\d+ distinct \(\d+\.\d\/10k chars\)/);
+  });
+
+  it("refuses a record set — identifiers repeating per row", () => {
     const r = checkForPhi(roster, "document");
     expect(r.ok).toBe(false);
-    expect(r.hits.some((h) => h.pattern === "dob_slash")).toBe(true);
+    // Not one shape: a roster is dense in several at once, which is the
+    // thing that separates it from a document that merely mentions a date.
+    expect(r.hits.map((h) => h.pattern).sort()).toEqual(
+      expect.arrayContaining(["dob_slash", "mrn_like", "phone"]),
+    );
   });
 
-  it("still refuses a labelled birth date at any density", () => {
-    // The keyword marker is a hard trigger in both modes: one occurrence
-    // is evidence on its own, unlike a bare date.
-    const r = checkForPhi(`${policyPage}\nDOB: 03/14/1949`, "document");
+  it("refuses an SSN at any density", () => {
+    // The one shape that stays hard: no payer document prints one.
+    const r = checkForPhi(`${policyPage}\n123-45-6789`, "document");
     expect(r.ok).toBe(false);
+    expect(r.hits.some((h) => h.pattern === "ssn")).toBe(true);
   });
 
-  it("still refuses every identifier that names a person", () => {
+  it("refuses a labelled birth date at any density", () => {
+    // What catches a document holding ONE patient, which density cannot.
+    // Zero occurrences across 580 KB of measured payer text.
+    for (const label of ["DOB: 03/14/1949", "Date of birth: 03/14/1949"]) {
+      expect(checkForPhi(`${policyPage}\n${label}`, "document").ok, label).toBe(false);
+    }
+  });
+
+  it("KNOWN GAP: one patient, no SSN and no label, passes", () => {
+    // Recorded deliberately rather than left to be discovered. Density
+    // cannot see a single record, and every shape that would catch this one
+    // is a shape provider manuals are built from. Closing it needs a
+    // different kind of check, not a lower bar.
+    const r = checkForPhi(
+      "Discharge summary for Jane Smith, born 1949, seen at home 03/14/2026.",
+      "document",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("does not change prompt-mode behaviour", () => {
+    // Everything softened above stays hard for the prompts we compose.
     for (const s of [
-      "SSN 123-45-6789",
+      "service on 03/14/2026",
       "reach them at (555) 867-5309",
       "email clinician@example.com",
       "Member ID ABC123XY789",
       "patient John Smith",
     ]) {
-      expect(checkForPhi(`${policyPage}\n${s}`, "document").ok, s).toBe(false);
+      expect(checkForPhi(s).ok, s).toBe(false);
     }
-  });
-
-  it("does not change prompt-mode behaviour — a lone date still refuses", () => {
-    expect(checkForPhi("service on 03/14/2026").ok).toBe(false);
     expect(() => assertNoPhi("service on 03/14/2026", "ctx")).toThrowError(
       PhiGuardError,
     );

@@ -25,12 +25,14 @@ import {
   extractRulesFromDocument,
   type ExtractedRule,
 } from "@/lib/ai/document-rule-extractor";
+import { ValidationError } from "@/lib/api";
 import { withBreakglass } from "@/lib/db";
 import {
   ATTRIBUTE_DB_MAP,
   type CoverageStatus,
 } from "@/lib/features/billing/payer-rule.repository";
 import { chunkText } from "@/lib/features/documents/extractor";
+import { extractPdfText } from "@/lib/features/documents/pdf-text";
 import { propagateGlobalRuleToAllOrgRulebooks } from "@/lib/features/rulebook/rulebook.service";
 
 /**
@@ -266,9 +268,21 @@ export async function ingestDocumentFromUrl(
 
   // 3. Prepare for Claude extraction. isPdf and pageText were computed
   //    above, because the content hash depends on them.
-  const extractInput = isPdf
-    ? { pdfBase64: fetched.bytes.toString("base64") }
-    : { textContent: pageText! };
+  //
+  //    For a PDF this is also where its text layer is read — not to send
+  //    (Claude gets the PDF itself, which it reads better) but so the PHI
+  //    guard has something to screen. Until now it had nothing: the guard
+  //    ran on textContent only, so the ~20 of 25 sources that are PDFs went
+  //    to Anthropic unread. Deliberately AFTER the dedupe short-circuit, so
+  //    an unchanged document costs nothing.
+  let extractInput: { textContent: string } | { pdfBase64: string; pdfText: string };
+  if (isPdf) {
+    const pdf = await extractPdfText(fetched.bytes);
+    assertScreenablePdf(pdf, args.url, fetched.bytes.length);
+    extractInput = { pdfBase64: fetched.bytes.toString("base64"), pdfText: pdf.text };
+  } else {
+    extractInput = { textContent: pageText! };
+  }
 
   // 4. Persist source_document FIRST (so payer_rule FK is satisfied).
   const docId = await withBreakglass(async (tx) => {
@@ -534,8 +548,11 @@ export async function ingestDocumentFromUrl(
   //    we leave to Claude's native document path on the next lookup).
   let chunkCount = 0;
   let embedded = false;
-  if (extractInput.textContent && extractInput.textContent.length > 0) {
-    const chunks = chunkText(extractInput.textContent);
+  //    pageText, not extractInput: the PDF branch now also carries text, but
+  //    it is a screening copy of the text LAYER and must not become the
+  //    chunks a lookup cites. Claude reads the PDF itself.
+  if (pageText && pageText.length > 0) {
+    const chunks = chunkText(pageText);
     const canEmbed = isEmbedderConfigured();
     await withBreakglass(async (tx) => {
       // A FORCED re-extraction reaches here with chunks already stored against
@@ -719,12 +736,54 @@ const MIN_DOCUMENT_TEXT = 400;
 
 function assertReadableDocument(text: string, url: string, rawBytes: number): void {
   if (text.length >= MIN_DOCUMENT_TEXT) return;
-  throw new Error(
+  // ValidationError, not Error: this is a fact about the document that the
+  // operator needs to read. A bare Error reaches handleServiceError as an
+  // internal fault and comes back "Something went wrong. Try again or
+  // contact support." — which is the opposite of what happened. Nothing went
+  // wrong; the document is not usable and the message says exactly why.
+  throw new ValidationError(
     `Document did not render: ${url} returned ${rawBytes} bytes that extract ` +
       `to only ${text.length} characters of text (need ${MIN_DOCUMENT_TEXT}). ` +
       `Usually a JavaScript-rendered page or a scanned image. Not an extraction ` +
       `failure — the document never arrived.`,
   );
+}
+
+/**
+ * A PDF we cannot read is not a PDF we can screen, and an unscreened
+ * document does not go to a vendor we have no BAA with.
+ *
+ * This is a DIFFERENT failure from assertReadableDocument's, and says so.
+ * An HTML page with no text never arrived. A PDF with no text arrived fine —
+ * it is a scan, and Claude's vision path would read it perfectly well. We
+ * just cannot see inside it to check what we would be sending, so we stop.
+ * The distinction matters because the two have opposite fixes: one needs a
+ * different fetch, the other needs OCR or a human vouching for the source.
+ *
+ * Measured on six real payer PDFs: 9.8 KB to 331 KB of text, none remotely
+ * near the floor. Today this refuses nothing that is in the library.
+ */
+function assertScreenablePdf(
+  pdf: { text: string; pages: number; complete: boolean; reason: string | null },
+  url: string,
+  rawBytes: number,
+): void {
+  if (!pdf.complete) {
+    throw new ValidationError(
+      `PDF could not be screened for PHI: ${url} (${rawBytes} bytes) — ` +
+        `${pdf.reason}. A partial read is not a clean scan; the page we did ` +
+        `not reach is exactly the one that would matter. Not sent.`,
+    );
+  }
+  if (pdf.text.length < MIN_DOCUMENT_TEXT) {
+    throw new ValidationError(
+      `PDF could not be screened for PHI: ${url} (${rawBytes} bytes, ` +
+        `${pdf.pages} pages) yielded only ${pdf.text.length} characters of ` +
+        `text (need ${MIN_DOCUMENT_TEXT}) — it is almost certainly a scan. ` +
+        `Claude could read it, but we cannot check what we would be sending, ` +
+        `so it is not sent.`,
+    );
+  }
 }
 
 /**
@@ -781,5 +840,6 @@ export const __testing = {
   normalizeForHash,
   htmlDocumentTitle,
   assertReadableDocument,
+  assertScreenablePdf,
   MIN_DOCUMENT_TEXT,
 };

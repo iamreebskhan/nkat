@@ -82,6 +82,16 @@ export interface ExtractInput {
   /** Use ONE of these. */
   textContent?: string;
   pdfBase64?: string;
+  /**
+   * REQUIRED alongside pdfBase64: the PDF's text layer, for the PHI guard.
+   *
+   * Claude still receives the PDF itself — it reads layout, tables and
+   * scanned pages far better than a text layer — so this is never what gets
+   * sent. It exists because the guard cannot read a base64 blob, and a
+   * document nobody can screen must not be a document that gets sent.
+   * Extracted by lib/features/documents/pdf-text.ts.
+   */
+  pdfText?: string;
   /** Optional context to focus extraction (the model uses it as a hint). */
   payerName?: string;
   state?: string;
@@ -103,12 +113,26 @@ export async function extractRulesFromDocument(
   // public URL, not a prompt we composed from our own data. See the note
   // at the top of phi-guard.ts for why the two are scanned differently.
   //
-  // NOTE the asymmetry this does not fix: a PDF source arrives as
-  // pdfBase64 and is never scanned at all, because the platform doesn't
-  // extract PDF text — it hands the file to Claude's native document
-  // path. Guarding those needs a text-extraction step that doesn't exist
-  // yet; tracked separately.
-  if (input.textContent) assertNoPhi(input.textContent, "ruleExtractor", "document");
+  // The screening happens HERE, at the boundary where the payload leaves for
+  // Anthropic, and not in the ingestion service that happens to call it — so
+  // there is no route to the API that skips it. That mattered: for as long as
+  // PDFs were screened nowhere, every PDF source went out unread, and nothing
+  // in the type system said so.
+  if (input.textContent) {
+    assertNoPhi(input.textContent, "ruleExtractor", "document");
+  }
+  if (input.pdfBase64) {
+    // Fail closed. An unscreenable PDF is not a PDF we are allowed to send,
+    // and the caller has to have done the extraction to prove otherwise.
+    if (input.pdfText === undefined) {
+      throw new Error(
+        "extractRulesFromDocument: pdfBase64 requires pdfText for PHI screening. " +
+          "Extract it with extractPdfText() and pass it; do not omit it to get " +
+          "past this — an unscreened document is the thing the guard exists for.",
+      );
+    }
+    assertNoPhi(input.pdfText, "ruleExtractor.pdf", "document");
+  }
 
   const focus = [
     input.payerName && `Payer: ${input.payerName}`,
