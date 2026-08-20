@@ -276,9 +276,22 @@ export async function runIngestionCron(): Promise<{
                                             THEN now() ELSE last_change_detected_at END,
             -- A fall to 0 on a source that used to yield rules means the
             -- document was restructured; without this it looks identical
-            -- to a healthy no-op. Not recorded on a detect-only pass,
-            -- which never extracts.
-            last_rule_count         = CASE WHEN ${detectOnly}
+            -- to a healthy no-op.
+            --
+            -- ONLY RECORDED WHEN AN EXTRACTION ACTUALLY RAN. It already
+            -- skipped detect-only passes, but not the far more common case:
+            -- an unchanged document short-circuits on alreadyIngested and
+            -- returns ruleCount 0 WITHOUT extracting anything. Writing that
+            -- 0 overwrote the real count from the last genuine extraction, so
+            -- the health view classified the source no_rules and told the
+            -- operator "Last extraction produced no rules — the document may
+            -- have been restructured" about a document that was never read.
+            --
+            -- That is why 22 of 27 sources looked broken. They are not: they
+            -- are unchanged, correctly not re-extracted, and were being
+            -- reported as failures for doing exactly the right thing. Every
+            -- weekly cron pass reset the count and re-condemned them.
+            last_rule_count         = CASE WHEN ${detectOnly} OR ${r.alreadyIngested}
                                             THEN last_rule_count ELSE ${r.ruleCount} END,
             review_pending          = CASE WHEN ${detectOnly} AND ${changed}
                                             THEN TRUE ELSE review_pending END,
