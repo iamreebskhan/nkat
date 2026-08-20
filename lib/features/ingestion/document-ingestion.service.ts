@@ -122,6 +122,21 @@ export interface IngestionInput {
    * embeddings — so it is cheap enough to run often.
    */
   detectOnly?: boolean;
+  /**
+   * Re-extract even when this exact content has already been ingested for
+   * this payer.
+   *
+   * Operator-only, and never set by the cron: the whole point of the dedupe
+   * is that re-reading an unchanged document costs a paid extraction and
+   * yields nothing new. But without an escape hatch, a source reporting zero
+   * rules could not be investigated at all — the only way to make it run
+   * again was to edit content_hash in psql, which is awkward and writes a
+   * falsehood into the record of what the document contained.
+   *
+   * The displacement guard still applies, so a forced run cannot overwrite
+   * answers this document is not entitled to replace.
+   */
+  forceReextract?: boolean;
 }
 
 /**
@@ -212,7 +227,13 @@ export async function ingestDocumentFromUrl(
     `;
     return rows[0]?.id ?? null;
   }, "ingestion idempotency lookup");
-  if (dupe) {
+  // forceReextract skips the short-circuit. The dedupe is right for the cron —
+  // re-reading an unchanged document costs money and yields nothing new — but
+  // it left an operator with no way to re-run an extraction at all. Diagnosing
+  // a source that reports no rules meant editing content_hash in psql to trick
+  // the check, which is both awkward and a lie written into the record of what
+  // the document was. This is the honest version of that.
+  if (dupe && !args.forceReextract) {
     return {
       sourceDocId: dupe,
       ruleCount: 0,

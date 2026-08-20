@@ -27,7 +27,7 @@ interface SrcRow {
   last_content_hash: string | null;
 }
 
-export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
+export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
   const session = await requireAuth();
   if (session instanceof Response) return session;
   if (session.role !== "platform_admin") {
@@ -36,6 +36,13 @@ export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
   const { id } = await ctx.params;
   const bad = requireUuidParam(id);
   if (bad) return bad;
+
+  // ?force=1 re-extracts a document whose content has not changed. Without it
+  // "Run now" on an unchanged source returns alreadyIngested and does nothing,
+  // which is correct for cost but leaves no way to investigate a source that
+  // reports no rules. The displacement guard still applies to whatever it
+  // extracts, so forcing cannot overwrite another publisher's answers.
+  const force = req.nextUrl.searchParams.get("force") === "1";
 
   const rows = await withBreakglass(async (tx) => {
     return tx.$queryRaw<SrcRow[]>`
@@ -56,6 +63,7 @@ export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
       documentType:
         src.document_type as Parameters<typeof ingestDocumentFromUrl>[0]["documentType"],
       title: src.name,
+      forceReextract: force,
     });
     const changed = r.contentHash !== src.last_content_hash && !r.alreadyIngested;
     await withBreakglass(async (tx) => {
