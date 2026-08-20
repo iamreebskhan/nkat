@@ -52,6 +52,7 @@ payer-rules-humana-sc-editing.sql
 payer-rules-denial-attributes.sql
 payer-rules-denial-attributes-2.sql
 payer-rules-sc-fee-schedule.sql
+payer-rules-sc-office-visits.sql
 payer-rules-round3-six-payers.sql
 
 # --- deliberately NOT applied ----------------------------------------
