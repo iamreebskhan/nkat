@@ -110,3 +110,39 @@ describe("document title", () => {
     expect(htmlDocumentTitle("<title>   </title>")).toBeNull();
   });
 });
+
+describe("a page that did not render is not a document", () => {
+  const { assertReadableDocument, MIN_DOCUMENT_TEXT, htmlToText } = __testing;
+
+  it("refuses a JavaScript-only page that strips down to a site name", () => {
+    // Anthem's provider-news article: 44 KB of HTML, thirteen characters of
+    // text. Hashing that as the document froze the source at "unchanged" and
+    // reported the empty extraction as "produced no rules".
+    const spa = `<html><head><title>Provider News</title></head><body>
+      <div id="root"></div><script>${"x".repeat(40_000)}</script></body></html>`;
+    const text = htmlToText(spa);
+    expect(text.length).toBeLessThan(MIN_DOCUMENT_TEXT);
+    expect(() => assertReadableDocument(text, "https://example.test/a", 44_163))
+      .toThrowError(/did not render/);
+  });
+
+  it("says the document never arrived, not that extraction found nothing", () => {
+    // The wording is the point: one sentence sends the operator to the
+    // fetch strategy, the other sends them to the prompt.
+    try {
+      assertReadableDocument("Provider News", "https://example.test/a", 44_163);
+      expect.fail("Should have thrown.");
+    } catch (e) {
+      const msg = (e as Error).message;
+      expect(msg).toContain("13 characters");
+      expect(msg).toContain("44163 bytes");
+      expect(msg).toContain("never arrived");
+    }
+  });
+
+  it("passes a real policy page", () => {
+    expect(() =>
+      assertReadableDocument("word ".repeat(200), "https://example.test/b", 90_000),
+    ).not.toThrow();
+  });
+});

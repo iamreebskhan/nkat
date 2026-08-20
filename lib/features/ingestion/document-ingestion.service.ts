@@ -170,6 +170,11 @@ export async function ingestDocumentFromUrl(
   // it once here so the hash and the extraction agree.
   const rawHtml = isPdf ? null : fetched.bytes.toString("utf8");
   const pageText = rawHtml === null ? null : htmlToText(rawHtml);
+  // A page that rendered almost nothing is not a document. Inline content is
+  // exempt — that is what the caller meant to send.
+  if (pageText !== null && !args.inlineText) {
+    assertReadableDocument(pageText, args.url, fetched.bytes.length);
+  }
   // What the page calls itself, recorded next to what we called it. Null for
   // PDFs — there is no in-process text extraction for them here, which is
   // the same reason the PHI guard cannot see them either.
@@ -691,6 +696,38 @@ function normalizeForHash(text: string): string {
 }
 
 /**
+ * Below this many characters of extracted text, a fetch has not produced a
+ * document and must not be treated as one. Same number and same reasoning as
+ * MIN_TEXT in scripts/recheck-source-drift.mjs, which already learned this:
+ * an empty extraction that is allowed through does not fail, it AGREES with
+ * everything, and the agreement is reported as health.
+ *
+ * The case that prompted it here: Anthem's provider-news article at
+ *   providernews.anthem.com/ohio/articles/quick-guide-...-28751
+ * returns 44 KB of HTML that renders, after tag stripping, to the thirteen
+ * characters "Provider News". It is a JavaScript-only page. The pipeline was
+ * willing to hash those thirteen characters as the document, send them to
+ * Claude, and file the result as "Last extraction produced no rules — the
+ * document may have been restructured". That sentence points the operator at
+ * the extractor. The truth is that the page never arrived, and the fix is a
+ * different fetch strategy, not a different prompt.
+ *
+ * It also froze: thirteen characters hash stably, so the source would have
+ * gone on reporting "unchanged" forever.
+ */
+const MIN_DOCUMENT_TEXT = 400;
+
+function assertReadableDocument(text: string, url: string, rawBytes: number): void {
+  if (text.length >= MIN_DOCUMENT_TEXT) return;
+  throw new Error(
+    `Document did not render: ${url} returned ${rawBytes} bytes that extract ` +
+      `to only ${text.length} characters of text (need ${MIN_DOCUMENT_TEXT}). ` +
+      `Usually a JavaScript-rendered page or a scanned image. Not an extraction ` +
+      `failure — the document never arrived.`,
+  );
+}
+
+/**
  * The title the DOCUMENT gives itself, as published — not the name we filed
  * it under.
  *
@@ -739,4 +776,10 @@ function htmlToText(html: string): string {
  * halves are asserted in __tests__/content-hash.spec.ts, which needs the
  * two functions the hash is built from.
  */
-export const __testing = { htmlToText, normalizeForHash, htmlDocumentTitle };
+export const __testing = {
+  htmlToText,
+  normalizeForHash,
+  htmlDocumentTitle,
+  assertReadableDocument,
+  MIN_DOCUMENT_TEXT,
+};
