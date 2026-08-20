@@ -52,3 +52,36 @@ describe("extractPdfText", () => {
     expect(r.reason).toMatch(/timed out/);
   });
 });
+
+/**
+ * What the PDF calls itself, so a source can be contradicted by its own
+ * document. 25 of the 28 registered sources are PDFs — a mismatch check that
+ * only reads HTML <title> is blind exactly where nearly every source lives,
+ * and Aetna renumbering a bulletin is not a thing that only happens to web
+ * pages.
+ */
+describe("extractPdfText title", () => {
+  it("prefers the Info dictionary title", async () => {
+    const withInfo = Buffer.from(
+      ONE_PAGE_PDF.toString("latin1")
+        .replace(
+          "trailer<</Size 6/Root 1 0 R>>",
+          "6 0 obj<</Title(Hospice Services Clinical Coverage Policy 3D)>>endobj\n" +
+            "trailer<</Size 7/Root 1 0 R/Info 6 0 R>>",
+        ),
+      "latin1",
+    );
+    const r = await extractPdfText(withInfo);
+    expect(r.title).toBe("Hospice Services Clinical Coverage Policy 3D");
+  });
+
+  it("falls back to the opening line when there is no Info title", async () => {
+    const r = await extractPdfText(ONE_PAGE_PDF);
+    expect(r.title).toBe("Prior authorization is required after five visits.");
+  });
+
+  it("returns null rather than a title for a file it could not parse", async () => {
+    const r = await extractPdfText(Buffer.from("not a pdf", "utf8"));
+    expect(r.title).toBeNull();
+  });
+});

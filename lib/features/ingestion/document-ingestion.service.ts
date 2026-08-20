@@ -172,15 +172,20 @@ export async function ingestDocumentFromUrl(
   // it once here so the hash and the extraction agree.
   const rawHtml = isPdf ? null : fetched.bytes.toString("utf8");
   const pageText = rawHtml === null ? null : htmlToText(rawHtml);
+  // Filled in below for PDFs, once the file is parsed for PHI screening.
+  let pdfTitle: string | null = null;
   // A page that rendered almost nothing is not a document. Inline content is
   // exempt — that is what the caller meant to send.
   if (pageText !== null && !args.inlineText) {
     assertReadableDocument(pageText, args.url, fetched.bytes.length);
   }
-  // What the page calls itself, recorded next to what we called it. Null for
-  // PDFs — there is no in-process text extraction for them here, which is
-  // the same reason the PHI guard cannot see them either.
-  const fetchedTitle = rawHtml === null ? null : htmlDocumentTitle(rawHtml);
+  // What the document calls itself, recorded next to what we called it.
+  // For HTML that is the <title>; for a PDF it is resolved below from the
+  // same parse the PHI screen needs, so both kinds of source can now
+  // contradict their own configuration. That matters because 25 of the 28
+  // registered sources are PDFs — a check that only reads HTML titles is
+  // blind exactly where nearly every source lives.
+  const htmlTitle = rawHtml === null ? null : htmlDocumentTitle(rawHtml);
 
   // HASH THE CONTENT, NOT THE TRANSPORT.
   //
@@ -218,7 +223,10 @@ export async function ingestDocumentFromUrl(
     return {
       sourceDocId: "", ruleCount: 0, chunkCount: 0, embedded: false,
       contentHash, alreadyIngested: false, skipped: 0, extractError: null,
-      fetchedTitle,
+      // htmlTitle, not the resolved one: detect-only returns before the PDF
+      // is parsed, and parsing a PDF purely to name it is not what this
+      // caller asked for.
+      fetchedTitle: htmlTitle,
     };
   }
 
@@ -261,8 +269,9 @@ export async function ingestDocumentFromUrl(
       skipped: 0,
       extractError: null,
       // Reported even on the dedupe path: an operator pressing "Run now" on an
-      // unchanged source is usually doing it to find out what is there.
-      fetchedTitle,
+      // unchanged source is usually doing it to find out what is there. Null
+      // for a PDF, which is not parsed on this path — ?force=1 reads it.
+      fetchedTitle: htmlTitle,
     };
   }
 
@@ -279,6 +288,7 @@ export async function ingestDocumentFromUrl(
   if (isPdf) {
     const pdf = await extractPdfText(fetched.bytes);
     assertScreenablePdf(pdf, args.url, fetched.bytes.length);
+    pdfTitle = pdf.title;
     extractInput = { pdfBase64: fetched.bytes.toString("base64"), pdfText: pdf.text };
   } else {
     extractInput = { textContent: pageText! };
@@ -299,8 +309,9 @@ export async function ingestDocumentFromUrl(
           // Which basis produced content_hash, so a future reader can tell
           // a text hash from a byte hash without guessing.
           hashBasis,
-          // The document's own title. See htmlDocumentTitle.
-          fetchedTitle,
+          // The document's own title — <title> for HTML, the Info /Title or
+          // opening line for a PDF. See htmlDocumentTitle / extractPdfText.
+          fetchedTitle: htmlTitle ?? pdfTitle,
         })}::jsonb
       )
       -- A FORCED re-extraction reaches this insert with a document that is
@@ -616,7 +627,7 @@ export async function ingestDocumentFromUrl(
     /** Named, not just counted: a refusal is a finding an operator must see. */
     refused,
     extractError,
-    fetchedTitle,
+    fetchedTitle: htmlTitle ?? pdfTitle,
   };
 }
 

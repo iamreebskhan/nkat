@@ -38,6 +38,19 @@ export interface PdfTextResult {
   complete: boolean;
   /** Why it is incomplete, for the operator. null when complete. */
   reason: string | null;
+  /**
+   * The title the PDF gives ITSELF — its Info dictionary /Title, falling back
+   * to the first substantial line of page one.
+   *
+   * The same job the <title> tag does for an HTML source, and it matters more
+   * here: 25 of 28 registered sources are PDFs, so a check that only reads
+   * HTML titles is blind exactly where nearly every source lives. Aetna
+   * renumbering a bulletin out from under us is the failure this is for, and
+   * nothing says it has to happen to the one source that is a web page.
+   *
+   * Free now that the file is parsed for screening anyway.
+   */
+  title: string | null;
 }
 
 export async function extractPdfText(
@@ -80,7 +93,26 @@ export async function extractPdfText(
       pages: 0,
       complete: false,
       reason: `could not parse the PDF: ${e instanceof Error ? e.message : String(e)}`,
+      title: null,
     };
+  }
+
+  // Info-dictionary title, when the producer bothered to set one. Plenty of
+  // payer PDFs carry the file name or a template artefact here instead, so
+  // anything that looks like a path or an untitled placeholder is discarded
+  // in favour of reading the first line of the document.
+  let title: string | null = null;
+  try {
+    const meta = await doc.getMetadata();
+    const raw = (meta?.info as { Title?: unknown } | undefined)?.Title;
+    if (typeof raw === "string") {
+      const t = raw.replace(/\s+/g, " ").trim();
+      if (t.length > 3 && !/^(untitled|microsoft word|document\d*)\b/i.test(t) && !/\.(pdf|docx?)$/i.test(t)) {
+        title = t.slice(0, 300);
+      }
+    }
+  } catch {
+    /* a PDF with no readable metadata still has a first page */
   }
 
   const parts: string[] = [];
@@ -93,6 +125,7 @@ export async function extractPdfText(
           pages: doc.numPages,
           complete: false,
           reason: `timed out after ${read} of ${doc.numPages} pages`,
+          title: title ?? firstLineTitle(parts[0]),
         };
       }
       const page = await doc.getPage(p);
@@ -107,5 +140,34 @@ export async function extractPdfText(
     await task.destroy();
   }
 
-  return { text: parts.join("\n"), pages: doc.numPages, complete: true, reason: null };
+  return {
+    text: parts.join("\n"),
+    pages: doc.numPages,
+    complete: true,
+    reason: null,
+    title: title ?? firstLineTitle(parts[0]),
+  };
+}
+
+/**
+ * The document's opening line, as a stand-in title.
+ *
+ * Payer PDFs lead with what they are — "Reimbursement Policy CMS 1500",
+ * "NC Medicaid Medicaid Hospice Services", "Payment Policy: High Complexity
+ * Medical Decision-Making". Not always the title, always enough to notice
+ * that a hospice policy has become a policy about something else.
+ *
+ * Skips leading page furniture and bare numbering, and gives up rather than
+ * returning something meaningless.
+ */
+function firstLineTitle(firstPage: string | undefined): string | null {
+  if (!firstPage) return null;
+  for (const piece of firstPage.split(/\s{2,}|\n/)) {
+    const s = piece.replace(/\s+/g, " ").trim();
+    if (s.length < 8 || s.length > 200) continue;
+    if (!/[a-z]/i.test(s)) continue;              // page numbers, rule ids
+    if (/^page\b|^\d+\s*of\s*\d+$/i.test(s)) continue;
+    return s.slice(0, 300);
+  }
+  return null;
 }
