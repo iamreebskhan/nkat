@@ -57,10 +57,20 @@
  *
  * What distinguishes a patient roster is not the presence of those shapes
  * but their DENSITY and repetition: one identifier per row, so the distinct
- * count scales with the length of the file. Measured across those six
- * documents the densest single family was 9.2 distinct per 10k characters
- * (an Anthem policy citing 37 revision dates). A roster runs 70–200. There
- * is an order of magnitude between them, and the bar sits in the gap.
+ * count scales with the length of the file. A roster runs 70–200 distinct
+ * per 10k characters. Every PDF source in the library — all 22 — was
+ * measured, and the densest was 15.1 (a four-page UHC policy whose revision
+ * history lists 19 dates in 12.5k characters).
+ *
+ * Note that margin honestly: the bar is 25, so it clears the densest real
+ * document by 1.7x, not by the order of magnitude a smaller sample first
+ * suggested. A heavily revised short policy is genuinely the closest thing
+ * in the library to a roster — a revision table is also one date per row.
+ * What separates them is that a roster is dense in SEVERAL families at once
+ * while a revision table is dense only in dates, and that the distinct-count
+ * floor keeps a short document from tripping on a handful of rows. Both legs
+ * carry weight: that UHC policy is under the density bar AND one row under
+ * the distinct floor.
  *
  * So `mode: "document"` refuses on:
  *   - an SSN, at any density. No payer document prints one.
@@ -86,10 +96,14 @@ export type PhiScanMode = "prompt" | "document";
  * the same few phone numbers, mailboxes and effective dates over and over,
  * so its distinct count stays flat however long it runs.
  *
- * 25 per 10k sits between the densest real payer document measured (9.2) and
- * the thinnest realistic roster (~70). Both conditions must hold, so neither
- * a short dense revision-history table nor a long manual full of department
- * phone numbers can trip it alone.
+ * 25 per 10k sits between the densest of the 22 real payer PDFs measured
+ * (15.1) and the thinnest realistic roster (~70). Both conditions must hold,
+ * so neither a short dense revision-history table nor a long manual full of
+ * department phone numbers can trip it alone.
+ *
+ * If a legitimate document ever creeps up on this, the warnings say so long
+ * before it refuses: every soft hit is logged with its own density, so the
+ * approach is visible rather than arriving as a sudden refusal.
  */
 const DOC_RECORD_MIN_DISTINCT = 20;
 const DOC_RECORD_PER_10K = 25;
@@ -181,9 +195,26 @@ const SAFE_HARBOR_PATTERNS: PhiPattern[] = [
  */
 const HARD_LABEL_TRIGGERS = [
   // Keyword markers — case-insensitive is correct here.
-  /\bdob\s*[:=]/i,
-  /\bdate\s+of\s+birth\s*[:=]/i,
-  /\bsocial\s+security\s+number\s*[:=]/i,
+  //
+  // The trailing \s*\d matters: the label has to be followed by a VALUE.
+  // Without it these match the label as a PHRASE, and a provider manual
+  // discusses these fields for a living. Humana's Ohio manual — 81 pages,
+  // one of the larger sources in the library — was refused on
+  //
+  //   "Federal Tax ID number or provider Social Security number: Every
+  //    provider practice (e.g., legal business entity) has a different..."
+  //
+  // which is a heading about a PROVIDER's enrollment, carries no number,
+  // and is not PHI by any reading. What these triggers are for is the
+  // opposite shape — "DOB: 03/14/1949" — where someone has written a
+  // person's details down. That still matches, including across a line
+  // break or a column boundary, because \s* spans newlines.
+  //
+  // A blank form field ("Date of birth: ______") no longer trips, which is
+  // right: an empty field holds nothing.
+  /\bdob\s*[:=]\s*\d/i,
+  /\bdate\s+of\s+birth\s*[:=]\s*\d/i,
+  /\bsocial\s+security\s+number\s*[:=]\s*\d/i,
 ];
 
 const NAME_SHAPE_TRIGGERS = [

@@ -203,9 +203,27 @@ describe('checkForPhi mode "document"', () => {
 
   it("refuses a labelled birth date at any density", () => {
     // What catches a document holding ONE patient, which density cannot.
-    // Zero occurrences across 580 KB of measured payer text.
-    for (const label of ["DOB: 03/14/1949", "Date of birth: 03/14/1949"]) {
+    for (const label of [
+      "DOB: 03/14/1949",
+      "Date of birth: 03/14/1949",
+      // Across a column boundary, as a table extracts to.
+      "Date of birth:\n03/14/1949",
+      "Social security number: 123-45-6789",
+    ]) {
       expect(checkForPhi(`${policyPage}\n${label}`, "document").ok, label).toBe(false);
+    }
+  });
+
+  it("does not refuse a manual that merely DISCUSSES those fields", () => {
+    // Humana's 81-page Ohio provider manual was refused on this sentence.
+    // It is about a PROVIDER's enrollment, carries no number, and is not
+    // PHI by any reading. The label has to be followed by a value.
+    for (const prose of [
+      "Federal Tax ID number or provider Social Security number: Every provider practice has a different structure.",
+      "Date of birth: ______________",
+      "Include the member DOB: see the claim form instructions.",
+    ]) {
+      expect(checkForPhi(`${policyPage}\n${prose}`, "document").ok, prose).toBe(true);
     }
   });
 
