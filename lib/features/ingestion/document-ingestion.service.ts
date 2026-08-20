@@ -93,6 +93,10 @@ export interface IngestionResult {
    *  rate limit), the message — so a caller can distinguish an API failure
    *  from a genuinely rule-free document. null on success. */
   extractError: string | null;
+  /** The title the fetched page gives ITSELF, so an operator running a source
+   *  by hand can see immediately whether it still serves the document they
+   *  think it does. null for PDFs and for inline content. */
+  fetchedTitle?: string | null;
 }
 
 export interface IngestionInput {
@@ -164,7 +168,12 @@ export async function ingestDocumentFromUrl(
   // For HTML, the extracted text IS the document as far as this pipeline
   // is concerned — it is what Claude reads and what gets chunked. Compute
   // it once here so the hash and the extraction agree.
-  const pageText = isPdf ? null : htmlToText(fetched.bytes.toString("utf8"));
+  const rawHtml = isPdf ? null : fetched.bytes.toString("utf8");
+  const pageText = rawHtml === null ? null : htmlToText(rawHtml);
+  // What the page calls itself, recorded next to what we called it. Null for
+  // PDFs — there is no in-process text extraction for them here, which is
+  // the same reason the PHI guard cannot see them either.
+  const fetchedTitle = rawHtml === null ? null : htmlDocumentTitle(rawHtml);
 
   // HASH THE CONTENT, NOT THE TRANSPORT.
   //
@@ -202,6 +211,7 @@ export async function ingestDocumentFromUrl(
     return {
       sourceDocId: "", ruleCount: 0, chunkCount: 0, embedded: false,
       contentHash, alreadyIngested: false, skipped: 0, extractError: null,
+      fetchedTitle,
     };
   }
 
@@ -243,6 +253,9 @@ export async function ingestDocumentFromUrl(
       alreadyIngested: true,
       skipped: 0,
       extractError: null,
+      // Reported even on the dedupe path: an operator pressing "Run now" on an
+      // unchanged source is usually doing it to find out what is there.
+      fetchedTitle,
     };
   }
 
@@ -267,6 +280,8 @@ export async function ingestDocumentFromUrl(
           // Which basis produced content_hash, so a future reader can tell
           // a text hash from a byte hash without guessing.
           hashBasis,
+          // The document's own title. See htmlDocumentTitle.
+          fetchedTitle,
         })}::jsonb
       )
       -- A FORCED re-extraction reaches this insert with a document that is
@@ -279,8 +294,14 @@ export async function ingestDocumentFromUrl(
       -- document, and a duplicate would split its rules across two
       -- provenance records and undo what 0068 was written to prevent. Only
       -- retrieved_at moves, because that is the one thing a re-run changes.
+      --
+      -- Merge the metadata rather than leaving it: a re-read is the moment a
+      -- renumbered document announces itself, and the stored fetchedTitle
+      -- has to be able to change when the page does.
       ON CONFLICT (url, payer_id, content_hash)
-        DO UPDATE SET retrieved_at = now()
+        DO UPDATE SET retrieved_at    = now(),
+                      source_metadata = source_document.source_metadata
+                                        || excluded.source_metadata
       RETURNING id
     `;
     return rows[0]!.id;
@@ -573,6 +594,7 @@ export async function ingestDocumentFromUrl(
     /** Named, not just counted: a refusal is a finding an operator must see. */
     refused,
     extractError,
+    fetchedTitle,
   };
 }
 
@@ -658,7 +680,38 @@ async function fetchUrlBytes(
  * date moving - is exactly the change this pipeline exists to notice.
  */
 function normalizeForHash(text: string): string {
-  return text.replace(/s+/g, " ").trim().toLowerCase();
+  // \s+, not s+. The backslash was missing, so this replaced every literal
+  // letter "s" with a space: "skilled nursing services" hashed as
+  // "kill ...". Deterministic, so nothing broke loudly, and the tests below
+  // it all still passed — none of them compared two texts that differ only
+  // in an s. It still meant the hash was taken over a mangled copy of the
+  // document, and two versions differing only where an "s" met a space
+  // would have collapsed into "unchanged".
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * The title the DOCUMENT gives itself, as published — not the name we filed
+ * it under.
+ *
+ * source_document.title has always been `args.title ?? args.url`, i.e. our
+ * own label echoed back. That makes the record incapable of contradicting
+ * us, and a source can therefore point somewhere else entirely without
+ * anything on screen looking wrong. It did: an ingestion source registered
+ * as "Aetna OH home-visit reimbursement" pointed at CPB 0009, which Aetna
+ * has since renumbered to "Orthopedic Casts, Braces and Splints". Nothing
+ * in the platform disagreed, because nothing in the platform had ever
+ * looked at what the page called itself.
+ *
+ * Stored alongside the source name so the two can be read together.
+ */
+function htmlDocumentTitle(html: string): string | null {
+  const raw =
+    /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ??
+    /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1];
+  if (!raw) return null;
+  const clean = htmlToText(raw);
+  return clean ? clean.slice(0, 300) : null;
 }
 
 function htmlToText(html: string): string {
@@ -686,4 +739,4 @@ function htmlToText(html: string): string {
  * halves are asserted in __tests__/content-hash.spec.ts, which needs the
  * two functions the hash is built from.
  */
-export const __testing = { htmlToText, normalizeForHash };
+export const __testing = { htmlToText, normalizeForHash, htmlDocumentTitle };

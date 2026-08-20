@@ -35,6 +35,7 @@ interface Source {
   lastError: string | null;
   active: boolean;
   notes: string | null;
+  documentTitle: string | null;
 }
 
 const DOC_TYPES = [
@@ -246,6 +247,19 @@ export default function IngestionSourcesPage() {
                     <td className="px-4 py-2">
                       <div className="font-medium text-slate-900">{r.name}</div>
                       <div className="text-[11px] text-slate-500 truncate max-w-md" title={r.url}>{r.url}</div>
+                      {/* What the page calls ITSELF, next to what we called it.
+                          Deliberately neutral, not a warning colour: these two
+                          rarely read alike even when nothing is wrong, and a
+                          row that always looks alarmed stops being read. The
+                          operator compares them. */}
+                      {r.documentTitle && (
+                        <div
+                          className="text-[11px] text-slate-400 truncate max-w-md"
+                          title={`Title published by the document itself: ${r.documentTitle}`}
+                        >
+                          document says: {r.documentTitle}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-xs text-slate-700">
                       {r.documentType}

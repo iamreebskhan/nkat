@@ -60,6 +60,9 @@ export interface IngestionSourceView {
   lastError: string | null;
   active: boolean;
   notes: string | null;
+  /** What the fetched page calls itself. Null until next fetched, and for
+   *  PDFs. See the query in listSources for why this column exists. */
+  documentTitle?: string | null;
 }
 
 interface Row {
@@ -82,6 +85,8 @@ interface Row {
   review_pending: boolean;
   last_rule_count: number | null;
   consecutive_failures: number;
+  /** Joined in listSources only; absent on the plain SELECT * queries. */
+  document_title?: string | null;
 }
 
 function toView(r: Row): IngestionSourceView {
@@ -99,6 +104,7 @@ function toView(r: Row): IngestionSourceView {
     lastError: r.last_error,
     active: r.active,
     notes: r.notes,
+    documentTitle: r.document_title ?? null,
   };
 }
 
@@ -196,8 +202,28 @@ export async function deleteSource(id: string): Promise<{ deleted: boolean }> {
 
 export async function listSources(): Promise<IngestionSourceView[]> {
   return withBreakglass(async (tx) => {
+    // The title the most recently fetched document gives ITSELF, carried
+    // alongside the name we filed it under. Until this, every column on this
+    // screen restated our own configuration back to us: the name we typed,
+    // the URL we typed, and a `title` on source_document that was just the
+    // name again. Nothing on the page could disagree with the operator, so a
+    // source pointing at the wrong document looked exactly like one pointing
+    // at the right one. Aetna renumbered CPB 0009 to "Orthopedic Casts,
+    // Braces and Splints" and the row still read "home-visit reimbursement".
+    //
+    // NULL until a source is next fetched, and for PDFs, which have no
+    // in-process text extraction here.
     const rows = await tx.$queryRaw<Row[]>`
-      SELECT * FROM ingestion_source ORDER BY created_at DESC
+      SELECT s.*, d.title AS document_title
+        FROM ingestion_source s
+        LEFT JOIN LATERAL (
+          SELECT sd.source_metadata->>'fetchedTitle' AS title
+            FROM source_document sd
+           WHERE sd.url = s.url
+           ORDER BY sd.retrieved_at DESC
+           LIMIT 1
+        ) d ON TRUE
+       ORDER BY s.created_at DESC
     `;
     return rows.map(toView);
   }, "ingestion-source list (platform admin)");

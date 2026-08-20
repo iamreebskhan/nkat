@@ -69,4 +69,44 @@ describe("content hash basis", () => {
     expect(basis(POLICY("", "Effective 01/01/2026, prior authorization is required.")))
       .not.toBe(basis(POLICY("", "Effective 07/01/2026, prior authorization is required.")));
   });
+
+  // Every case above passed while the normalizer was deleting the letter
+  // "s" from the document (`/s+/` for `/\s+/`), because none of them
+  // compared two texts that differ only in an s. This one names what the
+  // normalizer is supposed to do — collapse whitespace, lowercase — so the
+  // typo cannot come back unnoticed.
+  it("normalizes whitespace and case, and nothing else", () => {
+    expect(normalizeForHash("  Skilled   Nursing\tServices  ")).toBe(
+      "skilled nursing services",
+    );
+  });
+});
+
+describe("document title", () => {
+  const { htmlDocumentTitle } = __testing;
+
+  it("reads the title the page gives itself, not the one we filed it under", () => {
+    expect(
+      htmlDocumentTitle(
+        "<html><head><title>Orthopedic Casts, Braces and Splints - Aetna</title></head><body>…</body></html>",
+      ),
+    ).toBe("Orthopedic Casts, Braces and Splints - Aetna");
+  });
+
+  it("falls back to the first h1 when there is no title element", () => {
+    expect(htmlDocumentTitle("<body><h1>Home Health Care</h1><p>x</p></body>")).toBe(
+      "Home Health Care",
+    );
+  });
+
+  it("decodes entities and collapses markup inside the title", () => {
+    expect(htmlDocumentTitle("<title>Casts &amp;  <b>Splints</b></title>")).toBe(
+      "Casts & Splints",
+    );
+  });
+
+  it("returns null when the page names itself nothing", () => {
+    expect(htmlDocumentTitle("<body><p>no title here</p></body>")).toBeNull();
+    expect(htmlDocumentTitle("<title>   </title>")).toBeNull();
+  });
 });
