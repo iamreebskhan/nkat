@@ -72,6 +72,15 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
           last_check_at     = now(),
           last_content_hash = ${r.contentHash},
           last_ingested_at  = CASE WHEN ${changed} THEN now() ELSE last_ingested_at END,
+          -- Record the count when this run actually extracted, exactly as the
+          -- cron does. It was not recorded here at all, so "Run now" could
+          -- pull rules out of a document and leave the health page still
+          -- reporting "Last extraction produced no rules" about it — which is
+          -- precisely what happened on the NC hospice policy: 3 rules written,
+          -- dashboard unchanged. Skipped when the document was unchanged,
+          -- because that run read nothing and its 0 means nothing.
+          last_rule_count   = CASE WHEN ${r.alreadyIngested}
+                                    THEN last_rule_count ELSE ${r.ruleCount} END,
           last_error        = NULL,
           updated_at        = now()
         WHERE id = ${id}::uuid
