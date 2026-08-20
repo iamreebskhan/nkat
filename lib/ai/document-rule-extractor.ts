@@ -59,8 +59,23 @@ const ExtractedRule = z.object({
 });
 export type ExtractedRule = z.infer<typeof ExtractedRule>;
 
-const ExtractionResponse = z.object({
-  rules: z.array(ExtractedRule).max(500),
+/**
+ * The envelope only — every rule left unvalidated so they can be checked one
+ * at a time.
+ *
+ * Validating the whole array at once made ANY single unrecognised code
+ * destroy the entire document's extraction. Measured on NC Medicaid's hospice
+ * policy: the model returned rules, three carried codes the CPT/HCPCS pattern
+ * rejects, safeParse failed on the object, and all of them were thrown away —
+ * reported as "no rules", from a document a person had already pulled rules
+ * out of by hand.
+ *
+ * A hospice policy is exactly where this bites: it lists revenue codes (0651,
+ * 0652, 0656), which are four digits and correctly are NOT CPT or HCPCS. The
+ * validator was right about those three. Its blast radius was wrong.
+ */
+const ExtractionEnvelope = z.object({
+  rules: z.array(z.unknown()).max(500),
 });
 
 export interface ExtractInput {
@@ -155,16 +170,46 @@ export async function extractRulesFromDocument(
     }
     raw = JSON.parse(text.slice(start, end + 1));
   }
-  const parsed = ExtractionResponse.safeParse(raw);
-  if (!parsed.success) {
+  // The ENVELOPE must be right — no rules array means the model did not
+  // answer the question, and there is nothing to salvage.
+  const envelope = ExtractionEnvelope.safeParse(raw);
+  if (!envelope.success) {
     throw new Error(
       "extractRulesFromDocument: schema mismatch — " +
-        parsed.error.issues
+        envelope.error.issues
           .slice(0, 3)
           .map((i) => `${i.path.join(".")}: ${i.message}`)
           .join("; "),
     );
   }
+
+  // Then each rule ON ITS OWN. One unusable entry drops itself and nothing
+  // else; previously it took the whole document with it.
+  const kept: ExtractedRule[] = [];
+  const dropped: string[] = [];
+  for (const candidate of envelope.data.rules) {
+    const one = ExtractedRule.safeParse(candidate);
+    if (one.success) {
+      kept.push(one.data);
+      continue;
+    }
+    // Name what was dropped and why. A run that quietly discards half a
+    // document while reporting success is how "0 rules" went unexplained for
+    // as long as it did.
+    const code =
+      candidate && typeof candidate === "object" && "cptCode" in candidate
+        ? String((candidate as { cptCode: unknown }).cptCode).slice(0, 16)
+        : "(no cptCode)";
+    dropped.push(`${code}: ${one.error.issues[0]?.message ?? "invalid"}`);
+  }
+  if (dropped.length) {
+    console.warn(
+      `extractRulesFromDocument: dropped ${dropped.length}/${envelope.data.rules.length} ` +
+        `rule(s) that do not fit the CPT/HCPCS shape (revenue codes, ranges and ` +
+        `free text land here): ${dropped.slice(0, 10).join(" | ")}`,
+    );
+  }
+  const parsed = { success: true as const, data: { rules: kept } };
   // Anti-hallucination guard: when we have the source TEXT, keep only rules
   // whose sourceQuote actually appears (case/space-insensitive) in the
   // document. Claude is instructed to quote verbatim; this enforces it so a
