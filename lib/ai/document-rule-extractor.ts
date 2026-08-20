@@ -99,7 +99,16 @@ export async function extractRulesFromDocument(
   if (!input.textContent && !input.pdfBase64) {
     throw new Error("extractRulesFromDocument: textContent or pdfBase64 required");
   }
-  if (input.textContent) assertNoPhi(input.textContent, "ruleExtractor");
+  // "document" mode: this is a third-party page fetched from a payer's
+  // public URL, not a prompt we composed from our own data. See the note
+  // at the top of phi-guard.ts for why the two are scanned differently.
+  //
+  // NOTE the asymmetry this does not fix: a PDF source arrives as
+  // pdfBase64 and is never scanned at all, because the platform doesn't
+  // extract PDF text — it hands the file to Claude's native document
+  // path. Guarding those needs a text-extraction step that doesn't exist
+  // yet; tracked separately.
+  if (input.textContent) assertNoPhi(input.textContent, "ruleExtractor", "document");
 
   const focus = [
     input.payerName && `Payer: ${input.payerName}`,
