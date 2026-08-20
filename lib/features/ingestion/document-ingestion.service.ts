@@ -269,6 +269,18 @@ export async function ingestDocumentFromUrl(
           hashBasis,
         })}::jsonb
       )
+      -- A FORCED re-extraction reaches this insert with a document that is
+      -- already stored — same url, same payer, same content hash — because it
+      -- deliberately skipped the dedupe above. Without this it died on the
+      -- 0068 unique constraint (23505) and never got as far as extracting,
+      -- which is exactly what the first version of ?force=1 did.
+      --
+      -- Reuse the row rather than writing a second one: it IS the same
+      -- document, and a duplicate would split its rules across two
+      -- provenance records and undo what 0068 was written to prevent. Only
+      -- retrieved_at moves, because that is the one thing a re-run changes.
+      ON CONFLICT (url, payer_id, content_hash)
+        DO UPDATE SET retrieved_at = now()
       RETURNING id
     `;
     return rows[0]!.id;
