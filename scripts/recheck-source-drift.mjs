@@ -64,6 +64,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 
 const argv = process.argv.slice(2);
@@ -238,7 +239,67 @@ function divergence(text, q) {
   };
 }
 
-const stillPresent = (text, textNoWs, q, textAlnum) =>
+/**
+ * A quote that a PAGE BREAK cut in half.
+ *
+ * The extractor reads a PDF through Claude, which understands page furniture
+ * and leaves it out. pdftotext emits everything in reading order, running
+ * header and footer included — so a sentence spanning two pages arrives with
+ * the header wedged into the middle of it:
+ *
+ *   quote     "...which begins  when the RPM is initiated..."
+ *   document  "...which begins NC Medicaid Clinical Coverage Policy No: 1H
+ *              ... when the RPM is initiated..."
+ *
+ * (The doubled space in the quote is the scar where the header was removed.)
+ *
+ * Both DRIFTED findings on the 2026-08-20 run were this, on documents no
+ * payer had touched. Left alone it gets worse with every PDF-derived rule
+ * added, and a DRIFTED that usually means "page break" is worse than no
+ * check at all — it is the one signal that is supposed to mean a payer
+ * changed the page.
+ *
+ * The safety is not the gap size, it is what the gap CONTAINS: a running
+ * header repeats on every page, so the skipped span must occur at least
+ * three times elsewhere in the document (compared with digits removed, since
+ * "Page 6 of 17" counts up). A revised sentence does not repeat. Verified
+ * against both real cases and against controls that change a number, negate
+ * the sentence, or invent a tail — all three stay missing.
+ */
+const GAP_MAX = 400, MIN_FURNITURE_QUOTE = 60, MIN_FURNITURE_SIDE = 25, FURNITURE_REPEATS = 3;
+
+function survivesPageFurniture(textAlnum, q) {
+  if (!textAlnum) return false;
+  // alnum() here, not a lowercased variant: the caller's textAlnum was built
+  // with this same transform, and it drops capitals rather than folding them.
+  // Lossy, but only safe while BOTH sides are dropped the same way.
+  const qa = alnum(q);
+  if (qa.length < MIN_FURNITURE_QUOTE) return false;
+  // Longest prefix of the quote the document still holds — where the two
+  // renderings part company.
+  let lo = 0, hi = qa.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (textAlnum.includes(qa.slice(0, mid))) lo = mid; else hi = mid - 1;
+  }
+  if (lo < MIN_FURNITURE_SIDE || lo === qa.length) return false;
+  const head = qa.slice(0, lo), tail = qa.slice(lo);
+  if (tail.length < MIN_FURNITURE_SIDE) return false;
+  const noDigits = textAlnum.replace(/[0-9]/g, '');
+  for (let i = textAlnum.indexOf(head); i !== -1; i = textAlnum.indexOf(head, i + 1)) {
+    const from = i + head.length;
+    const at = textAlnum.indexOf(tail, from);
+    if (at === -1 || at - from > GAP_MAX) continue;
+    const core = textAlnum.slice(from, at).replace(/[0-9]/g, '').slice(0, 25);
+    if (core.length < 12) continue;
+    let seen = 0;
+    for (let j = noDigits.indexOf(core); j !== -1 && seen < FURNITURE_REPEATS; j = noDigits.indexOf(core, j + 1)) seen++;
+    if (seen >= FURNITURE_REPEATS) return true;
+  }
+  return false;
+}
+
+const stillPresent = (text, textNoWs, q, textAlnum, stats) =>
   dehyphenations(q).some((c) => text.includes(c)
     || textNoWs.includes(c.replace(/\s+/g, ''))
     // Punctuation-blind, for characters pdftotext could not map. Humana's SC
@@ -251,7 +312,11 @@ const stillPresent = (text, textNoWs, q, textAlnum) =>
     //
     // Safe for the same reason the whitespace form is: every letter and digit
     // must still appear in order, and these quotes run past 100 characters.
-    || (textAlnum && textAlnum.includes(alnum(c))));
+    || (textAlnum && textAlnum.includes(alnum(c)))
+    // Last resort: the quote is all there, with a running header standing in
+    // the middle of it. Counted, not silent — a document held together by
+    // this is one an operator should know about.
+    || (survivesPageFurniture(textAlnum, c) && (stats && stats.furniture++, true)));
 
 /**
  * A money field from a fee schedule needs comparing as a NUMBER, not a string.
@@ -978,15 +1043,17 @@ async function main() {
           const textNoWs = text.replace(/\s+/g, '');
           const textAlnum = alnum(text);
           const textCents = centsInText(text);
+          // Counted per document so a page-break rescue is reported, not silent.
+          const stats = { furniture: 0 };
           const missing = quotes.filter(({ q }) => {
             if (!isRowCitation(q) && isElidedQuote(q)) {
               // Every fragment must survive; the gap between them is the
               // author's, not the document's.
               const frags = elidedFragments(norm(q));
-              if (!frags.length) return !stillPresent(text, textNoWs, norm(q), textAlnum);
-              return frags.some((f) => !stillPresent(text, textNoWs, f, textAlnum));
+              if (!frags.length) return !stillPresent(text, textNoWs, norm(q), textAlnum, stats);
+              return frags.some((f) => !stillPresent(text, textNoWs, f, textAlnum, stats));
             }
-            if (!isRowCitation(q)) return !stillPresent(text, textNoWs, norm(q), textAlnum);
+            if (!isRowCitation(q)) return !stillPresent(text, textNoWs, norm(q), textAlnum, stats);
             // A row citation survives if every checkable field is still there.
             // Row FIELDS are matched without the punctuation-blind fallback:
             // a bare "2.70" stripped to "270" would match far too easily in a
@@ -1047,6 +1114,12 @@ async function main() {
           entry = { ...d, quotes: quotes.length,
             verdict: missing.length ? (allGone ? 'SUSPECT' : 'DRIFTED') : 'ok',
             kind: ex.kind, textChars: text.length, missingCount: missing.length,
+            // Quotes that only matched once a running header was allowed to
+            // stand in the middle of them. Not a problem, but not nothing:
+            // it says this document's quotes were captured through a reader
+            // that drops page furniture and are being checked by one that
+            // does not.
+            furnitureRejoined: stats.furniture,
             // Rules whose OWN citation is gone. Summing live_rules across
             // drifted documents said "3,839 rules" when 5 quotes had moved on
             // a document 259 rules happen to share — a number that reads as a
@@ -1109,6 +1182,12 @@ async function main() {
         // the address the rule cites is a weaker fact than one verified at
         // it, and burying that would make the report claim more than it did.
         if (entry.readVia) console.log(`             read via ${entry.readVia.slice(0, 88)} — the cited URL did not answer`);
+        // Same principle: a quote re-joined across a page break is still a
+        // verified quote, but it was verified past an interruption, and that
+        // is worth one line rather than being folded into a silent "ok".
+        if (entry.furnitureRejoined) {
+          console.log(`             ${entry.furnitureRejoined} quote(s) re-joined across a page break — a running header sits inside them`);
+        }
         if (entry.verdict === 'DRIFTED' || entry.verdict === 'SUSPECT') {
           console.log(`             ${entry.missingCount} of ${entry.quotes} distinct quote(s) no longer present — ${entry.payer}`);
           for (const s of entry.missingSamples) console.log(`               missing: "${s}"`);
@@ -1281,4 +1360,22 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((e) => { console.error('FATAL:', e); process.exit(2); });
+/**
+ * Only sweep when this file is the thing that was run.
+ *
+ * Without the guard, importing the module to test any part of it starts a
+ * six-minute fetch of 64 payer documents and then calls process.exit — so
+ * nothing in here could ever be unit-tested, and the matching rules are
+ * exactly the part that has been wrong most often. Running it the normal way
+ * is unchanged: `node scripts/recheck-source-drift.mjs` makes argv[1] this
+ * file.
+ */
+const RUN_DIRECTLY =
+  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (RUN_DIRECTLY) {
+  main().catch((e) => { console.error('FATAL:', e); process.exit(2); });
+}
+
+/** Exported for tests only — see scripts/__tests__/. */
+export { survivesPageFurniture, stillPresent, norm, alnum };

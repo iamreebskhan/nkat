@@ -16,7 +16,16 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["lib/**/*.{test,spec}.ts", "components/**/*.{test,spec}.ts"],
+    include: [
+      "lib/**/*.{test,spec}.ts",
+      "components/**/*.{test,spec}.ts",
+      // The drift checker's quote matching lives in scripts/ and has been the
+      // single most error-prone code in the repo — every false-positive class
+      // it has shipped (row citations, money formats, U+FFFD, page breaks) was
+      // a matching rule. It is testable now that the script guards its own
+      // entrypoint.
+      "scripts/**/*.{test,spec}.ts",
+    ],
     exclude: [
       "**/node_modules/**",
       "backend/**",
