@@ -65,6 +65,14 @@ export default function PlatformSettingsPage() {
   }
 
   const settingByKey = new Map(settings.map((s) => [s.key, s]));
+  // Anything stored that the catalog does not describe. The table used to
+  // render the catalog and only the catalog, so a stored key outside it had
+  // no row to appear in — which is how the header could read "1 configured"
+  // directly above six rows all saying "(not set)". The one configured
+  // setting was synthesis_cache.version, written by a database trigger, and
+  // there was nowhere on the page it could be seen. Shown, and not editable,
+  // because the next payer_rule insert would overwrite it anyway.
+  const uncatalogued = settings.filter((s) => !catalog.some((c) => c.key === s.key));
 
   return (
     <div className="px-8 py-8">
@@ -84,7 +92,15 @@ export default function PlatformSettingsPage() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>System settings</CardTitle>
-          <CardDescription>{loading ? "Loading…" : `${settings.length} configured · ${catalog.length} catalog keys`}</CardDescription>
+          {/* Count the catalog keys that actually hold a value, not every row
+              in the table — the old count included the trigger-managed one
+              that had no row, so it never matched what was on screen. */}
+          <CardDescription>
+            {loading
+              ? "Loading…"
+              : `${catalog.filter((c) => settingByKey.has(c.key)).length} of ${catalog.length} catalog keys set` +
+                (uncatalogued.length ? ` · ${uncatalogued.length} maintained by the database` : "")}
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -129,6 +145,23 @@ export default function PlatformSettingsPage() {
                   </tr>
                 );
               })}
+              {uncatalogued.map((s) => (
+                <tr key={s.key} className="bg-slate-50/60">
+                  <td className="px-4 py-2 font-mono text-xs">
+                    <div>{s.key}</div>
+                    <div className="text-slate-500 text-xs">
+                      Maintained by the database{s.note ? ` — ${s.note}` : ""}.
+                    </div>
+                  </td>
+                  <td className="px-4 py-2 font-mono text-xs max-w-md truncate">
+                    {JSON.stringify(s.value)}
+                  </td>
+                  <td className="px-4 py-2 text-xs text-slate-500 tabular">
+                    {s.updatedAt.replace("T", " ").slice(0, 16)}
+                  </td>
+                  <td className="px-4 py-2 text-right text-xs text-slate-400">read-only</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </CardContent>

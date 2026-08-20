@@ -1,9 +1,18 @@
 /**
  * Platform settings — read/upsert system_setting + read rate_limit_override.
  *
- * platform_admin only. Keys live in a fixed catalog; the value JSONB
- * shape is open per key.
+ * platform_admin only. Keys live in a fixed catalog, and BOTH the key and the
+ * value are now checked against it.
+ *
+ * They were not. The catalog was a display list and nothing else: the upsert
+ * took any key and any JSON, so `lookup.daily_quotas` — one letter wrong —
+ * saved happily, did nothing, and could never be seen again, because the page
+ * renders the catalog and a key outside it has no row to appear in. The
+ * operator gets a success toast for a setting that does not exist. Likewise
+ * `embeddings.dimension` would accept the string "banana" and wait to be
+ * discovered by whatever reads it next.
  */
+import { ValidationError } from "@/lib/api";
 import { prisma } from "@/lib/db";
 
 export interface SystemSettingView {
@@ -22,14 +31,66 @@ export interface RateLimitOverrideView {
   expiresAt: string | null;
 }
 
-export const KNOWN_SETTINGS = [
-  { key: "lookup.daily_quota", description: "Default daily lookup quota per org." },
-  { key: "ai.synthesizer_model", description: "Pinned Claude model for rule synthesis." },
-  { key: "ai.parser_model", description: "Pinned Claude model for query parsing." },
-  { key: "embeddings.dimension", description: "OpenAI text-embedding-3-large slice (1024)." },
-  { key: "cron.alert_hour_utc", description: "Hour-of-day UTC for the payer-rule alert digest cron." },
-  { key: "cron.backup_hour_utc", description: "Hour-of-day UTC for the nightly logical dump." },
+/**
+ * What each key is allowed to hold. `check` returns null when the value is
+ * acceptable, or the sentence the operator should read when it is not.
+ *
+ * Deliberately narrow. Every one of these is read by something that will not
+ * complain: an hour outside 0–23 means the cron simply never fires, and a
+ * wrong embedding dimension means vectors that no longer compare. Both fail
+ * silently later rather than loudly here, which is the argument for checking
+ * here.
+ */
+const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
+
+export const KNOWN_SETTINGS: {
+  key: string;
+  description: string;
+  check: (v: unknown) => string | null;
+}[] = [
+  {
+    key: "lookup.daily_quota",
+    description: "Default daily lookup quota per org.",
+    check: (v) => (isInt(v) && v > 0 && v <= 1_000_000 ? null : "Expected a whole number of lookups, 1–1000000."),
+  },
+  {
+    key: "ai.synthesizer_model",
+    description: "Pinned Claude model for rule synthesis.",
+    check: (v) => (typeof v === "string" && /^claude-[a-z0-9.-]+$/.test(v) ? null : 'Expected a Claude model id, e.g. "claude-sonnet-4-6".'),
+  },
+  {
+    key: "ai.parser_model",
+    description: "Pinned Claude model for query parsing.",
+    check: (v) => (typeof v === "string" && /^claude-[a-z0-9.-]+$/.test(v) ? null : 'Expected a Claude model id, e.g. "claude-haiku-4-5".'),
+  },
+  {
+    key: "embeddings.dimension",
+    description: "OpenAI text-embedding-3-large slice (1024).",
+    // Not free-form: the column is vector(1024) in production. A different
+    // number here does not resize anything, it just writes vectors that will
+    // not compare against everything already stored.
+    check: (v) => (isInt(v) && v === 1024 ? null : "Must be 1024 — the embedding column is vector(1024)."),
+  },
+  {
+    key: "cron.alert_hour_utc",
+    description: "Hour-of-day UTC for the payer-rule alert digest cron.",
+    check: (v) => (isInt(v) && v >= 0 && v <= 23 ? null : "Expected an hour 0–23 (UTC)."),
+  },
+  {
+    key: "cron.backup_hour_utc",
+    description: "Hour-of-day UTC for the nightly logical dump.",
+    check: (v) => (isInt(v) && v >= 0 && v <= 23 ? null : "Expected an hour 0–23 (UTC)."),
+  },
 ];
+
+/**
+ * Keys written by the database rather than by a person — migration 0021's
+ * trigger bumps synthesis_cache.version on every payer_rule insert. They are
+ * not settable here, but they ARE shown, because a row that exists and cannot
+ * be seen is how "1 configured" ended up printed above six rows that all read
+ * "(not set)".
+ */
+export const SYSTEM_MANAGED_KEYS = new Set(["synthesis_cache.version"]);
 
 export async function listSettings(): Promise<SystemSettingView[]> {
   const rows = await prisma.$queryRaw<
@@ -56,6 +117,23 @@ export async function upsertSetting(args: {
   note: string | null;
   byUserId: string;
 }): Promise<SystemSettingView> {
+  const known = KNOWN_SETTINGS.find((k) => k.key === args.key);
+  if (!known) {
+    if (SYSTEM_MANAGED_KEYS.has(args.key)) {
+      throw new ValidationError(
+        `"${args.key}" is maintained by the database, not by hand. ` +
+          `Changing it here would be overwritten by the next payer_rule insert.`,
+      );
+    }
+    throw new ValidationError(
+      `Unknown setting "${args.key}". Nothing reads a key that is not in the ` +
+        `catalog, so saving it would look like it worked and change nothing. ` +
+        `Known keys: ${KNOWN_SETTINGS.map((k) => k.key).join(", ")}.`,
+    );
+  }
+  const bad = known.check(args.value);
+  if (bad) throw new ValidationError(`${args.key}: ${bad}`);
+
   const rows = await prisma.$queryRaw<
     { key: string; value: unknown; note: string | null; updated_at: Date }[]
   >`
