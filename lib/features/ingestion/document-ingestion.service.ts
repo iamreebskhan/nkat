@@ -512,6 +512,21 @@ export async function ingestDocumentFromUrl(
     const chunks = chunkText(extractInput.textContent);
     const canEmbed = isEmbedderConfigured();
     await withBreakglass(async (tx) => {
+      // A FORCED re-extraction reaches here with chunks already stored against
+      // this document, and (source_doc_id, chunk_index) is unique — so the
+      // insert below failed with 23505 and took the whole run down after the
+      // rules had been extracted. Clear the old chunks first.
+      //
+      // Delete rather than upsert: re-chunking the same text can produce a
+      // DIFFERENT number of chunks, and upserting by index would leave the
+      // tail of a previous, longer run orphaned behind the new one — stale
+      // text still answering RAG lookups. Replacing the set is the only way
+      // the chunks stay a faithful copy of the document.
+      if (args.forceReextract) {
+        await tx.$executeRaw`
+          DELETE FROM document_chunk WHERE source_doc_id = ${docId}::uuid
+        `;
+      }
       for (let i = 0; i < chunks.length; i++) {
         let vec: number[] | null = null;
         if (canEmbed) {
