@@ -1,3 +1,4 @@
+import { randomTestPassword } from "./lib/test-credentials.mjs";
 /**
  * Live verification: Source 3 (analyst → payer_rule) and the
  * AI-synth persist path. Sources 1 & 2 (document ingestion cron) are
@@ -25,7 +26,7 @@ async function req(m, path, body, form) {
   return { s: r.status, j, t };
 }
 
-await req("POST", "/api/auth/signup", { email: `feed-${s}@pallio-smoke.test`, password: `Feed-${s}!`, fullName: "Feed", orgName: `Feed ${s}`, baaAccepted: true });
+await req("POST", "/api/auth/signup", { email: `feed-${s}@pallio-smoke.test`, password: randomTestPassword(), fullName: "Feed", orgName: `Feed ${s}`, baaAccepted: true });
 
 const payers = (await req("GET", "/api/billing/payers")).j?.data?.payers || [];
 const aetna = payers.find((p) => /aetna/i.test(p.name))?.id;

@@ -1,3 +1,4 @@
+import { requireDemoPassword } from "./lib/test-credentials.mjs";
 /**
  * Verify the MASTER / OPERATOR (platform-admin) surface live.
  *
@@ -24,7 +25,7 @@
  */
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const USER_EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const USER_PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
+const USER_PASSWORD = requireDemoPassword();
 const OP_EMAIL = process.env.OPERATOR_EMAIL || "";
 const OP_PASSWORD = process.env.OPERATOR_PASSWORD || "";
 const OP_MFA = process.env.OPERATOR_MFA || ""; // TOTP code, if the operator account has 2FA

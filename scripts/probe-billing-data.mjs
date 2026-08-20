@@ -1,3 +1,4 @@
+import { randomTestPassword } from "./lib/test-credentials.mjs";
 /**
  * Post-seed probe: do lookups now return CITED answers?
  * Tests the exact payer × code × attribute combos seeded in 0018.
@@ -5,7 +6,7 @@
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const stamp = Date.now();
 const EMAIL = `probe2-${stamp}@pallio-smoke.test`;
-const PASSWORD = `Probe2Pass-${stamp}!`;
+const PASSWORD = randomTestPassword();
 const ORG = `Probe2 ${stamp}`;
 
 let cookie = "";

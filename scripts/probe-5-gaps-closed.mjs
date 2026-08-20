@@ -1,3 +1,4 @@
+import { randomTestPassword } from "./lib/test-credentials.mjs";
 /**
  * Final live verification for the 5 corpus-feeder gaps:
  *   1. platform_admin role gate (admin endpoints now reachable)
@@ -32,7 +33,7 @@ async function req(m, p, b, form) {
 }
 
 // fresh signup
-await req("POST", "/api/auth/signup", { email: `gaps-${s}@pallio-smoke.test`, password: `Gp-${s}!`, fullName: "G", orgName: `G ${s}`, baaAccepted: true });
+await req("POST", "/api/auth/signup", { email: `gaps-${s}@pallio-smoke.test`, password: randomTestPassword(), fullName: "G", orgName: `G ${s}`, baaAccepted: true });
 
 const payers = (await req("GET", "/api/billing/payers")).j?.data?.payers || [];
 const aetna = payers.find((p) => /aetna/i.test(p.name))?.id;

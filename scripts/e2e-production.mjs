@@ -1,3 +1,4 @@
+import { randomTestPassword } from "./lib/test-credentials.mjs";
 /**
  * End-to-end smoke test against https://app.pallio.io.
  *
@@ -13,7 +14,7 @@ const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const stamp = Date.now();
 const ORG_NAME = `E2E Smoke ${stamp}`;
 const EMAIL = `e2e-${stamp}@pallio-smoke.test`;
-const PASSWORD = `E2eSmokePass-${stamp}!`;
+const PASSWORD = randomTestPassword();
 const FULL_NAME = `E2E Smoke ${stamp}`;
 
 let cookie = "";

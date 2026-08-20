@@ -1,3 +1,4 @@
+import { randomTestPassword } from "./lib/test-credentials.mjs";
 /**
  * UI end-to-end test against https://app.pallio.io.
  *
@@ -25,7 +26,7 @@ mkdirSync(SHOTS, { recursive: true });
 const stamp = Date.now();
 const ORG = `UI Smoke ${stamp}`;
 const EMAIL = `ui-${stamp}@pallio-smoke.test`;
-const PASSWORD = `UiSmokePass-${stamp}!`;
+const PASSWORD = randomTestPassword();
 const FULL_NAME = `UI Tester ${stamp}`;
 
 const results = [];

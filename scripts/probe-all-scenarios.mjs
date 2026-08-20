@@ -1,3 +1,4 @@
+import { randomTestPassword } from "./lib/test-credentials.mjs";
 /**
  * Comprehensive scenario probe — covers every user-facing flow AND
  * platform-operator gate / surface we can reach from outside a
@@ -79,7 +80,7 @@ console.log("\n████  USER PERSPECTIVE  ████");
 // signup + onboarding
 const orgName = `Scen ${s}`;
 const email = `scen-${s}@pallio-smoke.test`;
-const pwd = `ScenP-${s}!`;
+const pwd = randomTestPassword();
 ok("auth.signup", (await req("POST", "/api/auth/signup", { email, password: pwd, fullName: "Scen User", orgName, baaAccepted: true })).s === 201);
 
 const me = (await req("GET", "/api/auth/me")).j?.data;
@@ -350,7 +351,7 @@ ok("/payers redirects to /settings/rulebook", (await req("GET", "/payers")).s >=
 console.log("\n--- creating Org B for RLS check ---");
 const orgB = `OrgB ${s}`;
 currentCookie = () => cookieB;
-ok("Org B signup", (await req("POST", "/api/auth/signup", { email: `b-${s}@pallio-smoke.test`, password: `BPwd-${s}!`, fullName: "B", orgName: orgB, baaAccepted: true }, { who: "B" })).s === 201);
+ok("Org B signup", (await req("POST", "/api/auth/signup", { email: `b-${s}@pallio-smoke.test`, password: randomTestPassword(), fullName: "B", orgName: orgB, baaAccepted: true }, { who: "B" })).s === 201);
 const orgBPatients = await req("GET", "/api/patients");
 ok("RLS — Org B cannot see Org A's patient", (orgBPatients.j?.data?.rows ?? []).every((p) => p.id !== patientId));
 const orgBVisit = await req("GET", `/api/visits/${visitId}`);

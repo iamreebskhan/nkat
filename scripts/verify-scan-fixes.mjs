@@ -1,3 +1,4 @@
+import { requireDemoPassword } from "./lib/test-credentials.mjs";
 /**
  * Verify the fixes shipped AFTER the full-platform scan (PR #74) actually
  * work live, front-to-back — the wiring the general probes don't exercise:
@@ -17,7 +18,7 @@
  */
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
+const PASSWORD = requireDemoPassword();
 const s = Date.now();
 let cookie = "";
 const results = [];

@@ -1,3 +1,4 @@
+import { requireDemoPassword } from "./lib/test-credentials.mjs";
 /**
  * FULL-RULE live verification from the DEMO USER seat (livedemo@pallio.io).
  *
@@ -27,7 +28,7 @@
  */
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
+const PASSWORD = requireDemoPassword();
 const DOS = new Date().toISOString().slice(0, 10);
 
 let cookie = "";

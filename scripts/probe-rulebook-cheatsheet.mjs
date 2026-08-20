@@ -1,3 +1,4 @@
+import { randomTestPassword } from "./lib/test-credentials.mjs";
 /**
  * Verify rulebook generation + cheat-sheet PDF now contain REAL rules
  * (the seeded 0018 corpus), not empty "unknown" placeholders.
@@ -5,7 +6,7 @@
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const stamp = Date.now();
 const EMAIL = `rb-${stamp}@pallio-smoke.test`;
-const PASSWORD = `RbPass-${stamp}!`;
+const PASSWORD = randomTestPassword();
 const ORG = `RB ${stamp}`;
 
 let cookie = "";

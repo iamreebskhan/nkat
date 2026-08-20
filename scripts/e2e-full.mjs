@@ -1,3 +1,4 @@
+import { randomTestPassword } from "./lib/test-credentials.mjs";
 /**
  * COMPREHENSIVE end-to-end test against https://app.pallio.io.
  *
@@ -24,8 +25,8 @@ const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const stamp = Date.now();
 const ORG_NAME = `E2E Full ${stamp}`;
 const EMAIL = `e2e-full-${stamp}@pallio-smoke.test`;
-const PASSWORD = `E2eFullPass-${stamp}!`;
-const NEW_PASSWORD = `E2eRotated-${stamp}!`;
+const PASSWORD = randomTestPassword();
+const NEW_PASSWORD = randomTestPassword();
 const FULL_NAME = `E2E Full ${stamp}`;
 
 let cookie = "";

@@ -1,3 +1,4 @@
+import { randomTestPassword } from "./lib/test-credentials.mjs";
 /**
  * Verify the document-ingestion pipeline end-to-end on production:
  *   1. CSV rulebook  → /api/rulebook/upload → comparison → merge
@@ -7,7 +8,7 @@
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const stamp = Date.now();
 const EMAIL = `ing-${stamp}@pallio-smoke.test`;
-const PASSWORD = `IngPass-${stamp}!`;
+const PASSWORD = randomTestPassword();
 const ORG = `Ing ${stamp}`;
 
 let cookie = "";

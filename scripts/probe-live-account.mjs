@@ -1,3 +1,4 @@
+import { requireDemoPassword } from "./lib/test-credentials.mjs";
 /**
  * DEEP live verification on a PERSISTENT real account.
  *
@@ -27,7 +28,7 @@
 // production use.
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
+const PASSWORD = requireDemoPassword();
 const ORG_NAME = process.env.TEST_ORG || "Pallio Live Demo";
 
 let cookie = "";

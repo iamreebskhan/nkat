@@ -1,3 +1,4 @@
+import { requireDemoPassword } from "./lib/test-credentials.mjs";
 /**
  * Ingest a LARGE Medicare ruling (too big for one PDF request) by chunking.
  *
@@ -35,7 +36,7 @@ const STATE = process.env.STATE || "OH";
 const DOCTYPE = process.env.DOCTYPE || "cms_pfs";
 const TITLE_BASE = process.env.TITLE || "CMS — CY2026 PFS Final Rule (CMS-1832-F)";
 const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
+const PASSWORD = requireDemoPassword();
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const die = (m) => { console.error(`❌ ${m}`); process.exit(1); };

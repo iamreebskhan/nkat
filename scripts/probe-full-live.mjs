@@ -1,3 +1,4 @@
+import { randomTestPassword } from "./lib/test-credentials.mjs";
 /**
  * FULL live coverage probe — exercises EVERY API route + method against a
  * running Pallio instance, forces the real LLM paths, and prints a precise
@@ -218,7 +219,7 @@ console.log(`\n████  FULL LIVE PROBE → ${BASE}  ████\n`);
 // ════════════════════════════════════════════════════════════════════
 console.log("── auth + onboarding ──");
 const email = `full-${s}@pallio-smoke.test`;
-const pwd = `Fp-${s}!x`;
+const pwd = randomTestPassword();
 const orgName = `Full ${s}`;
 ok("POST /auth/signup", (await req("POST", "/api/auth/signup", { email, password: pwd, fullName: "Full Probe", orgName, baaAccepted: true })).s === 201);
 // Isolated jar so re-issuing a session can't disturb the primary run.
@@ -408,7 +409,7 @@ ok("POST /invites/[token]/accept (bad → 404)", [404, 400, 410, 422].includes((
 // 10. CROSS-ORG RLS ISOLATION (org B)
 // ════════════════════════════════════════════════════════════════════
 console.log("\n── cross-org RLS ──");
-ok("Org B signup", (await req("POST", "/api/auth/signup", { email: `fb-${s}@pallio-smoke.test`, password: `Fb-${s}!x`, fullName: "B", orgName: `FB ${s}`, baaAccepted: true }, { who: "B" })).s === 201);
+ok("Org B signup", (await req("POST", "/api/auth/signup", { email: `fb-${s}@pallio-smoke.test`, password: randomTestPassword(), fullName: "B", orgName: `FB ${s}`, baaAccepted: true }, { who: "B" })).s === 201);
 const bSeesA = await req("GET", `/api/patients/${patientId}`, undefined, { who: "B" });
 ok("RLS — Org B cannot read Org A patient (404/403)", [404, 403].includes(bSeesA.s), `status=${bSeesA.s}`);
 const bSeesV = await req("GET", `/api/visits/${visitId}`, undefined, { who: "B" });

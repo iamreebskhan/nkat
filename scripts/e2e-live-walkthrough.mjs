@@ -1,3 +1,4 @@
+import { requireDemoPassword } from "./lib/test-credentials.mjs";
 /**
  * FULL live UI walkthrough — drives a real headless browser through every
  * page + key button of the running app, so you DON'T have to log in and
@@ -20,7 +21,7 @@ import { join } from "node:path";
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const HEADLESS = process.env.HEADLESS !== "false";
 const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
+const PASSWORD = requireDemoPassword();
 const SHOTS = join(process.cwd(), "screenshots");
 mkdirSync(SHOTS, { recursive: true });
 

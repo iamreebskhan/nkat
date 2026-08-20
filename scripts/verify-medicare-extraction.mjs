@@ -1,3 +1,4 @@
+import { requireDemoPassword } from "./lib/test-credentials.mjs";
 /**
  * Verify the platform EXTRACTS and COMPARES the synthetic Medicare final-rule
  * PDF correctly, across varied scenarios — front-to-back, live.
@@ -25,7 +26,7 @@
  */
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
+const PASSWORD = requireDemoPassword();
 const CRON = process.env.CRON_SECRET || "";
 const DOS = "2026-07-02";
 

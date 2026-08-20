@@ -1,3 +1,4 @@
+import { requireDemoPassword } from "./lib/test-credentials.mjs";
 /**
  * EXHAUSTIVE live UI crawl — visits EVERY page, clicks EVERY safe button,
  * and exercises the two flows no other harness drives:
@@ -31,7 +32,7 @@ import { tmpdir } from "node:os";
 
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = process.env.TEST_PASSWORD || "PallioDemo-2026!";
+const PASSWORD = requireDemoPassword();
 const OP_EMAIL = process.env.OPERATOR_EMAIL || "";
 const OP_PASSWORD = process.env.OPERATOR_PASSWORD || "";
 const INCLUDE_AI = process.env.INCLUDE_AI === "1";
