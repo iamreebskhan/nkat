@@ -44,6 +44,13 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
   // extracts, so forcing cannot overwrite another publisher's answers.
   const force = req.nextUrl.searchParams.get("force") === "1";
 
+  // ?dryRun=1 extracts for real and writes nothing — not the rules, not the
+  // document, and not the bookkeeping below. It answers the question that
+  // actually stops someone pressing "Run now" on an unfamiliar source: what
+  // would this do to the library? Ten FR-cited Medicare rules were displaced
+  // once because that question had no answer short of trying it.
+  const dryRun = req.nextUrl.searchParams.get("dryRun") === "1";
+
   const rows = await withBreakglass(async (tx) => {
     return tx.$queryRaw<SrcRow[]>`
       SELECT id, url, payer_id, state, document_type, name, last_content_hash
@@ -64,7 +71,12 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
         src.document_type as Parameters<typeof ingestDocumentFromUrl>[0]["documentType"],
       title: src.name,
       forceReextract: force,
+      dryRun,
     });
+    // A dry run reports and stops. Writing last_check_at or last_rule_count
+    // here would be the run leaving a mark after all, and last_error = NULL
+    // would quietly clear a real failure the operator has not fixed yet.
+    if (dryRun) return ok(r);
     const changed = r.contentHash !== src.last_content_hash && !r.alreadyIngested;
     await withBreakglass(async (tx) => {
       await tx.$executeRaw`
@@ -89,6 +101,8 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
     return ok({ changed, ...r });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // Same reasoning as the success path: a dry run does not touch the record.
+    if (dryRun) return fail(msg, { status: 422 });
     await withBreakglass(async (tx) => {
       await tx.$executeRaw`
         UPDATE ingestion_source SET

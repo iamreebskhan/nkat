@@ -99,6 +99,31 @@ export interface IngestionResult {
    *  by hand can see immediately whether it still serves the document they
    *  think it does. null for PDFs and for inline content. */
   fetchedTitle?: string | null;
+  /** Present only for dryRun. What a real run would have done. */
+  plan?: IngestionPlan;
+}
+
+/**
+ * What a real run would do, worked out without doing it.
+ *
+ * `wouldDisplace` is the row that matters: every one of those is a live rule
+ * that would stop answering, named with who wrote it, so "will this overwrite
+ * my seeded Medicare rules?" has an answer before the button is pressed
+ * rather than after.
+ */
+export interface IngestionPlan {
+  extracted: number;
+  /** Keys with no live rule — these would be pure additions. */
+  wouldAdd: { code: string; attribute: string }[];
+  /** Live rules that would be expired and replaced. */
+  wouldDisplace: {
+    code: string;
+    attribute: string;
+    incumbentCreatedBy: string;
+    incumbentUrl: string;
+  }[];
+  /** Keys the guard would protect, with the reason it refuses. */
+  wouldRefuse: { code: string; attribute: string; reason: string }[];
 }
 
 export interface IngestionInput {
@@ -128,6 +153,21 @@ export interface IngestionInput {
    * embeddings — so it is cheap enough to run often.
    */
   detectOnly?: boolean;
+  /**
+   * Do everything a real run does — fetch, screen, extract with Claude —
+   * and then write NOTHING. Report what would have happened instead.
+   *
+   * detectOnly answers "has this changed?". This answers the question that
+   * actually stops an operator from pressing the button: "what would this do
+   * to the library?" Registering a source pointed at the wrong document is
+   * how ten FR-cited Medicare rules were displaced once already, and the
+   * displacement guard cannot save you when the wrong document is on the
+   * right host — same publisher, so replacement is allowed.
+   *
+   * Costs one extraction, which is the point: the answer is only worth
+   * anything if the rules are the real ones Claude would write.
+   */
+  dryRun?: boolean;
   /**
    * Re-extract even when this exact content has already been ingested for
    * this payer.
@@ -258,7 +298,10 @@ export async function ingestDocumentFromUrl(
   // a source that reports no rules meant editing content_hash in psql to trick
   // the check, which is both awkward and a lie written into the record of what
   // the document was. This is the honest version of that.
-  if (dupe && !args.forceReextract) {
+  // A dry run bypasses it for the same reason force does: the whole point is
+  // to see what this document would produce, and "nothing, it is unchanged"
+  // is not an answer to that question.
+  if (dupe && !args.forceReextract && !args.dryRun) {
     return {
       sourceDocId: dupe,
       ruleCount: 0,
@@ -292,6 +335,19 @@ export async function ingestDocumentFromUrl(
     extractInput = { pdfBase64: fetched.bytes.toString("base64"), pdfText: pdf.text };
   } else {
     extractInput = { textContent: pageText! };
+  }
+
+  // 3b. Dry run: extract for real, write nothing, report what a real run
+  //     would have done. Placed BEFORE the source_document insert, because
+  //     "writes nothing" has to mean nothing — a dry run that leaves a
+  //     provenance row behind is a real run with a smaller blast radius.
+  if (args.dryRun) {
+    return planOnly({
+      extractInput,
+      args,
+      contentHash,
+      fetchedTitle: htmlTitle ?? pdfTitle,
+    });
   }
 
   // 4. Persist source_document FIRST (so payer_rule FK is satisfied).
@@ -456,19 +512,8 @@ export async function ingestDocumentFromUrl(
                  AND pr.expiration_date IS NULL
                LIMIT 1
             `;
-            const prior = incumbent[0];
-            if (prior) {
-              if (prior.created_by.includes("@")) {
-                throw new RuleDisplacementRefused(
-                  `held by a person-authored rule (${prior.created_by})`,
-                );
-              }
-              if (hostOf(prior.url) !== hostOf(args.url)) {
-                throw new RuleDisplacementRefused(
-                  `incumbent cites ${hostOf(prior.url)}, this document is ${hostOf(args.url)}`,
-                );
-              }
-            }
+            const refusal = displacementRefusal(incumbent[0] ?? null, args.url);
+            if (refusal) throw new RuleDisplacementRefused(refusal);
             await tx.$executeRaw`
               UPDATE payer_rule SET expiration_date = CURRENT_DATE
                WHERE payer_id = ${args.payerId}::uuid
@@ -640,6 +685,118 @@ export async function ingestDocumentFromUrl(
  * replace. Distinct from an ordinary insert failure: nothing is broken, the
  * pipeline is declining, and the existing rule stays exactly as it was.
  */
+/**
+ * The dry-run path: extract for real, then look up — read-only — what each
+ * extracted rule would land on.
+ *
+ * Shares displacementRefusal() with the write path deliberately. A dry run
+ * that reimplements the guard would eventually disagree with it, and a report
+ * that is confidently wrong about whether your seeded rules survive is worse
+ * than no report at all.
+ */
+async function planOnly(ctx: {
+  extractInput: { textContent: string } | { pdfBase64: string; pdfText: string };
+  args: IngestionInput;
+  contentHash: string;
+  fetchedTitle: string | null;
+}): Promise<IngestionResult> {
+  const { args, contentHash, fetchedTitle } = ctx;
+
+  let extracted: ExtractedRule[] = [];
+  let extractError: string | null = null;
+  try {
+    extracted = await extractRulesFromDocument({
+      ...ctx.extractInput,
+      state: args.state ?? undefined,
+      documentTitle: args.title,
+    });
+  } catch (e) {
+    extractError = e instanceof Error ? e.message : String(e);
+  }
+
+  const plan: IngestionPlan = {
+    extracted: extracted.length,
+    wouldAdd: [],
+    wouldDisplace: [],
+    wouldRefuse: [],
+  };
+
+  if (args.payerId && args.state) {
+    await withBreakglass(async (tx) => {
+      for (const r of extracted) {
+        const dbAttr =
+          ATTRIBUTE_DB_MAP[r.attribute as keyof typeof ATTRIBUTE_DB_MAP] ?? r.attribute;
+        const rows = await tx.$queryRaw<{ url: string; created_by: string }[]>`
+          SELECT sd.url, pr.created_by
+            FROM payer_rule pr
+            JOIN source_document sd ON sd.id = pr.source_doc_id
+           WHERE pr.payer_id = ${args.payerId}::uuid
+             AND pr.state = ${args.state}
+             AND pr.code = ${r.cptCode}
+             AND pr.attribute = ${dbAttr}
+             AND pr.expiration_date IS NULL
+           LIMIT 1
+        `;
+        const incumbent = rows[0] ?? null;
+        const reason = displacementRefusal(incumbent, args.url);
+        if (reason) {
+          plan.wouldRefuse.push({ code: r.cptCode, attribute: dbAttr, reason });
+        } else if (incumbent) {
+          plan.wouldDisplace.push({
+            code: r.cptCode,
+            attribute: dbAttr,
+            incumbentCreatedBy: incumbent.created_by,
+            incumbentUrl: incumbent.url,
+          });
+        } else {
+          plan.wouldAdd.push({ code: r.cptCode, attribute: dbAttr });
+        }
+      }
+    }, "ingestion dry run: incumbent lookup");
+  }
+
+  return {
+    sourceDocId: "",
+    ruleCount: 0,
+    chunkCount: 0,
+    embedded: false,
+    contentHash,
+    alreadyIngested: false,
+    skipped: 0,
+    extractError,
+    fetchedTitle,
+    plan,
+  };
+}
+
+/**
+ * May this document replace the rule currently answering a key?
+ *
+ * Returns the reason it may NOT, or null when it may. Pulled out of the write
+ * path so a dry run can ask the same question without writing — a dry run
+ * that reimplements this would eventually disagree with it, and the moment it
+ * did, the report would be worse than no report.
+ *
+ * The rule: a replacement must come from the SAME PUBLISHER as the answer it
+ * replaces. Same host, or it is not a newer edition of anything — it is a
+ * different document making a competing claim, and this pipeline is not
+ * entitled to decide that argument silently. Person-authored rules are never
+ * displaced by a crawler at all.
+ */
+export function displacementRefusal(
+  incumbent: { url: string; created_by: string } | null,
+  candidateUrl: string,
+): string | null {
+  if (!incumbent) return null;
+  if (incumbent.created_by.includes("@")) {
+    return `held by a person-authored rule (${incumbent.created_by})`;
+  }
+  if (hostOf(incumbent.url) !== hostOf(candidateUrl)) {
+    return `incumbent cites ${hostOf(incumbent.url)}, this document is ${hostOf(candidateUrl)}`;
+  }
+  return null;
+}
+
 class RuleDisplacementRefused extends Error {
   constructor(reason: string) {
     super(reason);
