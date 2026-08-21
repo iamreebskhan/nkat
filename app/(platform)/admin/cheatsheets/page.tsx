@@ -44,34 +44,53 @@ export default function CheatsheetTemplatesPage() {
     refresh();
   }, []);
 
+  /**
+   * Every action on this page went `await fetch(...)` and then refreshed,
+   * without ever looking at the response. A 403, a 404, a validation error —
+   * the list re-rendered unchanged and said nothing, so a publish that did
+   * not happen looked exactly like one that did. On a page whose whole job is
+   * deciding what customers can see, that is the wrong failure mode.
+   */
+  async function act(id: string, label: string, run: () => Promise<Response>) {
+    setBusy(id);
+    setError(null);
+    try {
+      const r = await run();
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d?.success) {
+        setError(d?.error ?? `${label} failed (HTTP ${r.status}).`);
+        return;
+      }
+      await refresh();
+    } catch (e) {
+      setError(`${label} failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function rescan() {
-    setBusy("scan");
-    await fetch("/api/admin/cheatsheet-templates", { method: "POST" });
-    await refresh();
-    setBusy(null);
+    await act("scan", "Re-scan", () =>
+      fetch("/api/admin/cheatsheet-templates", { method: "POST" }));
   }
 
   async function publish(id: string) {
-    setBusy(id);
-    await fetch(`/api/admin/cheatsheet-templates/${id}/publish`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    await refresh();
-    setBusy(null);
+    await act(id, "Publish", () =>
+      fetch(`/api/admin/cheatsheet-templates/${id}/publish`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      }));
   }
 
   async function withdraw(id: string) {
     if (!confirm("Withdraw this cheat sheet from all orgs?")) return;
-    setBusy(id);
-    await fetch(`/api/admin/cheatsheet-templates/${id}/withdraw`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    await refresh();
-    setBusy(null);
+    await act(id, "Withdraw", () =>
+      fetch(`/api/admin/cheatsheet-templates/${id}/withdraw`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      }));
   }
 
   const pending = rows.filter((r) => r.status === "pending_review");
