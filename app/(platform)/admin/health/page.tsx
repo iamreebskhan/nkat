@@ -96,7 +96,16 @@ export default function HealthPage() {
 
   // Anything not "ok" is what an operator came here to find, so it goes first
   // and the healthy majority stays collapsed into a count.
-  const attention = sources.filter((s) => s.status !== "ok");
+  //
+  // ACTIVE only, matching how the summary above counts sourcesNeedingAttention
+  // (`s.active && s.status !== "ok"`). Without the active check this table
+  // said "2 of 28 not ok" directly beneath a stat reading 0, because both
+  // were sources somebody had deliberately switched off — the renumbered
+  // Aetna bulletin and the retired test fixture. A source that is off is a
+  // decision, not a problem, and two numbers on one screen describing the
+  // same thing differently is the failure this page exists to stop.
+  const attention = sources.filter((s) => s.active && s.status !== "ok");
+  const offAndNotOk = sources.filter((s) => !s.active && s.status !== "ok").length;
   const thinCoverage = coverage
     .filter((c) => c.coreCodesTargeted > 0 && c.coreCodesCovered < c.coreCodesTargeted)
     .sort((a, b) =>
@@ -211,9 +220,12 @@ export default function HealthPage() {
           <CardDescription>
             {summary === null
               ? "…"
-              : attention.length === 0
-                ? `All ${sources.length} sources reporting ok.`
-                : `${attention.length} of ${sources.length} not ok. The rest are healthy and not listed.`}
+              : `${attention.length === 0
+                  ? `All ${summary.sourcesActive} active sources reporting ok.`
+                  : `${attention.length} of ${summary.sourcesActive} active sources not ok. The rest are healthy and not listed.`}` +
+                (offAndNotOk
+                  ? ` ${offAndNotOk} inactive source${offAndNotOk === 1 ? "" : "s"} also report a problem — switched off deliberately, so not counted here.`
+                  : "")}
           </CardDescription>
         </CardHeader>
         {attention.length > 0 && (
