@@ -791,6 +791,31 @@ async function planOnly(ctx: {
     }, "ingestion dry run: incumbent lookup");
   }
 
+  // Logged, not only returned.
+  //
+  // A dry run writes nothing by design, so its plan exists solely in the HTTP
+  // response — and the runs that matter most are the slow ones. Aetna's
+  // telemedicine policy took long enough that Cloudflare returned 504 before
+  // the app answered: the extraction ran, the plan was computed, the money
+  // was spent, and the answer went nowhere. A line in the log survives the
+  // edge giving up on the request.
+  console.warn(
+    `ingest DRY RUN ${args.url} — extracted=${plan.extracted} ` +
+      `add=${plan.wouldAdd.length} displace=${plan.wouldDisplace.length} ` +
+      `refuse=${plan.wouldRefuse.length}` +
+      (extractError ? ` extractError=${extractError}` : "") +
+      (plan.wouldDisplace.length
+        ? `\n  would displace: ${plan.wouldDisplace
+            .map((d) => `${d.code}/${d.attribute} (${d.incumbentCreatedBy} @ ${hostOf(d.incumbentUrl)})`)
+            .join(", ")}`
+        : "") +
+      (plan.wouldRefuse.length
+        ? `\n  would refuse: ${plan.wouldRefuse
+            .map((d) => `${d.code}/${d.attribute} — ${d.reason}`)
+            .join(", ")}`
+        : ""),
+  );
+
   return {
     sourceDocId: "",
     ruleCount: 0,
