@@ -55,14 +55,38 @@ describe("displacementRefusal", () => {
     expect(r).toContain("person-authored");
   });
 
-  it("does not confuse a subdomain with its parent", () => {
-    // es.aetna.com and www.aetna.com serve the same manual, and the library
-    // cites both. They are still different hosts, and the guard says so
-    // rather than guessing they are the same publisher.
-    const r = displacementRefusal(
-      { url: "https://es.aetna.com/content/dam/aetna/office_manual_hcp.pdf", created_by: "extract:x" },
-      "https://www.aetna.com/content/dam/aetna/office_manual_hcp.pdf",
-    );
-    expect(r).toContain("es.aetna.com");
+  it("treats subdomains of one organisation as one publisher", () => {
+    // This test asserted the opposite when it was written, and the assertion
+    // was wrong. Aetna serves the same office manual from www.aetna.com and
+    // es.aetna.com (its Spanish site), and 75 live rules cite the latter — so
+    // a fresh read of the canonical host was refused with "incumbent cites
+    // es.aetna.com, this document is aetna.com". Aetna forbidden from
+    // updating Aetna. A dry run of the office manual surfaced it as a real
+    // refusal, not a hypothetical.
+    expect(
+      displacementRefusal(
+        { url: "https://es.aetna.com/content/dam/aetna/office_manual_hcp.pdf", created_by: "extract:x" },
+        "https://www.aetna.com/content/dam/aetna/office_manual_hcp.pdf",
+      ),
+    ).toBeNull();
+    // Anthem has the same shape.
+    expect(
+      displacementRefusal(
+        { url: "https://providernews.anthem.com/ohio/articles/x", created_by: "extract:x" },
+        "https://files.providernews.anthem.com/4489/y.pdf",
+      ),
+    ).toBeNull();
+  });
+
+  it("still separates genuinely different publishers of the same rule", () => {
+    // The distinction the guard was built for. govinfo.gov and
+    // federalregister.gov both carry the CY2026 final rule; cms.gov is a
+    // third. Merging subdomains must not merge these.
+    for (const [a, b] of [
+      ["https://www.govinfo.gov/content/pkg/FR-2025-11-05/pdf/2025-19787.pdf", CMS],
+      ["https://www.cms.gov/files/zip/rvu26c.zip", CMS],
+    ] as const) {
+      expect(displacementRefusal({ url: a, created_by: "crawler:x" }, b)).toBeTruthy();
+    }
   });
 });

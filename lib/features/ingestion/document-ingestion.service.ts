@@ -813,9 +813,33 @@ class RuleDisplacementRefused extends Error {
  * Anything unparseable returns the raw string, which cannot equal a real
  * host — so a malformed URL fails closed and replaces nothing.
  */
+/**
+ * The PUBLISHER a URL belongs to — the registrable domain, not the hostname.
+ *
+ * This stripped "www." and compared the rest, which made every other
+ * subdomain a different publisher. Aetna serves the same office manual from
+ * www.aetna.com and es.aetna.com (its Spanish site); 75 live rules cite the
+ * latter, so a fresh read of the canonical host was refused with "incumbent
+ * cites es.aetna.com, this document is aetna.com" — Aetna forbidden from
+ * updating Aetna. Anthem has the same shape: providernews.anthem.com and
+ * files.providernews.anthem.com are one publisher on two hosts.
+ *
+ * The guard exists to stop a DIFFERENT publisher's document quietly
+ * overwriting an answer — a test fixture replacing ten Federal Register
+ * rules. Subdomains of one organisation are not that. Comparing the last two
+ * labels keeps cms.gov, federalregister.gov and govinfo.gov distinct, which
+ * is the distinction that was actually paid for.
+ *
+ * Two labels, not a public-suffix list: every payer and agency in this
+ * library sits on .com, .gov or .org, where two labels is exactly right. It
+ * would over-merge under a multi-part suffix like .co.uk — worth replacing
+ * with a real PSL if a source ever lands on one.
+ */
 function hostOf(url: string): string {
   try {
-    return new URL(url).host.toLowerCase().replace(/^www\./, "");
+    const host = new URL(url).host.toLowerCase();
+    const labels = host.split(".");
+    return labels.length <= 2 ? host : labels.slice(-2).join(".");
   } catch {
     return url;
   }
