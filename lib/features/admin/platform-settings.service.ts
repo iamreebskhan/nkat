@@ -92,6 +92,36 @@ export const KNOWN_SETTINGS: {
  */
 export const SYSTEM_MANAGED_KEYS = new Set(["synthesis_cache.version"]);
 
+/**
+ * Return a catalog key to "(not set)".
+ *
+ * There was no way to do this. Once a key had a value the only move was to
+ * give it a different one, so a setting written by mistake stayed written —
+ * which is how four probe rows had to be cleaned up by a migration instead of
+ * by the operator who made them. "Set it back to the default" is not
+ * available either, because the default lives in code and the page has no
+ * idea what it is.
+ *
+ * Refuses the same two cases the upsert refuses, for the same reasons: an
+ * unknown key was never settable here, and a database-owned key would be
+ * rewritten by the next payer_rule insert anyway.
+ */
+export async function unsetSetting(key: string): Promise<{ removed: boolean }> {
+  if (SYSTEM_MANAGED_KEYS.has(key)) {
+    throw new ValidationError(
+      `"${key}" is maintained by the database. Deleting the row would not ` +
+        `clear it — the next payer_rule insert writes it straight back.`,
+    );
+  }
+  if (!KNOWN_SETTINGS.some((k) => k.key === key)) {
+    throw new ValidationError(
+      `Unknown setting "${key}". Known keys: ${KNOWN_SETTINGS.map((k) => k.key).join(", ")}.`,
+    );
+  }
+  const n = await prisma.$executeRaw`DELETE FROM system_setting WHERE key = ${key}`;
+  return { removed: n > 0 };
+}
+
 export async function listSettings(): Promise<SystemSettingView[]> {
   const rows = await prisma.$queryRaw<
     {

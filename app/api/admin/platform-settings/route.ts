@@ -1,6 +1,7 @@
 /**
- * GET  /api/admin/platform-settings — list system_setting + rate_limit_override
- * POST /api/admin/platform-settings { key, value, note? } — upsert one
+ * GET    /api/admin/platform-settings — list system_setting + rate_limit_override
+ * POST   /api/admin/platform-settings { key, value, note? } — upsert one
+ * DELETE /api/admin/platform-settings?key=… — return one key to "(not set)"
  */
 import { type NextRequest } from "next/server";
 import { z } from "zod";
@@ -11,6 +12,7 @@ import {
   KNOWN_SETTINGS,
   listRateLimitOverrides,
   listSettings,
+  unsetSetting,
   upsertSetting,
 } from "@/lib/features/admin/platform-settings.service";
 
@@ -55,6 +57,21 @@ export async function POST(req: NextRequest): Promise<Response> {
       byUserId: session.userId,
     });
     return ok(r);
+  } catch (err) {
+    return handleServiceError(err);
+  }
+}
+
+export async function DELETE(req: NextRequest): Promise<Response> {
+  const session = await requireAuth();
+  if (session instanceof Response) return session;
+  if (session.role !== "platform_admin") {
+    return fail("Platform admin only.", { status: 403 });
+  }
+  const key = req.nextUrl.searchParams.get("key");
+  if (!key) return fail("key is required.", { status: 400 });
+  try {
+    return ok(await unsetSetting(key));
   } catch (err) {
     return handleServiceError(err);
   }

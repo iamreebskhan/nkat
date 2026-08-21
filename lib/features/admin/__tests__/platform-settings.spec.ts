@@ -66,6 +66,15 @@ describe("platform settings catalog", () => {
     expect(check("ai.synthesizer_model", "claude-opus-4-8")).toBeNull();
   });
 
+  it("guards unset with the same two refusals as the upsert", async () => {
+    // A key that was never settable here should not look deletable either,
+    // and deleting the trigger-owned row would not clear it — the next
+    // payer_rule insert writes it straight back.
+    const { unsetSetting } = await import("@/lib/features/admin/platform-settings.service");
+    await expect(unsetSetting("lookup.daily_quotas")).rejects.toThrow(/Unknown setting/);
+    await expect(unsetSetting("synthesis_cache.version")).rejects.toThrow(/maintained by the database/);
+  });
+
   it("knows which keys the database owns", () => {
     // Written by migration 0021's trigger on every payer_rule insert. Not
     // settable by hand, but it has to be visible — a stored row with no row

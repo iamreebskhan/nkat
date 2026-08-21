@@ -64,6 +64,19 @@ export default function PlatformSettingsPage() {
     await load();
   }
 
+  /** Return a key to "(not set)". Without this a mistaken value is permanent. */
+  async function unset(key: string) {
+    setSaving(true);
+    const r = await fetch(`/api/admin/platform-settings?key=${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    });
+    const d = await r.json();
+    setSaving(false);
+    if (!d.success) { setError(d.error ?? "Unset failed."); return; }
+    setEditing(null);
+    await load();
+  }
+
   const settingByKey = new Map(settings.map((s) => [s.key, s]));
   // Anything stored that the catalog does not describe. The table used to
   // render the catalog and only the catalog, so a stored key outside it had
@@ -141,6 +154,17 @@ export default function PlatformSettingsPage() {
                       >
                         Edit
                       </Button>
+                      {cur && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="ml-2 text-slate-500"
+                          disabled={saving}
+                          onClick={() => void unset(c.key)}
+                        >
+                          Unset
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 );
