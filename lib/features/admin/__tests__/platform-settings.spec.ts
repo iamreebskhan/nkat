@@ -66,6 +66,38 @@ describe("platform settings catalog", () => {
     expect(check("ai.synthesizer_model", "claude-opus-4-8")).toBeNull();
   });
 
+  it("says who owns every key, and where the unsettable ones live", () => {
+    // Six rows with six Edit buttons implied all six did something. Four
+    // could not. Any key this table cannot change has to say where the value
+    // really is, or the page is still lying — just more quietly.
+    for (const k of KNOWN_SETTINGS) {
+      expect(["app", "infrastructure", "schema", "unbuilt"], k.key).toContain(k.ownedBy);
+      if (k.ownedBy !== "app") {
+        expect(k.livesAt, `${k.key} must say where it really lives`).toBeTruthy();
+      }
+    }
+  });
+
+  it("only the two model pins are settable, and they are the two that are read", () => {
+    const settable = KNOWN_SETTINGS.filter((k) => k.ownedBy === "app").map((k) => k.key);
+    expect(settable.sort()).toEqual(["ai.parser_model", "ai.synthesizer_model"]);
+  });
+
+  it("refuses to store a key nothing can act on", async () => {
+    const { upsertSetting } = await import("@/lib/features/admin/platform-settings.service");
+    // Storing these would succeed, show a value, and change nothing — the
+    // exact failure the catalog had for its whole existence.
+    await expect(
+      upsertSetting({ key: "cron.backup_hour_utc", value: 3, note: null, byUserId: "u" }),
+    ).rejects.toThrow(/not settable here[\s\S]*crontab/);
+    await expect(
+      upsertSetting({ key: "embeddings.dimension", value: 1024, note: null, byUserId: "u" }),
+    ).rejects.toThrow(/not settable here[\s\S]*vector\(1024\)/);
+    await expect(
+      upsertSetting({ key: "lookup.daily_quota", value: 500, note: null, byUserId: "u" }),
+    ).rejects.toThrow(/not settable here[\s\S]*not implemented/);
+  });
+
   it("guards unset with the same two refusals as the upsert", async () => {
     // A key that was never settable here should not look deletable either,
     // and deleting the trigger-owned row would not clear it — the next

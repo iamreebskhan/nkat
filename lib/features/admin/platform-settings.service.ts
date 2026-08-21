@@ -14,6 +14,7 @@
  */
 import { ValidationError } from "@/lib/api";
 import { prisma } from "@/lib/db";
+import { invalidateSettingCache } from "@/lib/features/admin/runtime-settings";
 
 export interface SystemSettingView {
   key: string;
@@ -43,42 +44,76 @@ export interface RateLimitOverrideView {
  */
 const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
 
+/**
+ * Who actually controls a key.
+ *
+ * All six used to look alike on the page — six rows, six Edit buttons, one
+ * implication: change this and something happens. Nothing happened for any of
+ * them, and the reasons are not the same reason:
+ *
+ *   app             read at runtime from this table; editing it works
+ *   infrastructure  the real value is an EventBridge rule or a crontab line
+ *   schema          fixed by a column type; not a choice anyone gets to make
+ *   unbuilt         describes a feature that does not exist yet
+ *
+ * Only "app" keys are settable. The rest stay listed, because deleting them
+ * would leave an operator asking "where DO I change the backup hour?" with
+ * nowhere to look — the page now answers that.
+ */
+export type SettingOwner = "app" | "infrastructure" | "schema" | "unbuilt";
+
 export const KNOWN_SETTINGS: {
   key: string;
   description: string;
+  ownedBy: SettingOwner;
+  /** Where the value really lives, for the keys this table cannot change. */
+  livesAt?: string;
   check: (v: unknown) => string | null;
 }[] = [
   {
-    key: "lookup.daily_quota",
-    description: "Default daily lookup quota per org.",
-    check: (v) => (isInt(v) && v > 0 && v <= 1_000_000 ? null : "Expected a whole number of lookups, 1–1000000."),
-  },
-  {
     key: "ai.synthesizer_model",
     description: "Pinned Claude model for rule synthesis.",
+    ownedBy: "app",
     check: (v) => (typeof v === "string" && /^claude-[a-z0-9.-]+$/.test(v) ? null : 'Expected a Claude model id, e.g. "claude-sonnet-4-6".'),
   },
   {
     key: "ai.parser_model",
     description: "Pinned Claude model for query parsing.",
+    ownedBy: "app",
     check: (v) => (typeof v === "string" && /^claude-[a-z0-9.-]+$/.test(v) ? null : 'Expected a Claude model id, e.g. "claude-haiku-4-5".'),
   },
   {
+    key: "lookup.daily_quota",
+    description: "Default daily lookup quota per org.",
+    // There is no quota enforcement in this codebase — not a counter, not a
+    // check, not a column. The key describes a feature, not a setting for
+    // one. Wiring it means building quota enforcement first.
+    ownedBy: "unbuilt",
+    livesAt: "no reader exists — per-org lookup quotas are not implemented",
+    check: (v) => (isInt(v) && v > 0 && v <= 1_000_000 ? null : "Expected a whole number of lookups, 1–1000000."),
+  },
+  {
     key: "embeddings.dimension",
-    description: "OpenAI text-embedding-3-large slice (1024).",
-    // Not free-form: the column is vector(1024) in production. A different
-    // number here does not resize anything, it just writes vectors that will
-    // not compare against everything already stored.
+    description: "OpenAI text-embedding-3-large slice.",
+    // The column is vector(1024). A different number here resizes nothing; it
+    // writes vectors that cannot be compared against everything already
+    // stored. That makes this a fact about the schema, not a preference.
+    ownedBy: "schema",
+    livesAt: "fixed at 1024 by the vector(1024) columns; changing it needs a migration",
     check: (v) => (isInt(v) && v === 1024 ? null : "Must be 1024 — the embedding column is vector(1024)."),
   },
   {
     key: "cron.alert_hour_utc",
     description: "Hour-of-day UTC for the payer-rule alert digest cron.",
+    ownedBy: "infrastructure",
+    livesAt: "infra/terraform/scheduled-tasks.tf (EventBridge schedule_expression)",
     check: (v) => (isInt(v) && v >= 0 && v <= 23 ? null : "Expected an hour 0–23 (UTC)."),
   },
   {
     key: "cron.backup_hour_utc",
     description: "Hour-of-day UTC for the nightly logical dump.",
+    ownedBy: "infrastructure",
+    livesAt: "the deploy host's crontab — see scripts/nightly-backup.sh",
     check: (v) => (isInt(v) && v >= 0 && v <= 23 ? null : "Expected an hour 0–23 (UTC)."),
   },
 ];
@@ -119,6 +154,7 @@ export async function unsetSetting(key: string): Promise<{ removed: boolean }> {
     );
   }
   const n = await prisma.$executeRaw`DELETE FROM system_setting WHERE key = ${key}`;
+  invalidateSettingCache(key);
   return { removed: n > 0 };
 }
 
@@ -161,6 +197,14 @@ export async function upsertSetting(args: {
         `Known keys: ${KNOWN_SETTINGS.map((k) => k.key).join(", ")}.`,
     );
   }
+  if (known.ownedBy !== "app") {
+    // Refusing is the honest answer. Storing it would succeed, show a value
+    // on the page, and change nothing about the system — which is the exact
+    // failure this catalog had for its whole existence.
+    throw new ValidationError(
+      `"${args.key}" is not settable here — ${known.livesAt}.`,
+    );
+  }
   const bad = known.check(args.value);
   if (bad) throw new ValidationError(`${args.key}: ${bad}`);
 
@@ -177,6 +221,10 @@ export async function upsertSetting(args: {
     RETURNING key, value, note, updated_at
   `;
   const r = rows[0]!;
+  // The runtime reader caches for a minute; without this an operator changes
+  // the synthesis model, sees the new value on the page, and watches the old
+  // one keep answering.
+  invalidateSettingCache(r.key);
   return { key: r.key, value: r.value, note: r.note, updatedAt: r.updated_at.toISOString() };
 }
 

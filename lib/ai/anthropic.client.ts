@@ -23,10 +23,30 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 import { env } from "@/lib/env";
+import { getSettingValue, isClaudeModel } from "@/lib/features/admin/runtime-settings";
 import { assertNoPhi } from "./phi-guard";
 
+/**
+ * Defaults, overridable from /admin/settings without a deploy.
+ *
+ * These two constants were the whole of the "pinned model" feature: the
+ * platform-settings page offered ai.parser_model and ai.synthesizer_model,
+ * stored whatever you typed, and nothing ever read either one. Pinning a
+ * model is exactly the change you want to make without waiting for a build —
+ * a model deprecation, a quality regression, a cost decision — so it now
+ * reads the stored value and falls back to these.
+ *
+ * The fallback is never skipped: an unset key, an unreadable database, or a
+ * value that is not a Claude model id all land back on the constant that
+ * shipped. A settings lookup must not be able to break the call it configures.
+ */
 const QUERY_PARSER_MODEL = "claude-haiku-4-5";
 const RULE_SYNTHESIS_MODEL = "claude-sonnet-4-6";
+
+const parserModel = () =>
+  getSettingValue("ai.parser_model", QUERY_PARSER_MODEL, isClaudeModel);
+const synthesizerModel = () =>
+  getSettingValue("ai.synthesizer_model", RULE_SYNTHESIS_MODEL, isClaudeModel);
 
 let _client: Anthropic | null = null;
 
@@ -165,9 +185,10 @@ const PARSER_SYSTEM_PROMPT = [
 
 export async function parseRuleQuery(query: string): Promise<ParsedQuery> {
   assertNoPhi(query, "parseRuleQuery");
+  const model = await parserModel();
   const response = await withTransientRetry(() =>
     client().messages.create({
-      model: QUERY_PARSER_MODEL,
+      model,
       max_tokens: 400,
       system: PARSER_SYSTEM_PROMPT,
       messages: [{ role: "user", content: query }],
@@ -289,9 +310,10 @@ export async function synthesizeRuleAnswer(args: {
     .join("\n\n---\n\n");
 
   assertNoPhi([query, context], "synthesizeRuleAnswer");
+  const model = await synthesizerModel();
   const response = await withTransientRetry(() =>
     client().messages.create({
-      model: RULE_SYNTHESIS_MODEL,
+      model,
       max_tokens: 600,
       system: SYSTEM_PROMPT,
       messages: [

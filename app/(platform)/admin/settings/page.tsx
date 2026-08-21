@@ -6,7 +6,20 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-interface CatalogEntry { key: string; description: string }
+interface CatalogEntry {
+  key: string;
+  description: string;
+  /** "app" keys are read at runtime; the rest are controlled elsewhere. */
+  ownedBy: "app" | "infrastructure" | "schema" | "unbuilt";
+  livesAt?: string;
+}
+
+/** Why a key cannot be edited here, in the words an operator needs. */
+const NOT_SETTABLE: Record<string, string> = {
+  infrastructure: "Set in infrastructure",
+  schema: "Fixed by the schema",
+  unbuilt: "Nothing reads this yet",
+};
 interface SettingRow { key: string; value: unknown; note: string | null; updatedAt: string }
 interface RlOverride {
   orgId: string;
@@ -111,7 +124,9 @@ export default function PlatformSettingsPage() {
           <CardDescription>
             {loading
               ? "Loading…"
-              : `${catalog.filter((c) => settingByKey.has(c.key)).length} of ${catalog.length} catalog keys set` +
+              : `${catalog.filter((c) => c.ownedBy === "app" && settingByKey.has(c.key)).length} of ` +
+                `${catalog.filter((c) => c.ownedBy === "app").length} settable keys set · ` +
+                `${catalog.filter((c) => c.ownedBy !== "app").length} listed for reference only` +
                 (uncatalogued.length ? ` · ${uncatalogued.length} maintained by the database` : "")}
           </CardDescription>
         </CardHeader>
@@ -128,11 +143,24 @@ export default function PlatformSettingsPage() {
             <tbody className="divide-y divide-slate-100">
               {catalog.map((c) => {
                 const cur = settingByKey.get(c.key);
+                const settable = c.ownedBy === "app";
                 return (
-                  <tr key={c.key} className="hover:bg-slate-50">
+                  <tr key={c.key} className={settable ? "hover:bg-slate-50" : "bg-slate-50/60"}>
                     <td className="px-4 py-2 font-mono text-xs">
-                      <div>{c.key}</div>
+                      <div className={settable ? "" : "text-slate-500"}>{c.key}</div>
                       <div className="text-slate-500 text-xs">{c.description}</div>
+                      {/* Six rows with six Edit buttons implied all six did
+                          something. Four of them could not: two live in
+                          infrastructure, one is fixed by a column type, and
+                          one describes a feature nobody built. Saying where
+                          the value really lives is more use than hiding the
+                          row, because someone will come here asking exactly
+                          that. */}
+                      {!settable && (
+                        <div className="text-[11px] text-amber-700 mt-0.5">
+                          {NOT_SETTABLE[c.ownedBy]} — {c.livesAt}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2 font-mono text-xs max-w-md truncate">
                       {cur ? JSON.stringify(cur.value) : <span className="text-slate-400">(not set)</span>}
@@ -141,29 +169,35 @@ export default function PlatformSettingsPage() {
                       {cur?.updatedAt.replace("T", " ").slice(0, 16) ?? "—"}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() =>
-                          setEditing({
-                            key: c.key,
-                            value: cur ? JSON.stringify(cur.value, null, 2) : '""',
-                            note: cur?.note ?? "",
-                          })
-                        }
-                      >
-                        Edit
-                      </Button>
-                      {cur && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="ml-2 text-slate-500"
-                          disabled={saving}
-                          onClick={() => void unset(c.key)}
-                        >
-                          Unset
-                        </Button>
+                      {settable ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() =>
+                              setEditing({
+                                key: c.key,
+                                value: cur ? JSON.stringify(cur.value, null, 2) : '""',
+                                note: cur?.note ?? "",
+                              })
+                            }
+                          >
+                            Edit
+                          </Button>
+                          {cur && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="ml-2 text-slate-500"
+                              disabled={saving}
+                              onClick={() => void unset(c.key)}
+                            >
+                              Unset
+                            </Button>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-400">not settable</span>
                       )}
                     </td>
                   </tr>
