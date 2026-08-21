@@ -49,6 +49,15 @@ interface SourceHealth {
   state: string | null;
 }
 
+interface WeakCitation {
+  payerName: string;
+  url: string;
+  ruleCount: number;
+  codeCount: number;
+  quote: string;
+  sampleCodes: string[];
+}
+
 interface PayerCoverage {
   payerId: string;
   payerName: string;
@@ -65,6 +74,7 @@ export default function HealthPage() {
   const [summary, setSummary] = useState<LibrarySummary | null>(null);
   const [sources, setSources] = useState<SourceHealth[]>([]);
   const [coverage, setCoverage] = useState<PayerCoverage[]>([]);
+  const [weak, setWeak] = useState<WeakCitation[]>([]);
   const [libError, setLibError] = useState<string | null>(null);
 
   async function probe() {
@@ -81,6 +91,7 @@ export default function HealthPage() {
       setSummary(d.data.summary);
       setSources(d.data.sources ?? []);
       setCoverage(d.data.coverage ?? []);
+      setWeak(d.data.weakCitations ?? []);
     } catch {
       setLibError("Could not reach the library-health endpoint.");
     }
@@ -251,6 +262,54 @@ export default function HealthPage() {
                     </td>
                     <td className="px-4 py-2 font-mono text-xs">{s.status}</td>
                     <td className="px-4 py-2 text-xs text-slate-600">{s.detail}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        )}
+      </Card>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Citations that do not mention their code</CardTitle>
+          <CardDescription>
+            {weak.length === 0
+              ? "Every live rule's quote names the code it supports."
+              : `${weak.reduce((n, w) => n + w.ruleCount, 0)} live rules across ` +
+                `${weak.length} quote${weak.length === 1 ? "" : "s"}. Drift checks whether a ` +
+                `citation is still there; this checks whether it says anything about the rule. ` +
+                `A biller clicking through for evidence reads the quote below.`}
+          </CardDescription>
+        </CardHeader>
+        {weak.length > 0 && (
+          <CardContent className="p-0">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
+                <tr>
+                  <th className="text-left font-semibold px-4 py-2.5">Payer</th>
+                  <th className="text-left font-semibold px-4 py-2.5">Rules / codes</th>
+                  <th className="text-left font-semibold px-4 py-2.5">Quote</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {weak.map((w) => (
+                  <tr key={`${w.payerName}-${w.quote.slice(0, 40)}`}>
+                    <td className="px-4 py-2">
+                      <div className="font-medium text-slate-900">{w.payerName}</div>
+                      <div className="text-[11px] text-slate-500 truncate max-w-xs" title={w.url}>
+                        {w.url}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2 tabular text-xs whitespace-nowrap">
+                      {w.ruleCount} / {w.codeCount}
+                      <div className="text-[11px] text-slate-500 font-mono">
+                        {w.sampleCodes.join(" ")}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2 text-xs text-slate-600 italic">
+                      &ldquo;{w.quote}&rdquo;
+                    </td>
                   </tr>
                 ))}
               </tbody>

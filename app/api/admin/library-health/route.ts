@@ -16,6 +16,7 @@ import {
   getCoverageMatrix,
   getLibrarySummary,
   getSourceHealth,
+  getWeakCitations,
 } from "@/lib/features/ingestion/library-health.service";
 
 export const dynamic = "force-dynamic";
@@ -29,12 +30,13 @@ export async function GET(): Promise<Response> {
   }
 
   try {
-    const [summary, sources, coverage] = await Promise.all([
+    const [summary, sources, coverage, weakCitations] = await Promise.all([
       getLibrarySummary(),
       getSourceHealth(),
       getCoverageMatrix(),
+      getWeakCitations(),
     ]);
-    return ok({ summary, sources, coverage });
+    return ok({ summary, sources, coverage, weakCitations });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Library health check failed.";
     return fail(message, { status: 500 });

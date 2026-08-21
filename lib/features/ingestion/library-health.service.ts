@@ -254,6 +254,64 @@ export interface LibrarySummary {
   coreCodeCoveragePct: number;
 }
 
+export interface WeakCitation {
+  payerName: string;
+  /** The document the quote came from. */
+  url: string;
+  /** How many live rules lean on this one quote. */
+  ruleCount: number;
+  /** How many DIFFERENT codes it is asked to support. */
+  codeCount: number;
+  quote: string;
+  sampleCodes: string[];
+}
+
+/**
+ * Live rules whose quote never mentions the code it is cited for.
+ *
+ * Drift asks whether a citation is still THERE. Nothing asked whether it
+ * says anything about the rule it supports, and the two are not the same
+ * question. Fifty live Aetna rules across twenty-five codes cite
+ *
+ *   "Each benefit plan defines which services are covered, which are
+ *    excluded..."
+ *
+ * from a disclaimer page. That quote is present, verbatim, on the page the
+ * rule links to, so drift reports it ok forever — and a biller who clicks
+ * through to find out why 99341 is covered reads a paragraph saying coverage
+ * depends on the plan. The rule may even be right. The citation does not
+ * establish it.
+ *
+ * The test is deliberately narrow: the quote does not contain the rule's own
+ * code, AND the same quote is doing this for several codes at once. One
+ * passage legitimately governing many codes is normal in rulemaking — the
+ * CY2026 final rule finalises RVUs for tables of them — so this is a review
+ * queue, not an error list. What it catches is boilerplate promoted to
+ * evidence.
+ */
+export async function getWeakCitations(): Promise<WeakCitation[]> {
+  return prisma.$queryRaw<WeakCitation[]>`
+    SELECT
+      p.name                                   AS "payerName",
+      d.url                                    AS url,
+      count(*)::int                            AS "ruleCount",
+      count(DISTINCT pr.code)::int             AS "codeCount",
+      left(regexp_replace(pr.source_quote, '\s+', ' ', 'g'), 160) AS quote,
+      (array_agg(DISTINCT pr.code ORDER BY pr.code))[1:6]         AS "sampleCodes"
+    FROM payer_rule pr
+    JOIN payer p           ON p.id = pr.payer_id
+    JOIN source_document d ON d.id = pr.source_doc_id
+   WHERE pr.expiration_date IS NULL
+     AND pr.source_quote IS NOT NULL
+     -- the quote never names the code it is being used to support
+     AND position(pr.code IN pr.source_quote) = 0
+   GROUP BY p.name, d.url, pr.source_quote
+  HAVING count(DISTINCT pr.code) >= 5
+   ORDER BY count(*) DESC
+   LIMIT 25
+  `;
+}
+
 /** Headline numbers — the figures that should have been on a dashboard. */
 export async function getLibrarySummary(): Promise<LibrarySummary> {
   const [coverage, health] = await Promise.all([getCoverageMatrix(), getSourceHealth()]);
