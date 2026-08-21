@@ -89,7 +89,7 @@ export const KNOWN_SETTINGS: {
     // check, not a column. The key describes a feature, not a setting for
     // one. Wiring it means building quota enforcement first.
     ownedBy: "unbuilt",
-    livesAt: "no reader exists — per-org lookup quotas are not implemented",
+    livesAt: "per-org lookup quotas are not implemented",
     check: (v) => (isInt(v) && v > 0 && v <= 1_000_000 ? null : "Expected a whole number of lookups, 1–1000000."),
   },
   {
@@ -99,7 +99,7 @@ export const KNOWN_SETTINGS: {
     // writes vectors that cannot be compared against everything already
     // stored. That makes this a fact about the schema, not a preference.
     ownedBy: "schema",
-    livesAt: "fixed at 1024 by the vector(1024) columns; changing it needs a migration",
+    livesAt: "1024, set by the vector(1024) columns; changing it needs a migration",
     check: (v) => (isInt(v) && v === 1024 ? null : "Must be 1024 — the embedding column is vector(1024)."),
   },
   {
