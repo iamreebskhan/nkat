@@ -41,7 +41,7 @@ export const CreateSourceSchema = z.object({
   payerId: z.string().uuid().nullable().optional(),
   state: z.string().length(2).nullable().optional(),
   documentType: DocumentTypeSchema,
-  scheduleCadence: z.enum(["daily", "weekly", "monthly"]).optional(),
+  scheduleCadence: z.enum(["daily", "weekly", "monthly", "yearly"]).optional(),
   notes: z.string().max(2000).optional(),
 });
 export type CreateSourceInput = z.infer<typeof CreateSourceSchema>;
@@ -150,7 +150,7 @@ export const UpdateSourceSchema = z.object({
   payerId: z.string().uuid().nullable().optional(),
   state: z.string().length(2).nullable().optional(),
   documentType: DocumentTypeSchema.optional(),
-  scheduleCadence: z.enum(["daily", "weekly", "monthly"]).optional(),
+  scheduleCadence: z.enum(["daily", "weekly", "monthly", "yearly"]).optional(),
   notes: z.string().max(2000).nullable().optional(),
   /** Pause a source without losing its history. */
   active: z.boolean().optional(),
@@ -252,6 +252,11 @@ export async function runIngestionCron(): Promise<{
            OR (schedule_cadence = 'daily'   AND last_check_at < now() - INTERVAL '1 day')
            OR (schedule_cadence = 'weekly'  AND last_check_at < now() - INTERVAL '7 days')
            OR (schedule_cadence = 'monthly' AND last_check_at < now() - INTERVAL '30 days')
+           -- An annual rulebook wants an annual read. The CY2026 PFS final
+           -- rule was on monthly only because monthly was the slowest option,
+           -- which cost eleven paid extractions a year of a 1,216-page
+           -- document that is never edited after publication.
+           OR (schedule_cadence = 'yearly'  AND last_check_at < now() - INTERVAL '365 days')
          )
        ORDER BY last_check_at NULLS FIRST
        LIMIT 50

@@ -70,7 +70,7 @@ export default function IngestionSourcesPage() {
   const [docType, setDocType] = useState<(typeof DOC_TYPES)[number]>("reimbursement_policy");
   const [stateCode, setStateCode] = useState("");
   const [payerId, setPayerId] = useState("");
-  const [cadence, setCadence] = useState<"daily" | "weekly" | "monthly">("weekly");
+  const [cadence, setCadence] = useState<"daily" | "weekly" | "monthly" | "yearly">("weekly");
   const [notes, setNotes] = useState("");
 
   async function load() {
@@ -192,6 +192,11 @@ export default function IngestionSourcesPage() {
                   <option value="daily">daily</option>
                   <option value="weekly">weekly</option>
                   <option value="monthly">monthly</option>
+                  {/* An annual rulebook — a CMS final rule — is published
+                      once and never edited. Monthly was the slowest option
+                      available, which cost eleven paid re-reads a year of a
+                      1,216-page document. */}
+                  <option value="yearly">yearly</option>
                 </select>
               </Field>
               <Field label="State (2-letter)">

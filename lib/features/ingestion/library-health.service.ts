@@ -60,7 +60,7 @@ interface SourceRow {
 }
 
 /** Cadence in days; a source is stale at 2x its own cadence. */
-const CADENCE_DAYS: Record<string, number> = { daily: 1, weekly: 7, monthly: 30 };
+const CADENCE_DAYS: Record<string, number> = { daily: 1, weekly: 7, monthly: 30, yearly: 365 };
 const FROZEN_DAYS = 365;
 
 function classify(r: SourceRow): { status: SourceStatus; detail: string } {
@@ -89,7 +89,18 @@ function classify(r: SourceRow): { status: SourceStatus; detail: string } {
     return { status: "stale",
       detail: `Not checked for ${r.days_since_check} days (cadence is ${r.schedule_cadence}) — is the cron running?` };
   }
-  if (r.days_since_change !== null && r.days_since_change > FROZEN_DAYS) {
+  // "Frozen" means: this should have moved by now and has not. That reading
+  // does not survive an annual document. A final rule is published once and
+  // never edited — the CY2027 edition appears at a DIFFERENT url — so a
+  // yearly source is unchanged for a year by design, and flagging it would
+  // put a permanent warning on the one source that is behaving correctly.
+  //
+  // What an operator actually needs for these is "a newer edition exists",
+  // which no freshness check on this url can answer. Registering the new
+  // year's document is a human step, and pretending otherwise with a warning
+  // that never clears would just train them to ignore the column.
+  const annual = r.schedule_cadence === "yearly";
+  if (!annual && r.days_since_change !== null && r.days_since_change > FROZEN_DAYS) {
     return { status: "frozen",
       detail: `Fetches fine but unchanged for ${r.days_since_change} days — confirm the URL still points at the current edition` };
   }
