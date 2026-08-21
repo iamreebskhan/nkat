@@ -32,6 +32,7 @@ import {
   type CoverageStatus,
 } from "@/lib/features/billing/payer-rule.repository";
 import { chunkText } from "@/lib/features/documents/extractor";
+import { fetchRenderedText } from "@/lib/features/documents/browser-fetch";
 import { extractPdfText } from "@/lib/features/documents/pdf-text";
 import { propagateGlobalRuleToAllOrgRulebooks } from "@/lib/features/rulebook/rulebook.service";
 
@@ -211,9 +212,40 @@ export async function ingestDocumentFromUrl(
   // is concerned — it is what Claude reads and what gets chunked. Compute
   // it once here so the hash and the extraction agree.
   const rawHtml = isPdf ? null : fetched.bytes.toString("utf8");
-  const pageText = rawHtml === null ? null : htmlToText(rawHtml);
+  let pageText = rawHtml === null ? null : htmlToText(rawHtml);
   // Filled in below for PDFs, once the file is parsed for PHI screening.
   let pdfTitle: string | null = null;
+  // Set when the page only existed after JavaScript ran.
+  let renderedTitle: string | null = null;
+
+  // A page that strips to almost nothing may be a dead URL — or a page that
+  // is assembled client-side. Anthem's provider-news articles return 44 KB of
+  // HTML that reduces to the thirteen characters "Provider News"; the article
+  // is built by script and a plain fetch never sees it. Rather than refuse a
+  // source that a browser can read perfectly well, render it once and look
+  // again.
+  //
+  // Only on this path. Every other source in the library arrives fine from a
+  // plain fetch, and rendering them all would be slower and no more correct.
+  // Skipped for inline content, which is whatever the caller handed us.
+  if (
+    pageText !== null &&
+    !args.inlineText &&
+    pageText.length < MIN_DOCUMENT_TEXT
+  ) {
+    const rendered = await fetchRenderedText(args.url);
+    if (rendered.ok && rendered.text.length > pageText.length) {
+      console.warn(
+        `ingest: ${args.url} needed a browser — ${fetched.bytes.length} bytes ` +
+          `stripped to ${pageText.length} chars, rendered to ${rendered.text.length}`,
+      );
+      pageText = rendered.text;
+      renderedTitle = rendered.title;
+    } else if (!rendered.ok) {
+      console.warn(`ingest: browser render failed for ${args.url} — ${rendered.reason}`);
+    }
+  }
+
   // A page that rendered almost nothing is not a document. Inline content is
   // exempt — that is what the caller meant to send.
   if (pageText !== null && !args.inlineText) {
@@ -225,7 +257,11 @@ export async function ingestDocumentFromUrl(
   // contradict their own configuration. That matters because 25 of the 28
   // registered sources are PDFs — a check that only reads HTML titles is
   // blind exactly where nearly every source lives.
-  const htmlTitle = rawHtml === null ? null : htmlDocumentTitle(rawHtml);
+  // A rendered page's <title> beats the shell's: on a JavaScript-only article
+  // the served HTML titles itself with the site name ("Provider News") and
+  // only the rendered document knows what the article is called.
+  const htmlTitle =
+    renderedTitle ?? (rawHtml === null ? null : htmlDocumentTitle(rawHtml));
 
   // HASH THE CONTENT, NOT THE TRANSPORT.
   //
