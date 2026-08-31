@@ -296,7 +296,17 @@ export async function getWeakCitations(): Promise<WeakCitation[]> {
       d.url                                    AS url,
       count(*)::int                            AS "ruleCount",
       count(DISTINCT pr.code)::int             AS "codeCount",
-      left(regexp_replace(pr.source_quote, '\s+', ' ', 'g'), 160) AS quote,
+      -- '\\s+', not '\s+'. This is a TypeScript template literal, so \s is an
+      -- unrecognised escape and collapses to a bare s before Postgres ever
+      -- sees it — the pattern that arrived was 's+', which replaced runs of
+      -- the LETTER s with a space. Every quote on the page came back with its
+      -- s's eaten: "Each benefit plan define  which  ervice  are covered".
+      --
+      -- Exactly the bug normalizeForHash had (/s+/ for /\s+/), in a different
+      -- language, written today, by me. It survived a local check because the
+      -- same SQL pasted into psql inside double quotes keeps its backslash;
+      -- only the TS path drops it.
+      left(regexp_replace(pr.source_quote, '\\s+', ' ', 'g'), 160) AS quote,
       (array_agg(DISTINCT pr.code ORDER BY pr.code))[1:6]         AS "sampleCodes"
     FROM payer_rule pr
     JOIN payer p           ON p.id = pr.payer_id
