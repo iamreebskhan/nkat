@@ -334,8 +334,20 @@ export async function synthesizeRuleAnswer(args: {
       raw: "<non-text response>",
     };
   }
-  const raw = block.text.trim();
+  return parseGroundedCitation(
+    block.text.trim(),
+    args.chunks.concat(args.structuredRule ? [args.structuredRule] : []).join("\n"),
+  );
+}
 
+/**
+ * Parse the citation a synthesis reply must carry, and refuse it unless the
+ * quote is actually present in the context we supplied.
+ *
+ * Exported so it can be tested without an API call, for the same reason
+ * extractJsonObject is.
+ */
+export function parseGroundedCitation(raw: string, context: string): SynthesizedRule {
   // Refusal sentinels — short-circuit with no citation.
   if (raw === "NO_RULE_FOUND" || raw === "REFUSED_PHI_DETECTED") {
     return { answer: raw, citation: null, refused: true, raw };
@@ -355,13 +367,53 @@ export async function synthesizeRuleAnswer(args: {
 
   const [, documentName, effectiveDate, verbatimQuote] = match;
   const answer = raw.slice(0, match.index).trim();
+  const quote = verbatimQuote.trim();
+
+  // THE QUOTE MUST BE IN THE CONTEXT WE SUPPLIED.
+  //
+  // Everything above only checks that the model FORMATTED a citation. A model
+  // that invents a plausible document name and a plausible quote satisfies
+  // every check to this point, and the invented citation is then shown to a
+  // biller as evidence.
+  //
+  // That is not hypothetical. Looking up Aetna / OH / 99213 returned:
+  //
+  //   answer:   "CPT 99213 is covered for established-patient outpatient
+  //              E/M ... with no prior authorization required."
+  //   citation: "Aetna Ohio supplemental coverage note 2026"
+  //   quote:    "CPT 99213 is COVERED for established-patient outpatient
+  //              E/M when delivered in the office..."
+  //
+  // No document of that name exists in the corpus. Aetna has no stored rule
+  // for 99213 precisely because a seed enumerated all 919 of its live medical
+  // policy bulletins and found no code-level determination — so the library's
+  // considered position is "Aetna does not publish this", and the synthesiser
+  // was overruling it with a source that does not exist.
+  //
+  // document-rule-extractor.ts has grounded its quotes against the document
+  // text since it was written. The synthesiser never did. Same codebase, same
+  // principle, applied in one place and not the other.
+  //
+  // Whitespace-normalised containment, matching the extractor's check. A
+  // quote that is not in the context makes this a refusal — the caller
+  // already treats a refusal as "no confirmed rule", which is the honest
+  // answer and the one the library intends here.
+  const hay = context.toLowerCase().replace(/\s+/g, " ");
+  const needle = quote.toLowerCase().replace(/\s+/g, " ").trim();
+  if (needle.length < 8 || !hay.includes(needle)) {
+    console.warn(
+      `synthesizeRuleAnswer: refusing an ungrounded citation — ` +
+        `"${documentName.trim()}" quoted text that is not in the retrieved context`,
+    );
+    return { answer: raw, citation: null, refused: true, raw };
+  }
 
   return {
     answer,
     citation: {
       documentName: documentName.trim(),
       effectiveDate: effectiveDate?.trim(),
-      verbatimQuote: verbatimQuote.trim(),
+      verbatimQuote: quote,
     },
     refused: false,
     raw,
