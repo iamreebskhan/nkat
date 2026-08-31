@@ -404,6 +404,11 @@ export async function ingestDocumentFromUrl(
           // The document's own title — <title> for HTML, the Info /Title or
           // opening line for a PDF. See htmlDocumentTitle / extractPdfText.
           fetchedTitle: htmlTitle ?? pdfTitle,
+          // Set only when the payer's own host would not answer and the bytes
+          // came from an archive. An archived copy lags the live document, so
+          // this must travel with the provenance rather than being forgotten
+          // the moment the fetch succeeded.
+          readVia: fetched.readVia ?? null,
         })}::jsonb
       )
       -- A FORCED re-extraction reaches this insert with a document that is
@@ -906,9 +911,73 @@ function hostOf(url: string): string {
   }
 }
 
+/**
+ * Fetch a document, falling back to the Internet Archive when the payer's own
+ * host will not answer us.
+ *
+ * Medical Mutual of Ohio refuses TCP from every network we have — workstation,
+ * VPS and a headless browser alike — so its provider manual is unreachable
+ * directly. It is not unreachable in principle: recheck-source-drift.mjs reads
+ * that exact manual every week through web.archive.org and confirms all 141
+ * rules citing it are still supported. The document is live, official and
+ * verifiable; only our route to it is gone.
+ *
+ * The drift checker has had this fallback since it was written. Ingestion
+ * never did, so a payer that blocks us could be CHECKED but never re-read —
+ * and Medical Mutual sits at zero registered sources for exactly that reason.
+ *
+ * Two things this is careful about, both learned by that script:
+ *
+ *   - The Archive refuses our browser User-Agent. It is requested bare.
+ *   - An archived copy LAGS the live document. Reading one is a weaker fact
+ *     than reading the original, so `readVia` comes back with the bytes and
+ *     is recorded on the document; it is never presented as a direct read.
+ */
+const ARCHIVE_PREFIX = "https://web.archive.org/web/2/";
+
 async function fetchUrlBytes(
   url: string,
+): Promise<{ bytes: Buffer; contentType: string; readVia?: string }> {
+  try {
+    return await fetchDirect(url);
+  } catch (direct) {
+    // Only for an origin that would not talk to us at all. A 404 or a 403 is
+    // an answer — the source is wrong or blocking deliberately, and an
+    // archived copy would paper over that.
+    const message = direct instanceof Error ? direct.message : String(direct);
+    if (!/fetch failed|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|socket hang up|network/i.test(message)) {
+      throw direct;
+    }
+    const mirror = ARCHIVE_PREFIX + url;
+    try {
+      const got = await fetchDirect(mirror, { bare: true });
+      console.warn(
+        `ingest: ${url} did not answer (${message.slice(0, 80)}); read from the ` +
+          `Internet Archive instead. This copy lags the live document.`,
+      );
+      return { ...got, readVia: mirror };
+    } catch {
+      // Report the ORIGINAL failure. "web.archive.org did not answer" would
+      // send the operator to fix the wrong host.
+      throw direct;
+    }
+  }
+}
+
+async function fetchDirect(
+  url: string,
+  opts: { bare?: boolean } = {},
 ): Promise<{ bytes: Buffer; contentType: string }> {
+  if (opts.bare) {
+    // No User-Agent at all: the Internet Archive refuses ours.
+    const r = await fetch(url, { redirect: "follow" });
+    if (!r.ok) throw new Error(`fetch ${url} → ${r.status} ${r.statusText}`);
+    const b = Buffer.from(await r.arrayBuffer());
+    if (b.length > 32 * 1024 * 1024) {
+      throw new Error(`document too large: ${b.length} bytes (cap 32MB)`);
+    }
+    return { bytes: b, contentType: r.headers.get("content-type") ?? "" };
+  }
   const res = await fetch(url, {
     headers: {
       // CMS (Akamai) and many payer sites 403 non-browser UAs — a bot UA like
