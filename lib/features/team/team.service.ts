@@ -143,14 +143,28 @@ export async function createInvite(args: {
 
     return { id: inviteId, token };
   }).then(async (result) => {
-    void sendInviteEmail({
+    // AWAITED, and the outcome is returned.
+    //
+    // This was `void sendInviteEmail(...)` — fire and forget — so the API
+    // answered before the send was even attempted and no caller could learn
+    // what happened. With RESEND_API_KEY unset, sendEmail logs the message to
+    // stdout and returns delivered:false; the invite row is written, the UI
+    // says the invite went out, and the colleague waits for an email that was
+    // never sent. On a product whose next job is onboarding a customer's
+    // team, that is the worst possible place for a silent no-op.
+    //
+    // acceptUrl comes back either way, so an admin can always send the link
+    // by hand — onboarding does not become impossible just because outbound
+    // email is not configured yet.
+    const acceptUrl = `${env().APP_BASE_URL}/invites/${result.token}`;
+    const emailDelivered = await sendInviteEmail({
       orgId: args.orgId,
       inviteeEmail: args.payload.email,
       inviterUserId: args.invitedByUserId,
       token: result.token,
       expiresAt: expiresAt.toISOString(),
     });
-    return result;
+    return { ...result, acceptUrl, emailDelivered };
   });
 }
 
@@ -160,7 +174,8 @@ async function sendInviteEmail(input: {
   inviterUserId: string;
   token: string;
   expiresAt: string;
-}): Promise<void> {
+  /** True only when the message actually left the building. */
+}): Promise<boolean> {
   try {
     const meta = await withOrgContext(input.orgId, async (tx) => {
       const orgRow = await tx.$queryRaw<{ name: string }[]>`
@@ -196,7 +211,7 @@ async function sendInviteEmail(input: {
       },
     });
 
-    await sendEmail({
+    const sent = await sendEmail({
       to: input.inviteeEmail,
       subject: tmpl.subject,
       html: tmpl.html,
@@ -204,11 +219,19 @@ async function sendInviteEmail(input: {
       fromName: meta.branding?.email_from_name ?? meta.orgName,
       fromAddress: meta.branding?.email_from_address ?? undefined,
     });
+    if (!sent.delivered) {
+      console.warn(
+        `invite email NOT delivered to ${input.inviteeEmail} — no RESEND_API_KEY; ` +
+          `the message was written to stdout. Send the accept link by hand.`,
+      );
+    }
+    return sent.delivered;
   } catch (err) {
     console.error("invite email send failed", {
       err: err instanceof Error ? err.message : String(err),
       to: input.inviteeEmail,
     });
+    return false;
   }
 }
 

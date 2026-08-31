@@ -230,6 +230,7 @@ function InviteForm({ onCreated }: { onCreated: () => void }) {
   const [perms, setPerms] = useState<string[]>(ROLE_DEFAULT_PERMISSIONS.clinician);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [undelivered, setUndelivered] = useState<{ email: string; url: string } | null>(null);
 
   function changeRole(r: RoleTemplate) {
     setRoleTemplate(r);
@@ -252,6 +253,15 @@ function InviteForm({ onCreated }: { onCreated: () => void }) {
       return;
     }
     setEmail("");
+    // If outbound email is not configured the invite still exists and its link
+    // still works — the colleague just never hears about it. Say so, and hand
+    // over the link rather than leaving the admin to discover the silence a
+    // week later.
+    if (data.data?.emailDelivered === false && data.data?.acceptUrl) {
+      setUndelivered({ email, url: data.data.acceptUrl });
+    } else {
+      setUndelivered(null);
+    }
     onCreated();
   }
 
@@ -294,6 +304,20 @@ function InviteForm({ onCreated }: { onCreated: () => void }) {
           {error && (
             <div role="alert" className="text-sm text-red-700 bg-red-50 px-3 py-2 rounded">
               {error}
+            </div>
+          )}
+          {undelivered && (
+            <div className="text-sm text-amber-900 bg-amber-50 ring-1 ring-inset ring-amber-600/20 px-3 py-2 rounded space-y-1">
+              <p className="font-medium">
+                Invite created, but no email was sent to {undelivered.email}.
+              </p>
+              <p className="text-xs">
+                Outbound email is not configured on this deployment. The invite is
+                valid — send this link directly:
+              </p>
+              <code className="block text-[11px] font-mono break-all bg-white/70 rounded px-2 py-1">
+                {undelivered.url}
+              </code>
             </div>
           )}
           <div className="flex justify-end">

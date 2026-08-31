@@ -226,5 +226,77 @@ export async function runComplianceChecks(): Promise<ComplianceCheck[]> {
         : "Not set or too short — pgcrypto helpers will throw at runtime.",
   });
 
+  // 8) The integrations onboarding actually depends on.
+  //
+  // These were invisible. Every one degrades QUIETLY when its key is absent —
+  // no crash, no error page, a 503 or a no-op somewhere a user will not be
+  // looking — so the only way to learn that outbound email was off was for an
+  // invited colleague to never arrive. Stated here, before the first customer
+  // rather than after.
+  const outbound = Boolean(process.env.RESEND_API_KEY);
+  checks.push({
+    id: "email_outbound",
+    label: "Outbound email (Resend)",
+    ok: outbound,
+    detail: outbound
+      ? "RESEND_API_KEY set — invites and password resets are delivered."
+      : "NOT SET — invites and password resets are written to stdout and never sent. " +
+        "Nobody can be invited and nobody can recover an account.",
+  });
+
+  const stripe = Boolean(process.env.STRIPE_SECRET_KEY);
+  const stripePrices = ["SOLO", "TEAM", "ORG", "ENT"].filter(
+    (p) => process.env[`STRIPE_PRICE_${p}`],
+  );
+  checks.push({
+    id: "billing_stripe",
+    label: "Billing (Stripe)",
+    ok: stripe && stripePrices.length > 0,
+    detail: !stripe
+      ? "STRIPE_SECRET_KEY not set — checkout returns 503 and no org can subscribe."
+      : stripePrices.length === 0
+        ? "Key set but no STRIPE_PRICE_* configured — checkout has no plan to sell."
+        : `Configured with ${stripePrices.length} plan(s): ${stripePrices.join(", ").toLowerCase()}.` +
+          (process.env.STRIPE_WEBHOOK_SECRET
+            ? ""
+            : " STRIPE_WEBHOOK_SECRET missing — payment results will not post back."),
+  });
+
+  const gcal =
+    Boolean(process.env.GOOGLE_OAUTH_CLIENT_ID) &&
+    Boolean(process.env.GOOGLE_OAUTH_CLIENT_SECRET) &&
+    Boolean(process.env.GOOGLE_OAUTH_REDIRECT_URI) &&
+    Boolean(process.env.PALLIO_TOKEN_KEY);
+  checks.push({
+    id: "calendar_google",
+    label: "Google Calendar sync",
+    ok: gcal,
+    detail: gcal
+      ? "OAuth client and token key present — clinicians can connect a calendar."
+      : "Not configured — the Integrations page offers a connect button that returns 503. " +
+        "Optional unless visit scheduling is being sold.",
+  });
+
+  const anthropic = Boolean(process.env.ANTHROPIC_API_KEY);
+  checks.push({
+    id: "ai_anthropic",
+    label: "Rule synthesis (Anthropic)",
+    ok: anthropic,
+    detail: anthropic
+      ? "ANTHROPIC_API_KEY set — lookups synthesise cited answers."
+      : "NOT SET — every rule lookup falls back to stored rules only, and document " +
+        "ingestion cannot extract at all.",
+  });
+
+  const openai = Boolean(process.env.OPENAI_API_KEY);
+  checks.push({
+    id: "ai_embeddings",
+    label: "Embeddings (OpenAI)",
+    ok: openai,
+    detail: openai
+      ? "OPENAI_API_KEY set — semantic search over document chunks is live."
+      : "Not set — lookups fall back to keyword search over stored rules.",
+  });
+
   return checks;
 }
