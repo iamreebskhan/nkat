@@ -175,7 +175,14 @@ export async function extractRulesFromDocument(
       model: EXTRACTION_MODEL,
       // Headroom for dense chunks (a 40-page rule section can yield many
       // rules). Non-streaming is fine at this size.
-      max_tokens: 16384,
+      //
+      // Raised from 16384, which a real document exceeded: Aetna's
+      // telemedicine payment policy filled the budget mid-array and the reply
+      // arrived as invalid JSON. Not raised further because output length is
+      // latency, and a run that outlives the edge timeout has its own
+      // problems — recoverTruncatedRules below is the real answer to a reply
+      // that runs out of room.
+      max_tokens: 32_000,
       system:
         "You are a payer-policy parser. Cite verbatim quotes for every rule. " +
         "Respond with ONLY the JSON object — no preamble, no reasoning, no " +
@@ -194,14 +201,47 @@ export async function extractRulesFromDocument(
   let raw: unknown;
   try {
     raw = JSON.parse(text);
-  } catch {
+  } catch (parseError) {
     // Some models include a brief intro; try to find the first JSON object.
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
-    if (start === -1 || end === -1) {
-      throw new Error("extractRulesFromDocument: response is not JSON");
+    let recovered: unknown = null;
+    if (start !== -1 && end !== -1) {
+      try {
+        recovered = JSON.parse(text.slice(start, end + 1));
+      } catch {
+        /* fall through to the truncation path */
+      }
     }
-    raw = JSON.parse(text.slice(start, end + 1));
+    if (recovered !== null) {
+      raw = recovered;
+    } else {
+      // A REPLY THAT RAN OUT OF ROOM, not a reply that is malformed.
+      //
+      // max_tokens cut Aetna's telemedicine policy off mid-array. Both parse
+      // attempts then failed — the second because a truncated array's last
+      // "}" closes a half-written rule — and the whole document was thrown
+      // away with "Expected ',' or ']' after array element in JSON at
+      // position 38375". Every rule the model HAD finished writing was lost
+      // with it, which is the same mistake as validating the rules array as
+      // one unit: a problem at the end taking out everything before it.
+      const salvaged = recoverTruncatedRules(text);
+      const truncated = resp.stop_reason === "max_tokens";
+      if (salvaged.length === 0) {
+        throw new Error(
+          truncated
+            ? `extractRulesFromDocument: the reply hit the ${32_000}-token output limit ` +
+              `before a single complete rule — the document is too dense to extract in one pass`
+            : `extractRulesFromDocument: response is not JSON — ` +
+              `${parseError instanceof Error ? parseError.message : String(parseError)}`,
+        );
+      }
+      console.warn(
+        `extractRulesFromDocument: reply was ${truncated ? "truncated at the output limit" : "unparseable"}; ` +
+          `recovered ${salvaged.length} complete rule(s) from it`,
+      );
+      raw = { rules: salvaged };
+    }
   }
   // The ENVELOPE must be right — no rules array means the model did not
   // answer the question, and there is nothing to salvage.
@@ -257,4 +297,68 @@ export async function extractRulesFromDocument(
     return grounded;
   }
   return parsed.data.rules;
+}
+
+/**
+ * Pull the complete rule objects out of a reply that stopped mid-array.
+ *
+ * When max_tokens cuts the model off, the JSON is unparseable and everything
+ * in it is lost — including every rule the model had already finished. That
+ * is the all-or-nothing failure again, one level up: the schema check learned
+ * to judge rules one at a time, and then the PARSE still judged them as a
+ * block.
+ *
+ * So walk the rules array and keep whatever closed properly. Brace depth,
+ * with string and escape state tracked, because a quote inside a
+ * sourceQuote — and payer prose is full of them — would otherwise make the
+ * depth count nonsense. The final, half-written object has no matching brace
+ * and is simply never emitted.
+ *
+ * Returns raw values, not validated rules: each still goes through
+ * ExtractedRule.safeParse with everything else, so a salvaged rule is held to
+ * exactly the same standard as one from a clean reply.
+ */
+export function recoverTruncatedRules(text: string): unknown[] {
+  const key = text.indexOf('"rules"');
+  if (key === -1) return [];
+  const open = text.indexOf("[", key);
+  if (open === -1) return [];
+
+  const out: unknown[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = open + 1; i < text.length; i++) {
+    const c = text[i];
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') { inString = true; continue; }
+
+    if (c === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (c === "}") {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try {
+          out.push(JSON.parse(text.slice(start, i + 1)));
+        } catch {
+          /* a complete-looking object that still will not parse is not ours */
+        }
+        start = -1;
+      }
+      // depth < 0 means the array closed; nothing useful follows.
+      if (depth < 0) break;
+    } else if (c === "]" && depth === 0) {
+      break;
+    }
+  }
+  return out;
 }
