@@ -809,6 +809,16 @@ async function planOnly(ctx: {
       `add=${plan.wouldAdd.length} displace=${plan.wouldDisplace.length} ` +
       `refuse=${plan.wouldRefuse.length}` +
       (extractError ? ` extractError=${extractError}` : "") +
+      // The added CODES, not just how many. A purely-additive source — which
+      // is the good case, and the one you most want to act on — logged
+      // "add=34" and nothing else, so the only question that mattered (does
+      // this document cover the codes we are missing?) still needed another
+      // run to answer.
+      (plan.wouldAdd.length
+        ? `\n  would add: ${plan.wouldAdd
+            .map((a) => `${a.code}/${a.attribute}`)
+            .join(", ")}`
+        : "") +
       (plan.wouldDisplace.length
         ? `\n  would displace: ${plan.wouldDisplace
             .map((d) => `${d.code}/${d.attribute} (${d.incumbentCreatedBy} @ ${hostOf(d.incumbentUrl)})`)
