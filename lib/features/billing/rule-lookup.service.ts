@@ -153,8 +153,33 @@ export interface LookupResult {
   };
 }
 
-const UNKNOWN_RULE_MESSAGE =
-  "No confirmed rule found. CMS Medicare default applies. Recommend calling the payer to confirm.";
+/**
+ * What to tell a biller when the library has no rule for this cell.
+ *
+ * One sentence used to serve every payer: "No confirmed rule found. CMS
+ * Medicare default applies. Recommend calling the payer to confirm." For a
+ * Medicare MAC that is true. For Aetna, Anthem or Medical Mutual it is
+ * advice to apply Medicare's rules to a commercial plan, which is wrong, and
+ * it is exactly the cell where a biller has the least other information to
+ * correct it with.
+ *
+ * The line of business decides who governs the answer, so it decides what
+ * "we don't know" should send you to look at.
+ */
+function unknownMessageFor(payerType: string | null): string {
+  switch (payerType) {
+    case "medicare_mac":
+      return "No confirmed rule found in the library. Medicare's published rules govern this code — check the CY2026 Physician Fee Schedule, then confirm with the MAC.";
+    case "medicaid_mco":
+      return "No confirmed rule found in the library. This plan follows the state Medicaid fee schedule — check the state's published schedule, then confirm with the plan.";
+    case "tribal":
+      return "No confirmed rule found in the library. Check the state Medicaid schedule and the tribal plan's own coverage terms, then confirm with the plan.";
+    case "commercial":
+      return "No confirmed rule found in the library. Commercial coverage is set by the member's benefit plan, not by a published schedule — verify eligibility and benefits with the payer before billing.";
+    default:
+      return "No confirmed rule found in the library. Verify coverage with the payer before billing.";
+  }
+}
 
 const MIN_SQL_CONFIDENCE = 0.5;
 const AI_SYNTHESIZED_CONFIDENCE = 0.4;
@@ -240,7 +265,24 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
   // answer; the global library rides along as `comparison` so the
   // biller always sees both positions. Run them concurrently: they hit
   // different tables and neither depends on the other.
-  const [orgHit, structuredHit] = await Promise.all([
+  // The payer's line of business. Only read to decide what an UNKNOWN answer
+  // should send the biller to look at — Medicare's schedule, the state's, or
+  // the member's benefit plan. Joined into the same concurrent batch so it
+  // costs no extra round trip on the answered path.
+  const [payerTypeRow, orgHit, structuredHit] = await Promise.all([
+    (async (): Promise<string | null> => {
+      try {
+        const { prisma } = await import("@/lib/db");
+        const rows = await prisma.$queryRaw<{ payer_type: string }[]>`
+          SELECT payer_type::text AS payer_type
+            FROM payer WHERE id = ${fullPayerId}::uuid LIMIT 1
+        `;
+        return rows[0]?.payer_type ?? null;
+      } catch {
+        // Never fail a lookup over the wording of its fallback sentence.
+        return null;
+      }
+    })(),
     // No orgId (platform tooling) → skip the org library entirely
     // rather than leak another tenant's rulebook.
     req.orgId
@@ -395,7 +437,7 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
 
   // Step 3+4 — RAG fallback. Skip if AI providers aren't configured.
   if (!isAnthropicConfigured() || !isEmbedderConfigured()) {
-    return unknownResult(resolved, fallback);
+    return unknownResult(resolved, fallback, payerTypeRow);
   }
 
   const queryText =
@@ -420,7 +462,7 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
   // Step 5 — refusal path. NEVER swap in a synthesized rule without a
   // verbatim citation.
   if (synth.refused || !synth.citation) {
-    return unknownResult(resolved, fallback);
+    return unknownResult(resolved, fallback, payerTypeRow);
   }
 
   // Step 6 — caller persists the synthesized rule for analyst review.
@@ -546,11 +588,12 @@ function unknownResult(
     attribute: PayerRuleAttribute;
   },
   comparison: LookupResult["comparison"] = null,
+  payerType: string | null = null,
 ): LookupResult {
   return {
     status: "unknown",
     source: "unknown",
-    answer: UNKNOWN_RULE_MESSAGE,
+    answer: unknownMessageFor(payerType),
     coverageStatus: "unknown",
     confidence: 0,
     citation: null,
