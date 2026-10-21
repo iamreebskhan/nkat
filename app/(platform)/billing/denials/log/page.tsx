@@ -8,6 +8,7 @@
  */
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -89,7 +90,14 @@ export default function LogDenialPage() {
       <Card>
         <CardHeader>
           <CardTitle>Denial detail</CardTitle>
-          <CardDescription>From the EOB or 835 file.</CardDescription>
+          {/* An 835 no longer has to be keyed in line by line (audit R10). */}
+          <CardDescription>
+            From the EOB. Have the 835 file?{" "}
+            <Link href="/billing/remittances" className="text-[var(--color-brand-700)] underline">
+              Upload it on Remittances
+            </Link>{" "}
+            — denials and payments post automatically.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="space-y-4" noValidate>

@@ -13,6 +13,7 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 
+import { SubmissionDisclosure } from "@/components/billing/submission-disclosure";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -70,7 +71,10 @@ export default function DenialDetailPage({
   }
 
   useEffect(() => {
-    load();
+    // Started from a timer, as on the audit page, so no setState is reachable
+    // synchronously from the effect body (load() sets state after its fetch).
+    const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -116,12 +120,27 @@ export default function DenialDetailPage({
     setSubmitting(true);
     setError(null);
     try {
-      const r = await fetch(`/api/denials/${id}/refile`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const data = await r.json();
+      const send = async (body: Record<string, unknown>) => {
+        const r = await fetch(`/api/denials/${id}/refile`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return r.json();
+      };
+      let data = await send({});
+      // Refiling sends the claim out, so the payer's documentation standard
+      // applies (audit R19). Going ahead is the biller's call, with a reason
+      // the claim history keeps.
+      if (!data.success && data.data?.documentationIncomplete) {
+        const reason = window.prompt(
+          `${data.error}\n\nTo refile anyway, enter the reason (at least 10 characters). It is recorded on the claim history.`,
+          "",
+        );
+        if (reason !== null && reason.trim() !== "") {
+          data = await send({ documentationOverride: { reason: reason.trim() } });
+        }
+      }
       if (!data.success) setError(data.error ?? "Refile failed.");
       await load();
     } catch {
@@ -131,7 +150,17 @@ export default function DenialDetailPage({
     }
   }
 
-  async function recordOutcome(outcome: string, amountCents?: number) {
+  /**
+   * What finally happened, and how much came back. The amount is bounded by
+   * what this denial denied, server-side; above it the biller is shown both
+   * figures first (recordPartialRecovery) and the confirmation travels with the
+   * write, as the claims queue's overpayment confirmation does.
+   */
+  async function recordOutcome(
+    outcome: string,
+    amountCents?: number,
+    overpaymentAcknowledged = false,
+  ) {
     setSubmitting(true);
     setError(null);
     try {
@@ -141,6 +170,7 @@ export default function DenialDetailPage({
         body: JSON.stringify({
           outcome,
           ...(amountCents !== undefined ? { outcomeAmountCents: amountCents } : {}),
+          ...(overpaymentAcknowledged ? { overpaymentAcknowledged: true } : {}),
         }),
       });
       const data = await r.json();
@@ -151,6 +181,57 @@ export default function DenialDetailPage({
     } finally {
       setSubmitting(false);
     }
+  }
+
+  /**
+   * "Partially paid" wrote no amount at all, so a recovery the org really
+   * banked was recorded nowhere — while the API took any figure sent to it. The
+   * amount is asked for here, echoed back before it is written, and measured
+   * against what this denial denied: a cents/dollars slip (5000 for $50.00) is
+   * caught in front of the biller who typed it rather than printed back as fact.
+   */
+  async function recordPartialRecovery() {
+    if (!denial) return;
+    const deniedText = `$${(denial.deniedAmountCents / 100).toFixed(2)}`;
+    const v = window.prompt(
+      `Amount the payer paid on this denial, from the EOB or remittance — in dollars and cents, so $50.00 is 50.00.\n\nThis denial was for ${deniedText}.`,
+      "",
+    );
+    if (v === null) return; // cancelled: the biller chose to record nothing
+    // OK on an empty box records nothing too — an empty box is not $0.00 — but
+    // it is said. Returned in silence, the dialog closed and the page did not
+    // change, and a biller could not tell that from an outcome recorded.
+    if (v.trim() === "") {
+      setError(
+        "Nothing was recorded. Enter the amount the payer paid, from the EOB or remittance, in dollars and cents — for example 50.00.",
+      );
+      return;
+    }
+    const dollars = Number(v.replace(/[$,\s]/g, ""));
+    if (!Number.isFinite(dollars) || dollars < 0) {
+      setError("Enter a valid dollar amount — in dollars and cents, for example 50.00.");
+      return;
+    }
+    const cents = Math.round(dollars * 100);
+    const typed = `$${(cents / 100).toFixed(2)}`;
+    const over = denial.deniedAmountCents > 0 && cents > denial.deniedAmountCents;
+    // A denial the queue's one-click recorded carries $0.00 denied, so there is
+    // nothing for an amount to be "the whole of".
+    const coversDenial = denial.deniedAmountCents > 0 && cents >= denial.deniedAmountCents;
+    if (
+      !window.confirm(
+        over
+          ? `${typed} is more than the ${deniedText} this denial was for.\n\nRecord it anyway, as paid with the overpayment confirmed? Cancel if you meant to type dollars and cents — $50.00 is 50.00, not 5000.`
+          : coversDenial
+            ? `${typed} is the whole ${deniedText} this denial was for, so it is recorded as paid.\n\nRecord it?`
+            : `Record a partial recovery of ${typed} on this denial (denied ${deniedText})?`,
+      )
+    ) {
+      return;
+    }
+    // An amount that covers the denial is not a partial recovery — the service
+    // refuses that pairing — so the outcome follows the figure.
+    await recordOutcome(coversDenial ? "paid" : "partially_paid", cents, over);
   }
 
   if (loading) return <div className="px-8 py-8 text-slate-500">Loading…</div>;
@@ -183,6 +264,18 @@ export default function DenialDetailPage({
           Denied {denial.deniedAt.slice(0, 10)} · ${(denial.deniedAmountCents / 100).toFixed(2)}{" "}
           · {denial.decision}
         </p>
+        {/* "Mark as refiled" and "Record final outcome" below write a claim
+            status and a dollar figure that Pallio neither sent nor received
+            (audit R35): the biller resubmits in the clearinghouse and comes
+            back here to say so. A denial posted from a payer's own 835 (audit
+            R10) is the exception on this page, so it is named — otherwise the
+            last sentence of the disclosure would be false of the figures in
+            the card below. */}
+        <SubmissionDisclosure>
+          {denial.source === "remittance"
+            ? "This denial was posted from the payer's own 835 file, not typed in."
+            : null}
+        </SubmissionDisclosure>
       </header>
 
       <Card className="mb-4">
@@ -375,7 +468,7 @@ export default function DenialDetailPage({
                 <Button size="sm" variant="secondary" onClick={() => recordOutcome("paid", denial.deniedAmountCents)} loading={submitting}>
                   Paid in full
                 </Button>
-                <Button size="sm" variant="secondary" onClick={() => recordOutcome("partially_paid")} loading={submitting}>
+                <Button size="sm" variant="secondary" onClick={recordPartialRecovery} loading={submitting}>
                   Partially paid
                 </Button>
                 <Button size="sm" variant="secondary" onClick={() => recordOutcome("secondary_denial")} loading={submitting}>

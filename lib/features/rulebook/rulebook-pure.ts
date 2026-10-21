@@ -12,6 +12,7 @@ import type {
   ComparisonOutcome,
   ComparisonRow,
   CoverageStatus,
+  RowOrigin,
   RulebookAttribute,
 } from "./rulebook.types";
 
@@ -29,7 +30,7 @@ interface SourceRow extends PartialRow {
   sourcePayerRuleId?: string | null;
 }
 
-interface OrgRow extends PartialRow {}
+type OrgRow = PartialRow;
 
 /**
  * Comparison key — uniquely identifies a (payer, state, cpt, attribute)
@@ -167,5 +168,129 @@ export function summarizeComparison(rows: ComparisonRow[]): ComparisonSummary {
     diffs,
     unverified,
     newFromPallio,
+  };
+}
+
+/**
+ * Where a global payer_rule came from, read from its created_by marker
+ * (audit R21).
+ *
+ * 'extract:<batch>' is a rule extracted from a published payer or CMS
+ * document: the same evidence as a crawl, and most of the library (5,563 of
+ * 7,252 rules locally). Both derivations missed it. The Rulebook badged those
+ * rules 'analyst (manual)', and the picker's view compared created_by with
+ * 'crawler' and 'cms' exactly, so every picker row read 'Unsourced'.
+ */
+export type RuleSourceKind = "crawler" | "analyst" | "ai" | "manual" | "unknown";
+export type RulebookSourceKind = RuleSourceKind | "org";
+
+export function payerRuleSourceKind(createdBy: string | null | undefined): RuleSourceKind {
+  const c = (createdBy ?? "").trim();
+  if (!c) return "unknown";
+  if (c === "ai") return "ai";
+  if (c.startsWith("extract:") || c === "crawler" || c.startsWith("crawler:") || c === "cms") {
+    return "crawler";
+  }
+  if (c.startsWith("analyst:") || c.includes("@")) return "analyst";
+  return "manual";
+}
+
+/**
+ * A Rulebook row's badge: the org's own provenance trumps the linked rule's.
+ *
+ * `row` identifies the one machine writer that links no library rule: a rule
+ * lookup that synthesizes a cited answer caches it as an origin 'source' row
+ * with a confidence (0.4) but no source_payer_rule_id. Without it those rows
+ * read "no linked source", like any other unlinked row, and never "AI draft".
+ * Generation placeholders link no rule either, but carry confidence 0.
+ */
+export function sourceKindFor(
+  origin: RowOrigin,
+  createdBy: string | null | undefined,
+  row?: { sourcePayerRuleId: string | null; confidence: number },
+): RulebookSourceKind {
+  if (origin === "org_upload" || origin === "org_override") return "org";
+  if (origin === "analyst") return "analyst";
+  if (row && !row.sourcePayerRuleId && row.confidence > 0) return "ai";
+  return payerRuleSourceKind(createdBy);
+}
+
+/** What a Rulebook confidence number means (audit R21). */
+export interface ConfidenceInput {
+  origin: RowOrigin;
+  confidence: number;
+  sourceKind: RulebookSourceKind;
+  sourcePayerRuleId: string | null;
+  expiresAt: string | null;
+}
+
+export type ConfidenceTone = "strong" | "weak" | "expired" | "org" | "none";
+
+export interface ConfidenceLabel {
+  label: string;
+  tone: ConfidenceTone;
+}
+
+/**
+ * A placeholder. Generation emits one for every attribute Pallio holds no
+ * rule on, at confidence 0 with no linked rule, and "0%" read as "assessed
+ * and judged worthless" when the truth is "nothing on file yet".
+ */
+export function isPlaceholderRow(
+  r: Pick<ConfidenceInput, "origin" | "confidence" | "sourcePayerRuleId">,
+): boolean {
+  return r.origin === "source" && !r.sourcePayerRuleId && !(r.confidence > 0);
+}
+
+/**
+ * Below this a machine-written row never answers a billing lookup: the same
+ * floor as MIN_ORG_RULE_CONFIDENCE in org-rule.repository.ts.
+ */
+const LOOKUP_FLOOR = 0.5;
+
+export function confidenceDisplay(r: ConfidenceInput, now: Date = new Date()): ConfidenceLabel {
+  // The org's own decisions are not scored against a source. They are the
+  // org's, and they always answer.
+  if (r.origin === "org_upload" || r.origin === "org_override") return { label: "Your org", tone: "org" };
+  // Lookups stop honouring an attestation at expires_at; say so here too.
+  if (r.origin === "analyst" && r.expiresAt && Date.parse(r.expiresAt) <= now.getTime()) {
+    return { label: "Attestation expired", tone: "expired" };
+  }
+  if (isPlaceholderRow(r)) return { label: "No rule on file", tone: "none" };
+  const pct = `${Math.round(r.confidence * 100)}%`;
+  if (r.origin === "source" && r.confidence < LOOKUP_FLOOR) {
+    return {
+      label: r.sourceKind === "ai" ? "AI draft · not used for billing" : `${pct} · not used for billing`,
+      tone: "weak",
+    };
+  }
+  return { label: pct, tone: "strong" };
+}
+
+/**
+ * The collapsed row's headline. It printed the MAXIMUM across a code's
+ * attributes, which hid the placeholders entirely: a code with one strong
+ * rule and two gaps read as strong. This prints the WEAKEST attribute on
+ * file and says how many have nothing on file. `weakest` indexes the row it
+ * describes, so the screen can badge that row's source.
+ */
+export function summarizeConfidence(
+  rows: readonly ConfidenceInput[],
+  now: Date = new Date(),
+): ConfidenceLabel & { weakest: number | null } {
+  const shown = rows.map((r, i) => ({ r, i, d: confidenceDisplay(r, now) }));
+  const onFile = shown.filter((x) => x.d.tone !== "none");
+  if (onFile.length === 0) return { label: "No rule on file", tone: "none", weakest: null };
+  const rank: Record<ConfidenceTone, number> = { expired: 0, weak: 1, strong: 2, org: 3, none: 4 };
+  const weakest = onFile.reduce((a, b) => {
+    const d = rank[b.d.tone] - rank[a.d.tone];
+    if (d !== 0) return d < 0 ? b : a;
+    return b.r.confidence < a.r.confidence ? b : a;
+  });
+  const gaps = rows.length - onFile.length;
+  return {
+    label: weakest.d.label + (gaps > 0 ? ` · ${gaps} of ${rows.length} not on file` : ""),
+    tone: weakest.d.tone,
+    weakest: weakest.i,
   };
 }

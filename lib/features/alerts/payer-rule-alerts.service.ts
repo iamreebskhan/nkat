@@ -5,20 +5,28 @@
  * (org notifications).
  *
  * Behavior:
+ *   - The orgs are the active ones with a rulebook, read across tenants
+ *     via withBreakglass: the tenant client sees no org without a GUC.
  *   - For each org × payer × state combination they care about (their
  *     org_rulebook_row scope), find any payer_rule rows whose
- *     effective_date is on or after the org's last alert checkpoint.
- *   - Group by (payer, state) and email org_admin members one digest
- *     per (payer, state) pair.
+ *     effective_date is on or after the org-local day of the org's last
+ *     alert checkpoint (orgLocalDate in the org's zone, bound as a
+ *     'YYYY-MM-DD' string; org-date.ts), else a week before its today.
+ *     The window is inclusive, so a rule effective on that day can be
+ *     reported on two consecutive runs.
+ *   - Group by (payer, state) and email the org's active team.permissions
+ *     holders one digest per (payer, state) pair.
  *   - Advance the checkpoint atomically with the email send.
  *
  * Designed to run nightly via a Vercel/EC2 cron hitting POST
  * /api/cron/payer-rule-alerts with a shared-secret header.
  */
-import { withOrgContext } from "@/lib/db";
+import { withBreakglass, withOrgContext } from "@/lib/db";
 import { sendEmail } from "@/lib/email/email.service";
 import { payerRuleAlertEmail } from "@/lib/email/templates";
 import { env } from "@/lib/env";
+import { addDaysIso, orgLocalDate, orgToday } from "@/lib/features/org/org-date";
+import { readOrgTimeZone } from "@/lib/features/org/org-time-zone";
 
 export interface OrgAlertSummary {
   orgId: string;
@@ -34,8 +42,8 @@ export interface OrgAlertSummary {
  * Returns per-org summaries for the cron's response body.
  */
 export async function dispatchPayerRuleAlerts(): Promise<OrgAlertSummary[]> {
-  // Discover orgs that have an active rulebook + at least one admin
-  // with email notifications enabled.
+  // Active orgs with a rulebook. Read via breakglass: the tenant client
+  // with no org GUC sees no org at all under RLS.
   const orgs = await listOrgsForAlerts();
   const out: OrgAlertSummary[] = [];
 
@@ -52,25 +60,34 @@ interface OrgRow {
 }
 
 async function listOrgsForAlerts(): Promise<OrgRow[]> {
-  const { prisma } = await import("@/lib/db");
-  const rows = await prisma.$queryRaw<{ id: string; name: string }[]>`
-    SELECT DISTINCT o.id, o.name
-    FROM org o
-    JOIN org_rulebook rb ON rb.org_id = o.id
-    WHERE o.status = 'active'
-  `;
+  const rows = await withBreakglass(
+    (client) => client.$queryRaw<{ id: string; name: string }[]>`
+      SELECT DISTINCT o.id, o.name
+        FROM org o
+        JOIN org_rulebook rb ON rb.org_id = o.id
+       WHERE o.status = 'active'
+    `,
+    "payer-rule-alerts: list orgs with a rulebook",
+  );
   return rows.map((r) => ({ orgId: r.id, orgName: r.name }));
 }
 
 async function dispatchForOrg(orgId: string, orgName: string): Promise<OrgAlertSummary> {
   return withOrgContext(orgId, async (tx) => {
+    const zone = await readOrgTimeZone(tx, orgId);
+
     // 1. Read or initialize the checkpoint.
     const ckRows = await tx.$queryRaw<{ last_checked_at: Date | null }[]>`
       SELECT last_checked_at FROM org_rule_alert_checkpoint
       WHERE org_id = ${orgId}::uuid LIMIT 1
     `;
-    const since = ckRows[0]?.last_checked_at ?? new Date(Date.now() - 7 * 86_400_000);
+    // One instant for the window and the checkpoint.
     const now = new Date();
+    // First day to report, 'YYYY-MM-DD': the practice's day of the last
+    // check, else a week before its today (org-date.ts rule, 0107). A Date
+    // bound into ::date would be its day in the DB session's zone.
+    const last = ckRows[0]?.last_checked_at ?? null;
+    const sinceDay = last ? orgLocalDate(last, zone) : addDaysIso(orgToday(zone, now), -7);
 
     // 2. Find changed payer_rule rows in scope (those that overlap
     //    the org's rulebook_row payer/state combos).
@@ -80,7 +97,7 @@ async function dispatchForOrg(orgId: string, orgName: string): Promise<OrgAlertS
       SELECT pr.payer_id, p.name AS payer_name, pr.state, COUNT(*) AS n
       FROM payer_rule pr
       JOIN payer p ON p.id = pr.payer_id
-      WHERE pr.effective_date >= ${since}::date
+      WHERE pr.effective_date >= ${sinceDay}::date
         AND EXISTS (
           SELECT 1 FROM org_rulebook_row rb
            WHERE rb.org_id = ${orgId}::uuid
@@ -99,13 +116,17 @@ async function dispatchForOrg(orgId: string, orgName: string): Promise<OrgAlertS
       return { orgId, orgName, digestsSent: 0 };
     }
 
-    // 3. Pull org_admins to email + branding.
+    // 3. Pull the team.permissions holders to email + branding. The org is
+    //    named here, not left to RLS: on a connection that bypasses RLS (the
+    //    preview's superuser; team.service.ts listMembers) this read would
+    //    otherwise return every org's holders, and each would get the digest.
     const recipients = await tx.$queryRaw<{ email: string }[]>`
       SELECT DISTINCT u.email
       FROM user_permission up
       JOIN app_user u ON u.id = up.user_id
       WHERE up.permission = 'team.permissions'
         AND u.status = 'active'
+        AND up.org_id = ${orgId}::uuid
     `;
     if (recipients.length === 0) {
       return { orgId, orgName, digestsSent: 0 };

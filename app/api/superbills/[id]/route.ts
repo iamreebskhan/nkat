@@ -7,7 +7,12 @@
  * transition endpoints).
  *
  * Body:
- *   patch:      { cptCodes?, icd10Codes?, modifiers? }
+ *   patch:      { cptCodes?, cptUnits?, icd10Codes?, modifiers?, placeOfServiceCode? }
+ *               cptUnits is units per code when more than one, e.g.
+ *               {"G0318": 3} (0106). Only G0318, 99417 and 99498 take units;
+ *               any other code with more than one is refused with a 422.
+ *               Codes or units written reprice the bill, and the result's
+ *               cptUnits is the map as written.
  *   overrides:  [{ code, reason }]  -- codes selected outside the
  *               payer's allow-list. Each override is written to
  *               audit_log as event "superbill_code_override" with
@@ -23,8 +28,12 @@ import { updateSuperbill } from "@/lib/features/superbills/superbill.service";
 const PatchSchema = z.object({
   patch: z.object({
     cptCodes: z.array(z.string().min(1).max(10)).max(50).optional(),
+    /** Units per code (0106): whole numbers 1–99, the same bound as the column's CHECK. */
+    cptUnits: z.record(z.string().min(1).max(10), z.number().int().min(1).max(99)).optional(),
     icd10Codes: z.array(z.string().min(1).max(10)).max(50).optional(),
     modifiers: z.array(z.string().min(1).max(4)).max(20).optional(),
+    /** Where the visit took place (audit R23): a two-digit CMS code. */
+    placeOfServiceCode: z.string().regex(/^\d{2}$/).optional(),
   }),
   overrides: z
     .array(

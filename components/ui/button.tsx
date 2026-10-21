@@ -53,7 +53,11 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         className={cn(buttonVariants({ variant, size, className }))}
-        disabled={disabled ?? loading}
+        // Loading always disables. `disabled ?? loading` let a caller's
+        // disabled={false} win, and a button whose own guard was satisfied
+        // (a valid name on "Add service") took a second click mid-request and
+        // sent the request twice.
+        disabled={disabled || loading}
         aria-busy={loading || undefined}
         {...rest}
       >

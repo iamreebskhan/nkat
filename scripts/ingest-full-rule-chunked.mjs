@@ -1,4 +1,4 @@
-import { requireDemoPassword } from "./lib/test-credentials.mjs";
+import { harnessAccount } from "./lib/test-credentials.mjs";
 /**
  * Ingest a LARGE Medicare ruling (too big for one PDF request) by chunking.
  *
@@ -35,8 +35,7 @@ const CHUNK_PAGES = parseInt(process.env.CHUNK_PAGES || "40", 10);
 const STATE = process.env.STATE || "OH";
 const DOCTYPE = process.env.DOCTYPE || "cms_pfs";
 const TITLE_BASE = process.env.TITLE || "CMS — CY2026 PFS Final Rule (CMS-1832-F)";
-const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = requireDemoPassword();
+const { email: EMAIL, password: PASSWORD, orgName: ORG_NAME, fullName } = harnessAccount();
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const die = (m) => { console.error(`❌ ${m}`); process.exit(1); };
@@ -55,7 +54,7 @@ if (!has("curl")) die("curl not found. Install it:  sudo apt-get install -y curl
 console.log(`\n████  CHUNKED INGEST → ${RULE_URL}  ████`);
 console.log(`extract endpoint: ${CRON_URL}/api/cron/extract-pdf   chunk size: ${CHUNK_PAGES} pages\n`);
 
-// ── resolve Medicare payer id (login as demo, unless PAYER_ID given) ────
+// ── resolve Medicare payer id (sign in as the harness, unless PAYER_ID given) ──
 let payerId = process.env.PAYER_ID || null;
 if (!payerId) {
   let cookie = "";
@@ -67,7 +66,7 @@ if (!payerId) {
     const t = await r.text(); let j = null; try { j = JSON.parse(t); } catch {}
     return { s: r.status, j };
   };
-  const su = await req("POST", "/api/auth/signup", { email: EMAIL, password: PASSWORD, fullName: "Live Tester", orgName: "Pallio Live Demo", baaAccepted: true });
+  const su = await req("POST", "/api/auth/signup", { email: EMAIL, password: PASSWORD, fullName, orgName: ORG_NAME, baaAccepted: true });
   if (su.s !== 201) { const lg = await req("POST", "/api/auth/login", { email: EMAIL, password: PASSWORD }); if (lg.s !== 200) die(`login failed (${lg.s})`); }
   const payers = (await req("GET", "/api/billing/payers")).j?.data?.payers || [];
   payerId = payers.find((p) => /medicare/i.test(p.name))?.id || null;

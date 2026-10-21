@@ -48,6 +48,18 @@ export interface EvalQuestion {
   requiredSubstrings: string[];
   /** When true, the system MUST refuse — no source means no answer. */
   expectNoRule?: boolean;
+  /**
+   * The visit a time-described question states, when it states one.
+   * gold-standard-canon.spec.ts runs the real CPT suggester on it and
+   * requires expectedParse.cptCode to be the code the suggester bills:
+   * the prolonged add-on when the visit carries one, else the base code.
+   */
+  scenario?: {
+    visitType: "new_patient_home" | "established_patient_home";
+    totalMinutes: number;
+    acpMinutes?: number;
+    payerCategory: "medicare" | "non_medicare";
+  };
 }
 
 export const GOLD_STANDARD: EvalQuestion[] = [
@@ -341,8 +353,28 @@ export const GOLD_STANDARD: EvalQuestion[] = [
     id: "cp-05",
     category: "PROLONGED",
     query: "70 minutes of home visit time, established patient, Medicare",
+    // 70 min is past 99350's 60 but short of G0318, which starts at the CMS
+    // total time plus 15: 110 min on 99350 (cpt-suggester.ts). This expected
+    // G0318, which rewarded routing the visit to an add-on CMS does not pay.
+    expectedParse: { payer: "Medicare", cptCode: "99350" },
+    requiredSubstrings: ["99350"],
+    scenario: { visitType: "established_patient_home", totalMinutes: 70, payerCategory: "medicare" },
+  },
+  {
+    id: "cp-06",
+    category: "PROLONGED",
+    query: "115 minutes of home visit time, established patient, Medicare",
     expectedParse: { payer: "Medicare", cptCode: "G0318" },
     requiredSubstrings: ["g0318"],
+    scenario: { visitType: "established_patient_home", totalMinutes: 115, payerCategory: "medicare" },
+  },
+  {
+    id: "cp-07",
+    category: "PROLONGED",
+    query: "145 minutes of home visit time, new patient, Medicare",
+    expectedParse: { payer: "Medicare", cptCode: "G0318" },
+    requiredSubstrings: ["g0318"],
+    scenario: { visitType: "new_patient_home", totalMinutes: 145, payerCategory: "medicare" },
   },
 
   // ────────────────────────────────────────────────

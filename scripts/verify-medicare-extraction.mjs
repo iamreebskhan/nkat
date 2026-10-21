@@ -1,4 +1,4 @@
-import { requireDemoPassword } from "./lib/test-credentials.mjs";
+import { harnessAccount } from "./lib/test-credentials.mjs";
 /**
  * Verify the platform EXTRACTS and COMPARES the synthetic Medicare final-rule
  * PDF correctly, across varied scenarios — front-to-back, live.
@@ -25,8 +25,7 @@ import { requireDemoPassword } from "./lib/test-credentials.mjs";
  *   BASE_URL=https://app.pallio.io CRON_SECRET=... node scripts/verify-medicare-extraction.mjs
  */
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
-const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = requireDemoPassword();
+const { email: EMAIL, password: PASSWORD, orgName: ORG_NAME, fullName } = harnessAccount();
 const CRON = process.env.CRON_SECRET || "";
 const DOS = "2026-07-02";
 
@@ -66,7 +65,7 @@ console.log(`\n████  VERIFY MEDICARE PDF EXTRACTION + COMPARISON → ${B
 
 // ── login ────────────────────────────────────────────────────────────
 {
-  const su = await req("POST", "/api/auth/signup", { email: EMAIL, password: PASSWORD, fullName: "Live Tester", orgName: "Pallio Live Demo", baaAccepted: true });
+  const su = await req("POST", "/api/auth/signup", { email: EMAIL, password: PASSWORD, fullName, orgName: ORG_NAME, baaAccepted: true });
   if (su.s !== 201) ok("login", (await req("POST", "/api/auth/login", { email: EMAIL, password: PASSWORD })).s === 200);
   else ok("signup", true);
 }

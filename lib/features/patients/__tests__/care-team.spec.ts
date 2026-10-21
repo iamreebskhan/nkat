@@ -24,25 +24,54 @@ import {
 } from "../patient.types";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
+/** A second tenant, whose active members are nobody here. */
+const OTHER_ORG = "aaaa1111-1111-4111-8111-111111111111";
 const NP = "22222222-2222-4222-8222-222222222222";
 const RN = "33333333-3333-4333-8333-333333333333";
+/** Still on the roster, but suspended — not someone a chart may name. */
+const SUSPENDED = "66666666-6666-4666-8666-666666666666";
+/** An active member of OTHER_ORG, invisible here. */
+const STRANGER = "77777777-7777-4777-8777-777777777777";
+/** A user id with no org_member row anywhere. */
 const OUTSIDER = "99999999-9999-4999-8999-999999999999";
 const PATIENT = "44444444-4444-4444-8444-444444444444";
 const CREATOR = "55555555-5555-4555-8555-555555555555";
 
 /** Calls recorded as { sql, values } for assertions. */
 let calls: { sql: string; values: unknown[] }[] = [];
-/** user_ids the fake org_member table "contains". */
-let orgMembers: string[] = [];
+/**
+ * org_member as ROWS. It used to be a flat `string[]` of user_ids, with no
+ * status and no org column, so it could not tell a guard that checks org and
+ * status from one that checks neither: dropping `AND status = 'active'` left
+ * all nine tests green and a suspended member could be named on a chart
+ * (audit mutation review).
+ */
+let members: { org_id: string; user_id: string; status: string }[] = [];
 
 function fakeTx() {
   const run = (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join("¶");
     calls.push({ sql, values });
     if (sql.includes("FROM org_member")) {
-      const asked = (values[0] as string[]) ?? [];
+      // Honour only what the statement actually asks for. org and status are
+      // literals/binds in the SQL, so a guard that stops asking gets handed
+      // the suspended or foreign row back and the refusal never happens —
+      // which is the regression these tests exist to catch.
+      const wantsActive = sql.includes("status = 'active'");
+      const scopedToOrg = sql.includes("org_id =");
+      // Found by shape, not by position, so the fake assumes no bind order:
+      // the assignees arrive as the one array bind, the org as a string.
+      const asked = (values.find((v) => Array.isArray(v)) as string[] | undefined) ?? [];
+      const orgBind = values.find((v) => typeof v === "string") as string | undefined;
       return Promise.resolve(
-        asked.filter((id) => orgMembers.includes(id)).map((user_id) => ({ user_id })),
+        members
+          .filter(
+            (m) =>
+              asked.includes(m.user_id) &&
+              (!scopedToOrg || m.org_id === orgBind) &&
+              (!wantsActive || m.status === "active"),
+          )
+          .map((m) => ({ user_id: m.user_id })),
       );
     }
     if (sql.includes("INSERT INTO patient")) return Promise.resolve([{ id: PATIENT }]);
@@ -54,7 +83,12 @@ function fakeTx() {
 
 beforeEach(() => {
   calls = [];
-  orgMembers = [NP, RN];
+  members = [
+    { org_id: ORG, user_id: NP, status: "active" },
+    { org_id: ORG, user_id: RN, status: "active" },
+    { org_id: ORG, user_id: SUSPENDED, status: "suspended" },
+    { org_id: OTHER_ORG, user_id: STRANGER, status: "active" },
+  ];
   vi.mocked(withOrgContext).mockImplementation(async (_orgId, fn) =>
     (fn as (tx: unknown) => Promise<unknown>)(fakeTx()),
   );
@@ -93,22 +127,58 @@ describe("createPatient care-team persistence", () => {
       payload: { ...BASE_PAYLOAD, careTeam: { primaryNpUserId: NP, rnUserId: RN } },
     });
     const membership = calls.find((c) => c.sql.includes("FROM org_member"));
-    expect(membership?.values[0]).toEqual([NP, RN]);
+    expect(membership?.values[0]).toBe(ORG);
+    expect(membership?.values[1]).toEqual([NP, RN]);
     const insert = calls.find((c) => c.sql.includes("INSERT INTO patient"));
     expect(insert?.sql).toContain("primary_np_user_id");
     expect(insert?.values).toContain(NP);
     expect(insert?.values).toContain(RN);
   });
 
-  it("rejects an assignee who is not an org member", async () => {
+  /**
+   * Each of these is a name the chart would then show as responsible for this
+   * patient: a suspended member no one can reach, or a stranger from another
+   * tenant. app_user is global, so the FK behind these columns accepts any of
+   * them — this guard is the only thing that does not.
+   */
+  for (const [label, userId] of [
+    ["a user id with no membership anywhere", OUTSIDER],
+    ["a suspended member", SUSPENDED],
+    ["an active member of another org", STRANGER],
+  ] as const) {
+    it(`rejects ${label}, and writes no patient`, async () => {
+      await expect(
+        createPatient({
+          orgId: ORG,
+          createdByUserId: CREATOR,
+          payload: { ...BASE_PAYLOAD, careTeam: { socialWorkerUserId: userId } },
+        }),
+      ).rejects.toThrow(/not an active member of this organization/);
+      expect(calls.some((c) => c.sql.includes("INSERT INTO patient"))).toBe(false);
+    });
+  }
+
+  it("asks org_member about THIS org, and only about active members", async () => {
+    await createPatient({
+      orgId: ORG,
+      createdByUserId: CREATOR,
+      payload: { ...BASE_PAYLOAD, careTeam: { primaryNpUserId: NP } },
+    });
+    const q = calls.find((c) => c.sql.includes("FROM org_member"))!;
+    expect(q.sql).toContain("org_id =");
+    expect(q.sql).toContain("status = 'active'");
+  });
+
+  it("CONTROL: the same stranger is assignable in the org they actually belong to", async () => {
+    // Proves the refusal is about membership in the patient's org, not about
+    // this user id being blacklisted.
     await expect(
       createPatient({
-        orgId: ORG,
+        orgId: OTHER_ORG,
         createdByUserId: CREATOR,
-        payload: { ...BASE_PAYLOAD, careTeam: { socialWorkerUserId: OUTSIDER } },
+        payload: { ...BASE_PAYLOAD, careTeam: { socialWorkerUserId: STRANGER } },
       }),
-    ).rejects.toThrow(/not an active member of this organization/);
-    expect(calls.some((c) => c.sql.includes("INSERT INTO patient"))).toBe(false);
+    ).resolves.toEqual({ id: PATIENT });
   });
 
   it("skips the membership query entirely when no one is assigned", async () => {
@@ -137,16 +207,22 @@ describe("updatePatient care-team tri-state", () => {
     expect(upd!.values[6]).toBe(true); //  ba absent → keep
   });
 
-  it("rejects reassignment to a non-member", async () => {
-    await expect(
-      updatePatient({
-        orgId: ORG,
-        id: PATIENT,
-        payload: { careTeam: { billingAgentUserId: OUTSIDER } },
-      }),
-    ).rejects.toThrow(/not an active member of this organization/);
-    expect(calls.some((c) => c.sql.includes("billing_agent_user_id ¶") || c.sql.includes("UPDATE patient"))).toBe(false);
-  });
+  for (const [label, userId] of [
+    ["a non-member", OUTSIDER],
+    ["a suspended member", SUSPENDED],
+    ["an active member of another org", STRANGER],
+  ] as const) {
+    it(`rejects reassignment to ${label}`, async () => {
+      await expect(
+        updatePatient({
+          orgId: ORG,
+          id: PATIENT,
+          payload: { careTeam: { billingAgentUserId: userId } },
+        }),
+      ).rejects.toThrow(/not an active member of this organization/);
+      expect(calls.some((c) => c.sql.includes("billing_agent_user_id ¶") || c.sql.includes("UPDATE patient"))).toBe(false);
+    });
+  }
 
   it("careTeam: {} is a no-op — no UPDATE, no updated_at bump", async () => {
     await updatePatient({ orgId: ORG, id: PATIENT, payload: { careTeam: {} } });

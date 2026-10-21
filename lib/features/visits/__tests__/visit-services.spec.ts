@@ -29,6 +29,8 @@ let activeIds: string[] = [];
 /** Ids already recorded on the visit — saveable even once deactivated. */
 let recordedIds: string[] = [];
 let visitExists = true;
+/** The visit's status: services on a signed visit are locked (audit R15). */
+let visitStatus = "in_progress";
 
 function fakeTx() {
   const run = (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -42,8 +44,8 @@ function fakeTx() {
         existingNames.some((n) => n.toLowerCase() === wanted) ? [{ id: SVC_A }] : [],
       );
     }
-    if (sql.includes("SELECT id FROM visit WHERE id")) {
-      return Promise.resolve(visitExists ? [{ id: VISIT }] : []);
+    if (sql.includes("SELECT id, status FROM visit WHERE id")) {
+      return Promise.resolve(visitExists ? [{ id: VISIT, status: visitStatus }] : []);
     }
     // The catalog guard in setVisitServices: active OR already recorded here.
     if (sql.includes("SELECT id FROM visit_service\n         WHERE id = ANY(") ||
@@ -164,5 +166,32 @@ describe("setVisitServices", () => {
     await expect(
       setVisitServices({ orgId: ORG, visitId: VISIT, payload: { services: [] } }),
     ).rejects.toThrow(/Visit not found/);
+  });
+});
+
+describe("setVisitServices — locked once signed (audit R15)", () => {
+  beforeEach(() => {
+    calls = [];
+    visitExists = true;
+    activeIds = [SVC_A];
+    recordedIds = [];
+  });
+
+  for (const s of ["documented", "pending_billing", "billed"]) {
+    it(`refuses to replace the services on a ${s} visit, and deletes nothing`, async () => {
+      visitStatus = s;
+      await expect(
+        setVisitServices({ orgId: ORG, visitId: VISIT, payload: { services: [] } }),
+      ).rejects.toThrow(/visit is signed/);
+      expect(calls.some((c) => c.sql.includes("DELETE FROM visit_service_provided"))).toBe(false);
+    });
+  }
+
+  it("CONTROL — an unsigned visit's services are still replaced", async () => {
+    visitStatus = "in_progress";
+    await setVisitServices({
+      orgId: ORG, visitId: VISIT, payload: { services: [{ serviceId: SVC_A, minutes: 10 }] },
+    });
+    expect(calls.some((c) => c.sql.includes("DELETE FROM visit_service_provided"))).toBe(true);
   });
 });

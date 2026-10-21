@@ -449,3 +449,25 @@ describe("scoreLine — band thresholds (snapshot)", () => {
     expect(r.riskBand).toBe("medium");
   });
 });
+
+describe("scoreLine — payer documentation (audit R19)", () => {
+  it("a documented element missing → documentation_incomplete, 0.6, high band", () => {
+    const r = scoreLine({
+      line: baseLine,
+      context: baseContext,
+      rules: { ...coveredRule, documentationMissing: ["Chief complaint"] },
+    });
+    expect(r.reasons).toHaveLength(1);
+    expect(r.reasons[0]!.code).toBe("documentation_incomplete");
+    expect(r.reasons[0]!.contribution).toBe(0.6);
+    expect(r.reasons[0]!.message).toContain("Chief complaint");
+    expect(r.riskBand).toBe("high");
+  });
+
+  it("nothing missing → no reason", () => {
+    expect(
+      scoreLine({ line: baseLine, context: baseContext, rules: { ...coveredRule, documentationMissing: [] } }).reasons,
+    ).toHaveLength(0);
+    expect(scoreLine({ line: baseLine, context: baseContext, rules: coveredRule }).reasons).toHaveLength(0);
+  });
+});

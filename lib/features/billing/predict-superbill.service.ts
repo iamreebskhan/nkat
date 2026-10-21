@@ -15,6 +15,8 @@
  *     feedback loop.
  */
 import { withOrgContext } from "@/lib/db";
+import { addDaysIso } from "@/lib/features/org/org-date";
+import { loadDocumentationGaps } from "@/lib/features/visits/documentation-check.service";
 
 import { getDenialRuleMetrics } from "./denial-feedback.service";
 import {
@@ -45,6 +47,12 @@ export interface PredictInput {
    * were backfilled — and wrong the moment one did.
    */
   excludeSuperbillId?: string;
+  /**
+   * The visit being billed, for a bill not saved yet (audit R19): its note is
+   * checked against the payer's documentation standard. Ignored when
+   * excludeSuperbillId is set, which reads the saved bill's own payer.
+   */
+  visitId?: string;
   /** Has the patient been prior-authorized? */
   patientPriorAuth?: boolean;
   /** Clinician taxonomy code, if known. */
@@ -142,18 +150,49 @@ export async function predictSuperbill(args: PredictInput): Promise<PredictedRis
         });
       }
 
+      // The payer's documentation standard against the note (audit R19):
+      // through the saved bill, or before it is saved, through the visit. The
+      // codes and the date of service are the ones being scored, which may
+      // not be saved yet, so the stored risk and its documentation check are
+      // judged on one day. A saved bill's own date still wins.
+      const docTarget = args.excludeSuperbillId
+        ? { superbillId: args.excludeSuperbillId }
+        : args.visitId
+          ? { visitId: args.visitId }
+          : null;
+      if (docTarget) {
+        const docs = await loadDocumentationGaps(tx, docTarget, {
+          codes: lines.map((l) => l.code),
+          dos: args.dos,
+        });
+        for (const r of docs.results) {
+          if (r.missing.length === 0) continue;
+          const cur = rulesByCode.get(r.code) ?? { coverageStatus: "unknown" as const, confidence: 0 };
+          rulesByCode.set(r.code, { ...cur, documentationMissing: r.missing.map((m) => m.label) });
+        }
+      }
+
       // Recent history for frequency check — only when we know the
-      // patient. RLS keeps this scoped to the org.
+      // patient. Named by org as well as RLS.
+      //
+      // Counted back from the date of service being scored, as far as the
+      // longest frequency window among these codes, and at least 90 days.
+      // It was counted back 90 days from today in UTC: a visit billed weeks
+      // later had its window cut short, so did any limit over 90 days, and
+      // the boundary moved with the server's clock rather than the claim.
       if (args.patientId) {
-        const since = new Date();
-        since.setUTCDate(since.getUTCDate() - 90);
-        const sinceStr = since.toISOString().slice(0, 10);
+        const longest = Math.max(
+          90,
+          ...[...rulesByCode.values()].map((r) => r.frequencyLimit?.windowDays ?? 0),
+        );
+        const sinceStr = addDaysIso(args.dos, -longest);
         const hist = await tx.$queryRaw<
           { code: string; dos: Date }[]
         >`
           SELECT unnest(cpt_codes) AS code, date_of_service AS dos
             FROM superbill
-           WHERE patient_id = ${args.patientId}::uuid
+           WHERE org_id = ${args.orgId}::uuid
+             AND patient_id = ${args.patientId}::uuid
              AND date_of_service >= ${sinceStr}::date
              -- Never count the super-bill under review as prior history.
              AND (${args.excludeSuperbillId ?? null}::uuid IS NULL

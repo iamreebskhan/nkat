@@ -44,6 +44,14 @@ import {
 import { assertNoPhi } from "@/lib/ai/phi-guard";
 import { isEmbedderConfigured } from "@/lib/ai/embedder";
 import { hybridSearch } from "@/lib/ai/vector-search";
+import { withOrgContext } from "@/lib/db";
+import {
+  DEFAULT_ORG_TIME_ZONE,
+  isCalendarDay,
+  orgLocalDate,
+  orgToday,
+} from "@/lib/features/org/org-date";
+import { readOrgTimeZone } from "@/lib/features/org/org-time-zone";
 
 import {
   fetchOrgRule,
@@ -185,6 +193,26 @@ const MIN_SQL_CONFIDENCE = 0.5;
 const AI_SYNTHESIZED_CONFIDENCE = 0.4;
 
 /**
+ * The date of service the rules are matched on, as a calendar day (0107).
+ *
+ * It was `new Date(req.dos)`, or `new Date()` when none was sent, bound into
+ * comparisons with the rules' DATE columns. A Date binds as a timestamptz, so
+ * each comparison read the rule's date as midnight in the database session's
+ * zone, and "today" was the server's instant: on a server west of UTC a rule
+ * effective on the date of service did not answer for it. Today, when no date
+ * is sent, is the practice's; a caller with no org (platform tooling) gets the
+ * default practice zone.
+ */
+async function dosDayFor(req: LookupRequest): Promise<string> {
+  if (req.dos && isCalendarDay(req.dos)) return req.dos;
+  const orgId = req.orgId;
+  const tz = orgId
+    ? await withOrgContext(orgId, (tx) => readOrgTimeZone(tx, orgId))
+    : DEFAULT_ORG_TIME_ZONE;
+  return req.dos ? orgLocalDate(req.dos, tz) : orgToday(tz);
+}
+
+/**
  * Run a lookup. Pure orchestration — DB I/O delegated to repository,
  * AI to anthropic.client. Caller handles persistence (analyst queue
  * insert when source=ai_synthesized) and audit-log writes.
@@ -195,7 +223,7 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
   let state = req.state ?? null;
   let cptCode = req.cptCode ?? null;
   let attribute = req.attribute ?? null;
-  const dos = req.dos ? new Date(req.dos) : new Date();
+  const dos = await dosDayFor(req);
 
   if ((!payerId || !state || !cptCode) && req.query && isAnthropicConfigured()) {
     assertNoPhi(req.query, "ruleLookup.query");
@@ -330,9 +358,8 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
         ? {
             documentName: orgRuleCitationName(orgHit),
             documentUrl: null,
-            effectiveDate: orgHit.lastEditedAt
-              ? orgHit.lastEditedAt.toISOString().slice(0, 10)
-              : null,
+            // The day of the last edit where the practice is, not its UTC day.
+            effectiveDate: orgHit.lastEditedDay,
             verbatimQuote: orgHit.sourceQuote,
             page: null,
           }

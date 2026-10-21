@@ -1,4 +1,4 @@
-import { requireDemoPassword } from "./lib/test-credentials.mjs";
+import { harnessAccount } from "./lib/test-credentials.mjs";
 /**
  * DEEP live verification on a PERSISTENT real account.
  *
@@ -9,27 +9,20 @@ import { requireDemoPassword } from "./lib/test-credentials.mjs";
  * payer-scoped picker returns real codes — and it leaves a populated,
  * browsable org behind so you can log into the UI and click through it.
  *
- * Run on the VPS (has the Anthropic/OpenAI keys):
+ * Run on the VPS (has the Anthropic/OpenAI keys), with TEST_PASSWORD set as
+ * in the runbook's "Harness account" preamble:
  *
- *   BASE_URL=https://app.pallio.io \
- *   TEST_EMAIL=you+livetest@yourdomain.com \
- *   TEST_PASSWORD='Choose-A-Strong-Passphrase-9!' \
- *   node scripts/probe-live-account.mjs
+ *   BASE_URL=https://app.pallio.io node scripts/probe-live-account.mjs
  *
- * TEST_EMAIL / TEST_PASSWORD are how YOU log into the seeded account in
- * the browser afterwards. If omitted, the script generates them and prints
- * them at the end. Re-runnable: signup→ (if taken) login; patients are
- * reused by name so the account stays clean.
+ * It signs in as the harness account (scripts/lib/test-credentials.mjs):
+ * harness@pallio-smoke.test in 'Pallio Harness', unless TEST_EMAIL / TEST_ORG
+ * name another. It refuses the demo tenant it used to populate (R36).
+ * Re-runnable: signup→ (if taken) login; patients are reused by name so the
+ * account stays clean.
  */
 
-// Fixed, known demo credentials so this is fully turnkey — no env setup.
-// Override with TEST_EMAIL / TEST_PASSWORD if you want your own. This is a
-// throwaway DEMO login on your own platform; rotate/remove it before real
-// production use.
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
-const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = requireDemoPassword();
-const ORG_NAME = process.env.TEST_ORG || "Pallio Live Demo";
+const { email: EMAIL, password: PASSWORD, orgName: ORG_NAME, fullName } = harnessAccount();
 
 let cookie = "";
 const results = [];
@@ -64,7 +57,7 @@ console.log(`     account: ${EMAIL}\n`);
 
 // ── account: signup, or login if it already exists ─────────────────────
 console.log("── account ──");
-const su = await req("POST", "/api/auth/signup", { email: EMAIL, password: PASSWORD, fullName: "Live Tester", orgName: ORG_NAME, baaAccepted: true });
+const su = await req("POST", "/api/auth/signup", { email: EMAIL, password: PASSWORD, fullName, orgName: ORG_NAME, baaAccepted: true });
 if (su.s === 201) {
   ok("signup (new persistent account)", true);
 } else {
@@ -233,7 +226,9 @@ if (failed.length) { console.log("\nFailures:"); for (const f of failed) console
 console.log(`\n████  YOUR LIVE ACCOUNT — LOG IN AND CLICK THROUGH  ████`);
 console.log(`  URL:      ${BASE}/login`);
 console.log(`  email:    ${EMAIL}`);
-console.log(`  password: ${PASSWORD}`);
+// Not the value: this output lands in terminal scrollback and CI logs, and
+// the harness password is shared by every script in the runbook.
+console.log("  password: the TEST_PASSWORD set in this shell (never printed)");
 console.log(`  org:      ${ORG_NAME}`);
 console.log(`\n  What to click to SEE each verified feature:`);
 console.log(`   • Patients      → Ada Lovelace (Critical chip), Grace Hopper (High); Last/Next visit columns`);

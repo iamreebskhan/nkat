@@ -134,3 +134,57 @@ html, body {
    rather than a stylesheet one.
    --------------------------------------------------------------------------- */
 main :where(div, section):has(> table) { overflow-x: auto; }
+
+/* ---------------------------------------------------------------------------
+   Touch targets on the bedside device.
+
+   The client, 20 Aug 2026 [12:30]: "most nurse practitioners actually see the
+   patients with an iPad and touchscreen, so they just click through it."
+
+   Density that reads well under a mouse is unusable under a finger. The
+   schedule chips are 11px text with 4px of padding — roughly a 20px tall
+   target, against the ~44px that both Apple's and Google's guidance put as the
+   minimum. Rather than inflate the desktop board, this applies only where the
+   primary input actually is coarse, so a mouse user sees no change at all.
+
+   `pointer: coarse` and not a width breakpoint on purpose: an iPad in landscape
+   is 1024px wide and would pass any desktop-width test while still being
+   operated with a finger.
+   --------------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  .visit-chip { padding: 0.5rem 0.625rem; font-size: 12px; }
+  .visit-chip > button { min-height: 40px; }
+
+  /* Anything the clinician taps to act: buttons, links styled as buttons, and
+     the note's own controls. Inputs get the same so a fingertip lands in the
+     field rather than beside it. */
+  main :where(button, [role="button"], select, summary) { min-height: 44px; }
+  main :where(input:not([type="checkbox"]):not([type="radio"]), textarea) { min-height: 44px; }
+  main :where(input[type="checkbox"], input[type="radio"]) { width: 20px; height: 20px; }
+}
+
+/*
+ * The rendered note preview — components/visits/note-preview.tsx.
+ *
+ * The markup comes from the server renderer the audit packet uses, so it is
+ * plain semantic HTML with no classes to hook. Styled here rather than with
+ * Tailwind utilities for that reason.
+ */
+.note-preview .np-hd { border-bottom: 2px solid var(--color-brand-600); padding-bottom: .75rem; margin-bottom: 1.25rem; }
+.note-preview .np-hd h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -.01em; margin: 0 0 .5rem; }
+.note-preview .np-hd dl { display: flex; flex-wrap: wrap; gap: .25rem 1.5rem; margin: 0; font-size: .8125rem; }
+.note-preview .np-hd dt { color: #64748b; display: inline; }
+.note-preview .np-hd dd { display: inline; margin: 0 0 0 .35rem; font-variant-numeric: tabular-nums; }
+.note-preview .np-hd dl > div { display: inline; }
+/* The care-team block (audit R30) is a second list in the header, on its own line. */
+.note-preview .np-hd dl + dl { margin-top: .4rem; }
+.note-preview section { margin-bottom: 1.25rem; }
+.note-preview h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: #475569; margin: 0 0 .35rem; font-weight: 600; }
+.note-preview .np-carried { text-transform: none; letter-spacing: 0; color: #b45309; font-weight: 500; margin-left: .5rem; }
+.note-preview p { margin: 0 0 .5rem; font-size: .875rem; line-height: 1.6; }
+.note-preview ul, .note-preview ol { margin: 0 0 .5rem; padding-left: 1.25rem; font-size: .875rem; line-height: 1.6; }
+.note-preview blockquote { margin: 0 0 .5rem; padding-left: .75rem; border-left: 3px solid #cbd5e1; color: #475569; }
+.note-preview .np-vitals { border-collapse: collapse; font-size: .875rem; }
+.note-preview .np-vitals td { padding: .15rem 1rem .15rem 0; font-variant-numeric: tabular-nums; }
+.note-preview .np-vitals td.k { color: #64748b; }
+.note-preview .np-empty { color: #64748b; font-style: italic; }

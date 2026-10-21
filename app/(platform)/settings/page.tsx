@@ -14,6 +14,7 @@ const SECTIONS = [
   { href: "/settings/integrations", title: "Integrations", desc: "Google Calendar sync and other third-party connections." },
   // Client walkthrough 02:30–02:36 — the org needs to extend both lists itself.
   { href: "/settings/visit-types", title: "Visit types", desc: "What appears in the visit-type dropdown when scheduling." },
+  { href: "/settings/note-template", title: "Note template", desc: "The sections every visit note asks for, and which of them block signing." },
   { href: "/settings/visit-services", title: "Visit services", desc: "The services clinicians can record against a visit." },
   // Moved out of the primary nav into Settings (client walkthrough 05:29).
   { href: "/audit", title: "Audit log", desc: "Append-only record of every action. Rows under 6 years old cannot be deleted." },

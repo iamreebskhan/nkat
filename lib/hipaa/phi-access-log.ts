@@ -70,7 +70,10 @@ export interface PhiExportParams {
     | "superbill_pdf"
     | "report_csv"
     | "patient_record_pdf"
-    | "rule_lookup_pdf";
+    | "rule_lookup_pdf"
+    // The signed note and its superbill in one document. Kept in step with the
+    // CHECK constraint on phi_export_log.export_type — see 0090.
+    | "visit_audit_packet";
   patientIds?: string[];
   targetUri?: string;
   byteSize?: number;

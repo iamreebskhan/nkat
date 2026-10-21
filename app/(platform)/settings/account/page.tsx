@@ -93,7 +93,7 @@ export default function AccountPage() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Profile</CardTitle>
-          <CardDescription>What teammates see in audit logs + invites you've sent.</CardDescription>
+          <CardDescription>What teammates see in audit logs + invites you&rsquo;ve sent.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={saveName} className="space-y-4">
@@ -137,7 +137,7 @@ export default function AccountPage() {
       <Card>
         <CardHeader>
           <CardTitle>Change password</CardTitle>
-          <CardDescription>You'll stay signed in on this device; other sessions are unaffected.</CardDescription>
+          <CardDescription>You&rsquo;ll stay signed in on this device; other sessions are unaffected.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={savePw} className="space-y-4">

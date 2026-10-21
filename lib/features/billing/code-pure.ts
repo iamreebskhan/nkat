@@ -67,3 +67,26 @@ export function gateAmaDescriptors(
     };
   });
 }
+
+/** True for the placeholder a gated CPT descriptor is replaced with. */
+export function isAmaPlaceholder(d: string | null | undefined): boolean {
+  return d === AMA_PLACEHOLDER;
+}
+
+/**
+ * The gate for one descriptor, for the paths that read `code` rows directly
+ * rather than through gateAmaDescriptors: the superbill code picker and the
+ * claim lists (audit R21). Both showed the full CPT text on an unlicensed
+ * deployment while the Rulebook and the sidebar badge said it was redacted.
+ *
+ * A null descriptor stays null: "not in the code reference" is a different
+ * fact from "licensed text withheld".
+ */
+export function gateDescriptor(
+  codeSystem: string | null | undefined,
+  descriptor: string | null | undefined,
+  licensed: boolean,
+): string | null {
+  if (descriptor == null) return null;
+  return codeSystem === "CPT" && !licensed ? AMA_PLACEHOLDER : descriptor;
+}

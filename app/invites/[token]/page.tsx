@@ -93,7 +93,7 @@ export default function AcceptInvitePage() {
       <p className="text-sm text-slate-600 mt-1 mb-5">
         {preview.invitedByEmail ? `${preview.invitedByEmail} invited` : "You've been invited"}
         {" "}as a <strong>{preview.roleTemplate.replace("_", " ")}</strong>.
-        You'll have {preview.permissions.length} permission
+        You&rsquo;ll have {preview.permissions.length} permission
         {preview.permissions.length === 1 ? "" : "s"} on day one.
       </p>
 

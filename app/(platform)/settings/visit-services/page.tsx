@@ -67,7 +67,10 @@ export default function VisitServicesSettingsPage() {
   }
 
   useEffect(() => {
-    void load();
+    // Started from a timer, as on the audit page, so no setState is reachable
+    // synchronously from the effect body (load() sets state after its fetch).
+    const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
   }, []);
 
   async function add() {
@@ -184,7 +187,10 @@ export default function VisitServicesSettingsPage() {
               className="mt-1 h-9 w-full rounded-md border border-slate-300 px-2 text-base"
             />
           </label>
-          <label className="block max-w-xs">
+          {/* htmlFor, because the InfoTip's <button> comes first in this
+              label and would otherwise be the control it names: the input
+              had no label at all. As on the visit types page. */}
+          <label className="block max-w-xs" htmlFor="new-service-cpt-hint">
             <span className="font-medium text-slate-700">
               CPT hint <span className="text-slate-400">(optional)</span>
             </span>
@@ -194,6 +200,7 @@ export default function VisitServicesSettingsPage() {
               that.
             </InfoTip>
             <input
+              id="new-service-cpt-hint"
               value={cptHint}
               onChange={(e) => setCptHint(e.target.value)}
               placeholder="99497"

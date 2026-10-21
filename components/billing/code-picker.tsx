@@ -23,6 +23,7 @@
 import { CheckCircle2, AlertTriangle, X, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { CodeDescriptor } from "@/components/billing/code-descriptor";
 import { Button } from "@/components/ui/button";
 import { CoverageBadge } from "@/components/ui/coverage-badge";
 import { cn } from "@/lib/utils";
@@ -62,7 +63,9 @@ const SOURCE_KIND_LABEL: Record<AllowedCodeOption["sourceKind"], string> = {
   crawler: "Official policy",
   analyst: "Analyst-verified",
   ai: "AI draft (review)",
-  manual: "Your org",
+  // Global payer_rule rows entered without a linked document; not the org's
+  // own rules, which live in its Rulebook (audit R21).
+  manual: "Manual entry",
   unknown: "Unsourced",
 };
 
@@ -89,31 +92,31 @@ export function CodePicker({
 
   // Fetch the allow-list whenever payer / state / query changes.
   useEffect(() => {
-    if (!payerId || !state) {
-      setOptions([]);
-      return;
-    }
     let abandoned = false;
     const ctrl = new AbortController();
-    setLoading(true);
-    const params = new URLSearchParams({ payerId, state });
-    if (query.trim().length > 0) params.set("query", query.trim());
-    if (showAll) params.set("includeDenied", "true");
-    fetch(`/api/billing/allowed-codes?${params.toString()}`, {
-      signal: ctrl.signal,
-    })
-      .then((r) => r.json() as Promise<ApiResponse>)
-      .then((data) => {
+    (async () => {
+      if (!payerId || !state) {
+        setOptions([]);
+        return;
+      }
+      setLoading(true);
+      const params = new URLSearchParams({ payerId, state });
+      if (query.trim().length > 0) params.set("query", query.trim());
+      if (showAll) params.set("includeDenied", "true");
+      try {
+        const r = await fetch(`/api/billing/allowed-codes?${params.toString()}`, {
+          signal: ctrl.signal,
+        });
+        const data = (await r.json()) as ApiResponse;
         if (abandoned) return;
         if (data.success && data.data) setOptions(data.data.rows);
         else setOptions([]);
-      })
-      .catch(() => {
+      } catch {
         if (!abandoned) setOptions([]);
-      })
-      .finally(() => {
+      } finally {
         if (!abandoned) setLoading(false);
-      });
+      }
+    })();
     return () => {
       abandoned = true;
       ctrl.abort();
@@ -308,9 +311,11 @@ export function CodePicker({
                       <span className="font-mono tabular text-sm font-medium">
                         {o.code}
                       </span>
-                      <span className="text-sm text-slate-700 truncate">
-                        {o.descriptor}
-                      </span>
+                      <CodeDescriptor
+                        text={o.descriptor}
+                        compact
+                        className="text-sm text-slate-700 truncate"
+                      />
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       <CoverageBadge status={o.coverageStatus} size="sm" />
@@ -330,8 +335,11 @@ export function CodePicker({
                       >
                         {SOURCE_KIND_LABEL[o.sourceKind]}
                       </span>
-                      <span className="text-xs text-slate-500 tabular">
-                        conf {o.confidence.toFixed(2)}
+                      <span
+                        className="text-xs text-slate-500 tabular"
+                        title="How strongly the rule's source supports it"
+                      >
+                        {Math.round(o.confidence * 100)}% confidence
                       </span>
                       {o.modifierRequired && (
                         <span className="inline-flex items-center gap-1 text-xs text-amber-800">

@@ -78,47 +78,54 @@ export function CreateBillDialog({
 
   // Client picked → load that client's appointments.
   useEffect(() => {
-    if (!patientId) {
+    (async () => {
+      if (!patientId) {
+        setVisits(null);
+        setVisitId("");
+        return;
+      }
       setVisits(null);
-      setVisitId("");
-      return;
-    }
-    setVisits(null);
-    fetch(`/api/billing/billable-visits?patientId=${patientId}`)
-      .then((r) => r.json())
-      .then((d) => setVisits(d.success ? (d.data?.rows ?? []) : []))
-      .catch(() => setVisits([]));
+      try {
+        const r = await fetch(`/api/billing/billable-visits?patientId=${patientId}`);
+        const d = await r.json();
+        setVisits(d.success ? (d.data?.rows ?? []) : []);
+      } catch {
+        setVisits([]);
+      }
+    })();
   }, [patientId]);
 
   // Appointment picked → preview the fee. Uses the same GET the visit page
   // uses, so the number shown is the number persistDraft will write rather
   // than a second, drifting calculation in the browser.
   useEffect(() => {
-    setPreview(null);
-    const v = visits?.find((x) => x.visitId === visitId);
-    if (!visitId || !v || v.superbillId) {
-      // Must clear the flag here too. A re-run that bails (visit deselected,
-      // or `visits` refetched so the id no longer resolves) used to leave
-      // previewLoading stuck true from the previous run, and the Fee row read
-      // "Calculating…" forever even though the request had already returned.
-      setPreviewLoading(false);
-      return;
-    }
     let abandoned = false;
-    setPreviewLoading(true);
-    fetch(`/api/visits/${visitId}/superbill`)
-      .then((r) => r.json())
-      .then((d) => {
+    (async () => {
+      setPreview(null);
+      const v = visits?.find((x) => x.visitId === visitId);
+      if (!visitId || !v || v.superbillId) {
+        // Must clear the flag here too. A re-run that bails (visit deselected,
+        // or `visits` refetched so the id no longer resolves) used to leave
+        // previewLoading stuck true from the previous run, and the Fee row read
+        // "Calculating…" forever even though the request had already returned.
+        setPreviewLoading(false);
+        return;
+      }
+      setPreviewLoading(true);
+      try {
+        const r = await fetch(`/api/visits/${visitId}/superbill`);
+        const d = await r.json();
         if (abandoned || !d.success || !d.data?.draft) return;
         setPreview({
           billedAmountCents: d.data.draft.billedAmountCents ?? 0,
           warnings: d.data.draft.warnings ?? [],
         });
-      })
-      .catch(() => undefined)
-      .finally(() => {
+      } catch {
+        /* the preview is best-effort; the Fee row keeps its default text */
+      } finally {
         if (!abandoned) setPreviewLoading(false);
-      });
+      }
+    })();
     return () => {
       abandoned = true;
     };

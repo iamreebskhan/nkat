@@ -105,15 +105,19 @@ export default function LookupPage() {
   }, []);
 
   // Prefill from deep-link params (risk-badge "View rule citation" links here
-  // with ?cpt=&payerId=&state=&attribute=).
+  // with ?cpt=&payerId=&state=&attribute=). Read after mount, from a timer so
+  // no state is set synchronously in the effect body.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const p = new URLSearchParams(window.location.search);
-    const cpt = p.get("cpt");
-    if (cpt) setCptCode(cpt.toUpperCase());
-    if (p.get("payerId")) setPayerId(p.get("payerId")!);
-    if (p.get("state")) setState(p.get("state")!.toUpperCase());
-    if (p.get("attribute")) setAttribute(p.get("attribute")!);
+    const t = setTimeout(() => {
+      const p = new URLSearchParams(window.location.search);
+      const cpt = p.get("cpt");
+      if (cpt) setCptCode(cpt.toUpperCase());
+      if (p.get("payerId")) setPayerId(p.get("payerId")!);
+      if (p.get("state")) setState(p.get("state")!.toUpperCase());
+      if (p.get("attribute")) setAttribute(p.get("attribute")!);
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   async function onSubmit(e: React.FormEvent) {

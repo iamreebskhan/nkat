@@ -16,7 +16,7 @@
 import { NotFoundError } from "@/lib/api";
 import { withBreakglass, withOrgContext } from "@/lib/db";
 import { hasAmaLicense } from "@/lib/features/billing/code.service";
-import { compareRulebooks } from "./rulebook-pure";
+import { compareRulebooks, sourceKindFor } from "./rulebook-pure";
 import type {
   ComparisonRow,
   CoverageStatus,
@@ -58,27 +58,8 @@ interface RowRow {
   source_created_by: string | null;
   last_edited_by_user_id: string | null;
   last_edited_at: Date | null;
-}
-
-/**
- * Derive a stable source-kind enum from (org_rulebook_row.origin,
- * payer_rule.created_by). Used by the UI for a one-glance "where did
- * this rule come from?" badge.
- */
-function deriveSourceKind(
-  origin: RowRow["origin"],
-  createdBy: string | null,
-): "crawler" | "analyst" | "ai" | "org" | "manual" | "unknown" {
-  // Org-side provenance trumps the underlying payer_rule.
-  if (origin === "org_upload") return "org";
-  if (origin === "org_override") return "org";
-  if (origin === "analyst") return "analyst";
-  // origin === 'source' — fall through to the linked payer_rule.
-  if (!createdBy) return "unknown";
-  if (createdBy === "ai") return "ai";
-  if (createdBy.startsWith("crawler:")) return "crawler";
-  if (createdBy.startsWith("analyst:")) return "analyst";
-  return "manual";
+  /** When an analyst attestation stops answering lookups; NULL = never. */
+  expires_at: Date | null;
 }
 
 function rowToView(r: RowRow): RulebookRowView {
@@ -99,9 +80,15 @@ function rowToView(r: RowRow): RulebookRowView {
     sourcePayerRuleId: r.source_payer_rule_id,
     sourceQuote: r.source_quote,
     sourceCreatedBy: r.source_created_by,
-    sourceKind: deriveSourceKind(r.origin, r.source_created_by),
+    // rulebook-pure's sourceKindFor: it knows 'extract:*' is a published
+    // document, which the old derivation badged 'analyst (manual)' (R21).
+    sourceKind: sourceKindFor(r.origin, r.source_created_by, {
+      sourcePayerRuleId: r.source_payer_rule_id,
+      confidence: typeof r.confidence === "string" ? parseFloat(r.confidence) : r.confidence,
+    }),
     lastEditedByUserId: r.last_edited_by_user_id,
     lastEditedAt: r.last_edited_at?.toISOString() ?? null,
+    expiresAt: r.expires_at?.toISOString() ?? null,
   };
 }
 
@@ -334,7 +321,7 @@ async function readRulebook(args: {
       r.confidence::text AS confidence,
       r.source_payer_rule_id, r.source_quote,
       pr.created_by AS source_created_by,
-      r.last_edited_by_user_id, r.last_edited_at
+      r.last_edited_by_user_id, r.last_edited_at, r.expires_at
     FROM org_rulebook_row r
     LEFT JOIN payer p ON p.id = r.payer_id
     LEFT JOIN code  c ON c.code = r.cpt_code

@@ -22,7 +22,16 @@ const Schema = z.object({
   password: z.string().min(12, "Password must be at least 12 characters").max(200),
   fullName: z.string().min(1).max(120),
   orgName: z.string().min(2).max(120),
-  baaAccepted: z.boolean(),
+  // literal(true), not boolean(). A boolean accepts `false`, so a POST that
+  // explicitly DECLINED the Business Associate Agreement was a well-formed
+  // request and reached signup(), where one branch was all that refused it.
+  // The signup page only disables its own submit button, so nothing but the
+  // server stands between a declined BAA and a live org. Refused here as well
+  // as in the service: for a HIPAA agreement, two checks that both say no is
+  // the right direction to fail in.
+  baaAccepted: z.literal(true, {
+    errorMap: () => ({ message: "You must accept the Business Associate Agreement." }),
+  }),
 });
 
 export async function POST(req: NextRequest): Promise<Response> {

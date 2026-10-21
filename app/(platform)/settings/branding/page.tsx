@@ -81,7 +81,7 @@ export default function BrandingPage() {
       <header className="mb-6">
         <h1 className="font-display text-3xl tracking-tight">Branding</h1>
         <p className="text-slate-600 mt-1">
-          Logo, primary color, custom domain, and email "from" identity.
+          Logo, primary color, custom domain, and email &ldquo;from&rdquo; identity.
         </p>
       </header>
 

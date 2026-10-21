@@ -43,16 +43,20 @@ export default function NewAttestationPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Read deep-link params from the URL on mount and prefill the form.
+  // Read deep-link params from the URL on mount and prefill the form — from a
+  // timer, so no state is set synchronously in the effect body.
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    setRequestId(p.get("requestId"));
-    setForm((f) => ({
-      ...f,
-      state: p.get("state") ?? f.state,
-      cptCode: p.get("cptCode") ?? f.cptCode,
-      attribute: p.get("attribute") ?? f.attribute,
-    }));
+    const t = setTimeout(() => {
+      const p = new URLSearchParams(window.location.search);
+      setRequestId(p.get("requestId"));
+      setForm((f) => ({
+        ...f,
+        state: p.get("state") ?? f.state,
+        cptCode: p.get("cptCode") ?? f.cptCode,
+        attribute: p.get("attribute") ?? f.attribute,
+      }));
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   // Claim the request the moment the analyst opens it from the queue, so it

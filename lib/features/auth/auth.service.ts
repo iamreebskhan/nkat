@@ -25,6 +25,7 @@ import bcrypt from "bcryptjs";
 import { prisma, withBreakglass, withOrgContext } from "@/lib/db";
 import {
   ROLE_DEFAULT_PERMISSIONS,
+  sessionRoleFor,
 } from "@/lib/features/team/team.types";
 import { checkPassword } from "@/lib/features/auth/password-policy";
 import { DEFAULT_VISIT_SERVICES } from "@/lib/features/visits/visit-services.service";
@@ -96,9 +97,9 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   // result is then used to set app.current_org_id for all subsequent calls.
   const orgRows = await withBreakglass(
     (client) => client.$queryRaw<
-      { org_id: string; role: string; org_status: string }[]
+      { org_id: string; role: string; role_template: string | null; org_status: string }[]
     >`
-      SELECT m.org_id, m.role, o.status AS org_status
+      SELECT m.org_id, m.role, m.role_template, o.status AS org_status
       FROM org_member m JOIN org o ON o.id = m.org_id
       WHERE m.user_id = ${user.id}::uuid
         AND m.status = 'active'
@@ -114,9 +115,22 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   }
 
   const permissions = await withOrgContext(member.org_id, async (tx) => {
+    // org_id as well as user_id, and it is NOT redundant with RLS. This array
+    // becomes session.permissions, and lib/auth.ts requireAuth() gates every
+    // route on session.permissions alone — no per-request re-read — so what
+    // this returns is the user's authority for the whole session.
+    // A user can hold a seat in two orgs (invite-redeem.service.ts reuses the
+    // existing app_user row when the invited address is already on file), and
+    // .env.local notes the preview deployment connects as a superuser, which
+    // bypasses RLS. On that connection the query without this line returned
+    // all 8 of multi@example.test's grants instead of the 4 held in the org
+    // being signed into (checked against the local database), so a grant of
+    // team.permissions made in one tenant became effective in the other.
+    // Same predicate team.service.ts already carries for the roster.
     const r = await tx.$queryRaw<{ permission: string }[]>`
       SELECT permission FROM user_permission
       WHERE user_id = ${user.id}::uuid
+        AND org_id = ${member.org_id}::uuid
       ORDER BY permission
     `;
     return r.map((x) => x.permission);
@@ -135,21 +149,13 @@ export async function login(input: LoginInput): Promise<LoginResult> {
       // belonging to any specific org's role.
       role: user.is_platform_admin
         ? "platform_admin"
-        : mapDbRoleToSession(member.role),
+        : sessionRoleFor(member.role_template, member.role),
       permissions,
       email: user.email,
     },
   };
 }
 
-function mapDbRoleToSession(dbRole: string): Session["role"] {
-  // org_member.role uses the legacy four-value enum; the JWT role is
-  // for sidebar rendering only — server gates everything by permissions.
-  if (dbRole === "admin") return "org_admin";
-  if (dbRole === "consultant") return "consultant";
-  if (dbRole === "reviewer") return "analyst";
-  return "clinician";
-}
 
 export interface SignupInput {
   email: string;
@@ -209,9 +215,23 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
     // (org itself, org_member, user_permission) passes RLS.
     await tx.$executeRawUnsafe(`SET LOCAL app.current_org_id = '${newOrgId}'`);
 
+    // baa_signed_at is the ONLY record anywhere that this customer accepted the
+    // BAA — there is no acceptance table and no audit row to contradict it — so
+    // an auditor reads this timestamp as the signature itself. It used to be an
+    // unconditional now() that never looked at input.baaAccepted, which means
+    // the refusal above was the single line keeping the column honest: lose it
+    // and every org is created carrying a HIPAA signature date for a customer
+    // who declined. Written from the acceptance instead, so a declined signup
+    // that ever reached this INSERT would leave the column NULL rather than
+    // fabricate a signature. now() stays the clock: the DB's, as everywhere
+    // else in this transaction.
     await tx.$executeRaw`
       INSERT INTO org (id, name, slug, plan_tier, baa_signed_at, primary_contact_email, status)
-      VALUES (${newOrgId}::uuid, ${input.orgName}, ${slug}, 'solo', now(), ${input.email}::citext, 'active')
+      VALUES (
+        ${newOrgId}::uuid, ${input.orgName}, ${slug}, 'solo',
+        CASE WHEN ${input.baaAccepted}::boolean THEN now() ELSE NULL END,
+        ${input.email}::citext, 'active'
+      )
     `;
     const orgId = newOrgId;
 
@@ -223,8 +243,8 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
     const userId = userRows[0]!.id;
 
     await tx.$executeRaw`
-      INSERT INTO org_member (org_id, user_id, role, status, joined_at)
-      VALUES (${orgId}::uuid, ${userId}::uuid, 'admin', 'active', now())
+      INSERT INTO org_member (org_id, user_id, role, role_template, status, joined_at)
+      VALUES (${orgId}::uuid, ${userId}::uuid, 'admin', 'org_admin', 'active', now())
     `;
 
     for (const perm of adminPerms) {
@@ -236,10 +256,13 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
 
     // Visit types must exist before anything can be scheduled — scheduleVisit
     // validates the slug against this table. 0062 seeds pre-existing orgs.
+    // The band is t.codingBasis, never the slug (audit R22): 'telehealth' is
+    // a seeded slug but no longer a coding band, so inserting the slug as the
+    // band would be refused by the 0099 CHECK and fail every signup.
     for (const t of DEFAULT_VISIT_TYPES) {
       await tx.$executeRaw`
-        INSERT INTO org_visit_type (org_id, slug, label, coding_basis, sort_order)
-        VALUES (${orgId}::uuid, ${t.slug}, ${t.label}, ${t.slug}, ${t.sortOrder})
+        INSERT INTO org_visit_type (org_id, slug, label, coding_basis, is_telehealth, sort_order)
+        VALUES (${orgId}::uuid, ${t.slug}, ${t.label}, ${t.codingBasis}, ${t.isTelehealth}, ${t.sortOrder})
         ON CONFLICT DO NOTHING
       `;
     }

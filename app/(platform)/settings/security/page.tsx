@@ -90,7 +90,7 @@ export default function SecurityPage() {
               Save these recovery codes
             </p>
             <p className="text-xs text-slate-700 mb-3">
-              Each code works once and only once. They're your way back in if you lose your phone.
+              Each code works once and only once. They&rsquo;re your way back in if you lose your phone.
             </p>
             <ul className="grid grid-cols-2 gap-2 font-mono text-sm">
               {recoveryCodes.map((c) => (
@@ -100,7 +100,7 @@ export default function SecurityPage() {
               ))}
             </ul>
             <Button size="sm" variant="secondary" className="mt-3" onClick={() => setRecoveryCodes(null)}>
-              I've saved them
+              I&rsquo;ve saved them
             </Button>
           </CardContent>
         </Card>
@@ -114,7 +114,7 @@ export default function SecurityPage() {
             <div>
               <p className="text-sm text-slate-700 mb-3">
                 <strong className="text-emerald-700">MFA is on</strong> for this account.
-                You'll be asked for a 6-digit code on every login.
+                You&rsquo;ll be asked for a 6-digit code on every login.
               </p>
               <Button variant="danger" size="sm" onClick={disable}>
                 Disable MFA

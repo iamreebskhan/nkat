@@ -24,6 +24,8 @@ import {
   type OnboardingStatusView,
   type OrgType,
 } from "@/lib/features/onboarding/onboarding.types";
+// Shared with the platform-admin payer roster (audit R17).
+import { US_STATES } from "@/lib/reference/us-states";
 
 type RulebookPath = "generate" | "upload" | null;
 
@@ -32,13 +34,6 @@ const PALLIATIVE_CPT_DEFAULTS = [
   "99347", "99348", "99349", "99350",
   "G0318", "99417",
   "99497", "99498",
-];
-
-const US_STATES = [
-  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
-  "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
-  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
-  "VA","WA","WV","WI","WY","DC",
 ];
 
 interface PayerOption {
@@ -132,6 +127,12 @@ export default function OnboardingPage() {
       p.states.some((s) => selectedStates.has(s)),
     );
   }, [payerOptions, selectedStates]);
+
+  // The roster loaded and none of it serves these states (audit R17). The
+  // payers step used to demand a pick it could not offer, so an org outside
+  // OH/NC/SC could never finish onboarding. It becomes skippable instead; the
+  // API still requires at least one payer whenever payers ARE saved.
+  const payersSkippable = payerOptions.length > 0 && visiblePayers.length === 0;
 
   const steps: WizardStep[] = [
     {
@@ -229,6 +230,8 @@ export default function OnboardingPage() {
       title: "Active payers",
       description:
         "Pick the insurance companies your patients use. Filtered by your active states.",
+      // Skippable only when nothing on the roster serves the chosen states.
+      optional: payersSkippable,
       isValid: () => selectedPayers.size > 0,
       render: () => (
         <div className="space-y-2">
@@ -237,9 +240,12 @@ export default function OnboardingPage() {
               Loading payers… (DB unavailable in dev returns an empty list).
             </p>
           )}
-          {visiblePayers.length === 0 && payerOptions.length > 0 && (
-            <p className="text-sm text-slate-500">
-              No payers match the selected states.
+          {payersSkippable && (
+            <p className="text-sm text-amber-800 bg-amber-50 ring-1 ring-inset ring-amber-600/30 rounded-md px-3 py-2">
+              Pallio doesn&rsquo;t list payers for{" "}
+              {Array.from(selectedStates).sort().join(", ")} yet. Skip this step
+              and send us the payers you bill; once they&rsquo;re on the roster,
+              re-generating your rulebook picks them up.
             </p>
           )}
           <ul className="space-y-1">
@@ -323,6 +329,13 @@ export default function OnboardingPage() {
       isValid: () => rulebookPath !== null,
       render: () => (
         <div className="space-y-3">
+          {payersSkippable && (
+            <p className="text-sm text-amber-800 bg-amber-50 ring-1 ring-inset ring-amber-600/30 rounded-md px-3 py-2">
+              With no payers picked there is nothing to generate from yet.
+              Upload your existing rulebook now, or generate once your payers
+              are on the roster.
+            </p>
+          )}
           <PathChoice
             label="Generate from sources"
             sub="Pallio queries every payer × state × CPT combo and builds your rulebook automatically. Fastest path — recommended."
@@ -351,21 +364,34 @@ export default function OnboardingPage() {
     });
     // Step 2
     await postJson("/api/onboarding/states", { states: Array.from(selectedStates) });
-    // Step 3
-    await postJson("/api/onboarding/payers", {
-      payerIds: Array.from(selectedPayers),
-    });
+    // Step 3. Not sent when no listed payer serves these states (audit R17):
+    // PayersSchema still requires one, and there is none to send.
+    if (!payersSkippable) {
+      await postJson("/api/onboarding/payers", {
+        payerIds: Array.from(selectedPayers),
+      });
+    }
     // Step 4
     await postJson("/api/onboarding/cpt-codes", {
       cptCodes: Array.from(selectedCpts),
     });
-    // Step 5 — redirect to rulebook editor with init param.
-    router.push(`/settings/rulebook?init=${rulebookPath ?? "generate"}`);
+    // Step 5 — redirect to rulebook editor with init param. Never
+    // ?init=generate after a skipped payers step: the generator refuses an
+    // org with no payers saved, and landing on that error straight after
+    // "skip this step" reads as a broken wizard. Its button is still there.
+    router.push(
+      payersSkippable && rulebookPath !== "upload"
+        ? "/settings/rulebook"
+        : `/settings/rulebook?init=${rulebookPath ?? "generate"}`,
+    );
   }
 
   // Trigger payer load when reaching step 3 — cheap enough to call eagerly.
   useEffect(() => {
-    void loadPayers();
+    // Started from a timer, as on the audit page, so no setState is reachable
+    // synchronously from the effect body (loadPayers() sets state after its fetch).
+    const t = setTimeout(() => void loadPayers(), 0);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

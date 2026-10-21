@@ -32,7 +32,7 @@ const PALLIATIVE_CODES = [
   '99350', // home visits
   '99497',
   '99498', // ACP
-  'G0318', // palliative E/M longitudinal
+  'G0318', // prolonged home/residence E/M add-on (per 15 min)
   '98000',
   '98001',
   '98002',

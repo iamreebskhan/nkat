@@ -15,6 +15,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { CodeList } from "@/components/billing/code-list";
+import { SubmissionDisclosure } from "@/components/billing/submission-disclosure";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface VisitRow {
@@ -22,18 +24,31 @@ interface VisitRow {
   visitType: string;
   status: string;
   patientId: string;
+  /** On the wire from listVisits; this queue never showed it (audit R16). */
+  patientName?: string | null;
   scheduledStart: string | null;
   startTime: string | null;
+  /** The visit's day where the practice is (VisitView.serviceDay). */
+  serviceDay: string | null;
   totalMinutes: number | null;
+  /** The band the visit's type bills as; 'non_billable' is never billed (audit R18). */
+  codingBasis?: string;
 }
 
 interface SuperbillRow {
   id: string;
   visitId: string;
+  patientId: string;
+  /** Joined on the server so a row says whose claim it is (audit R16). */
+  patientName: string;
   status: string;
   dateOfService: string;
   billedAmountCents: number;
   paidAmountCents: number | null;
+  /** Always on the API row; this queue simply never rendered it before. */
+  cptCodes: string[];
+  /** From the rulebook-fed code table; null for a code not in it. */
+  codeDescriptors?: Record<string, string | null>;
 }
 
 const READY_VISIT_STATUS = ["documented", "pending_billing"] as const;
@@ -86,17 +101,35 @@ export default function ClaimsQueuePage() {
         // pending_billing visit already has a bill. Without this the
         // "awaiting superbill" table would list every signed visit forever.
         const billedVisitIds = new Set(bills.map((b) => b.visitId));
+        // A "Not billed" visit type rests at documented for good (audit R18):
+        // it is finished, not awaiting a bill, and the server refuses to draft
+        // one. Listing it here would leave it in this queue forever.
         setVisits(
           vRes
             .filter((r) => r.success)
             .flatMap((r) => r.data?.rows ?? [])
-            .filter((v: VisitRow) => !billedVisitIds.has(v.id)),
+            .filter(
+              (v: VisitRow) => !billedVisitIds.has(v.id) && v.codingBasis !== "non_billable",
+            ),
         );
         setSuperbills(bills);
 
-        // A full page per status means there may be more behind it.
+        // More behind a page: both lists now ask the server how many rows the
+        // filter matches and compare that with what arrived. Visits used to
+        // infer it from a full page (`length >= 200`), so a status holding
+        // EXACTLY 200 visits — the whole list, nothing left out — raised the
+        // amber "there is more in the queue than the counts below" banner and
+        // told the agent to work through them and reload for rows that do not
+        // exist. /api/visits returns the COUNT under the same filters the rows
+        // are read with, the .own clinician narrowing included, so the two
+        // checks are the same honest comparison.
         setTruncated(
-          [...vRes, ...sRes].some((r) => r.success && (r.data?.rows ?? []).length >= 200),
+          vRes.some(
+            (r) => r.success && Number(r.data?.total ?? 0) > (r.data?.rows ?? []).length,
+          ) ||
+            sRes.some(
+              (r) => r.success && Number(r.data?.total ?? 0) > (r.data?.rows ?? []).length,
+            ),
         );
       } catch {
         if (!abandoned) setError("Network error.");
@@ -122,8 +155,10 @@ export default function ClaimsQueuePage() {
       <header className="mb-6">
         <h1 className="font-display text-3xl tracking-tight">Claims queue</h1>
         <p className="text-slate-600 mt-1">
-          Visits awaiting superbill + superbills awaiting submission.
+          Visits awaiting a superbill, and superbills your team has not yet recorded as submitted.
         </p>
+        {/* Submission happens outside Pallio (audit R35). */}
+        <SubmissionDisclosure />
       </header>
 
       {error && (
@@ -156,12 +191,17 @@ export default function ClaimsQueuePage() {
         <CardContent className="p-0">
           {!loading && visits.length === 0 ? (
             <p className="px-4 py-12 text-center text-sm text-slate-500">
-              All documented visits have superbills. Nothing here.
+              {/* Not "all documented visits have superbills": a visit on a
+                  "Not billed" type is filtered out above and never gets one,
+                  so this sentence was false on exactly the org that has one. */}
+              Nothing waiting to bill. A documented visit shows here until its
+              superbill is drafted; a visit on a Not billed type never does.
             </p>
           ) : visits.length > 0 ? (
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
                 <tr>
+                  <th className="text-left font-semibold px-4 py-2.5">Patient</th>
                   <th className="text-left font-semibold px-4 py-2.5">Visit type</th>
                   <th className="text-left font-semibold px-4 py-2.5">Status</th>
                   <th className="text-right font-semibold px-4 py-2.5">Minutes</th>
@@ -172,11 +212,21 @@ export default function ClaimsQueuePage() {
               <tbody className="divide-y divide-slate-100">
                 {visits.map((v) => (
                   <tr key={v.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-2">
+                      <Link
+                        href={`/patients/${v.patientId}`}
+                        className="text-[var(--color-brand-700)] hover:underline"
+                      >
+                        {v.patientName || "—"}
+                      </Link>
+                    </td>
                     <td className="px-4 py-2">{v.visitType.replace(/_/g, " ")}</td>
-                    <td className="px-4 py-2 text-xs">{v.status.replace("_", " ")}</td>
+                    <td className="px-4 py-2 text-xs">{v.status.replace(/_/g, " ")}</td>
                     <td className="px-4 py-2 text-right tabular">{v.totalMinutes ?? "—"}</td>
                     <td className="px-4 py-2 text-right text-xs text-slate-500 tabular">
-                      {(v.startTime ?? v.scheduledStart ?? "").slice(0, 10)}
+                      {/* The practice's day, which is the bill's date of service.
+                          Slicing the instant gave its UTC day. */}
+                      {v.serviceDay ?? ""}
                     </td>
                     <td className="px-4 py-2 text-right">
                       <Link
@@ -211,6 +261,8 @@ export default function ClaimsQueuePage() {
               <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
                 <tr>
                   <th className="text-left font-semibold px-4 py-2.5">DOS</th>
+                  <th className="text-left font-semibold px-4 py-2.5">Patient</th>
+                  <th className="text-left font-semibold px-4 py-2.5">Codes</th>
                   <th className="text-left font-semibold px-4 py-2.5">Status</th>
                   <th className="text-right font-semibold px-4 py-2.5">Billed</th>
                   <th />
@@ -218,20 +270,33 @@ export default function ClaimsQueuePage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {superbills.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50">
+                  <tr key={s.id} className="hover:bg-slate-50 align-top">
                     <td className="px-4 py-2 tabular text-slate-700">{s.dateOfService.slice(0, 10)}</td>
                     <td className="px-4 py-2">
+                      <Link
+                        href={`/patients/${s.patientId}`}
+                        className="text-[var(--color-brand-700)] hover:underline"
+                      >
+                        {s.patientName || "—"}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2">
+                      <CodeList codes={s.cptCodes} descriptors={s.codeDescriptors} />
+                    </td>
+                    <td className="px-4 py-2">
                       <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ring-1 ring-inset bg-amber-50 text-amber-800 ring-amber-600/30">
-                        {s.status.replace("_", " ")}
+                        {s.status.replace(/_/g, " ")}
                       </span>
                     </td>
                     <td className="px-4 py-2 text-right tabular">${(s.billedAmountCents / 100).toFixed(2)}</td>
                     <td className="px-4 py-2 text-right">
+                      {/* To this claim's own review page. It pointed at the
+                          whole superbills list, a dead loop (audit R16). */}
                       <Link
-                        href={`/billing/superbills`}
+                        href={`/visits/${s.visitId}/superbill`}
                         className="text-xs text-[var(--color-brand-700)] hover:underline"
                       >
-                        Open →
+                        Review →
                       </Link>
                     </td>
                   </tr>

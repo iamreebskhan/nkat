@@ -27,6 +27,9 @@ interface Props {
   selfUserId: string;
 }
 
+// 5-minute edit window (mirrors EDIT_WINDOW_MS server-side).
+const EDIT_WINDOW_MS = 5 * 60 * 1000;
+
 export function ThreadPanel({ patientId, selfUserId }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [body, setBody] = useState("");
@@ -36,14 +39,30 @@ export function ThreadPanel({ patientId, selfUserId }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
 
-  // 5-minute edit window (mirrors EDIT_WINDOW_MS server-side).
-  const EDIT_WINDOW_MS = 5 * 60 * 1000;
+  // The edit window's clock, held in state rather than read during render.
+  // load() stamps it with each fetch, and the timer below moves it on when
+  // the caller's next window closes, so an Edit link drops off on time.
+  const [now, setNow] = useState(() => Date.now());
   function canEdit(m: Message): boolean {
     return (
       m.authorUserId === selfUserId &&
-      Date.now() - new Date(m.createdAt).getTime() < EDIT_WINDOW_MS
+      now - new Date(m.createdAt).getTime() < EDIT_WINDOW_MS
     );
   }
+
+  useEffect(() => {
+    const closes = messages
+      .filter((m) => m.authorUserId === selfUserId)
+      .map((m) => new Date(m.createdAt).getTime() + EDIT_WINDOW_MS)
+      .filter((t) => t > now);
+    if (closes.length === 0) return;
+    // Capped at one window. That never binds for a post made in the past,
+    // but a far-future createdAt would overflow setTimeout, fire at once,
+    // and loop.
+    const wait = Math.min(Math.min(...closes) - Date.now(), EDIT_WINDOW_MS);
+    const t = setTimeout(() => setNow(Date.now()), wait);
+    return () => clearTimeout(t);
+  }, [messages, now, selfUserId]);
 
   async function saveEdit(id: string) {
     if (editBody.trim().length === 0) return;
@@ -62,17 +81,29 @@ export function ThreadPanel({ patientId, selfUserId }: Props) {
     }
   }
 
+  // Save's handler, bound here rather than as a closure inside messages.map
+  // below: the compiler treats a handler made there as possibly called
+  // during render, and flags the clock read in load(). Save only renders on
+  // the message being edited, so editingId is that message's id.
+  function saveCurrentEdit() {
+    if (editingId) saveEdit(editingId);
+  }
+
   async function load() {
     setLoading(true);
     const r = await fetch(`/api/patients/${patientId}/messages`);
     const data = await r.json();
+    setNow(Date.now());
     if (data.success) setMessages(data.data.messages);
     else setError(data.error ?? "Failed to load.");
     setLoading(false);
   }
 
   useEffect(() => {
-    load();
+    // Started from a timer rather than synchronously in the effect body:
+    // load() sets loading first, which would cascade a second render.
+    const t = setTimeout(() => load(), 0);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
@@ -145,7 +176,7 @@ export function ThreadPanel({ patientId, selfUserId }: Props) {
                   className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                 />
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={() => saveEdit(m.id)} disabled={!editBody.trim()}>
+                  <Button size="sm" onClick={saveCurrentEdit} disabled={!editBody.trim()}>
                     Save
                   </Button>
                   <Button

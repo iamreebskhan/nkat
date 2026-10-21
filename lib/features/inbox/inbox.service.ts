@@ -15,6 +15,8 @@ import {
   daysUntilExpiry,
   shouldRemindToday,
 } from "@/lib/features/attestations/attestation-pure";
+import { addDaysIso, orgToday } from "@/lib/features/org/org-date";
+import { readOrgTimeZone } from "@/lib/features/org/org-time-zone";
 
 export type InboxItemKind = "visit" | "attestation_request" | "denial" | "attestation_expiring";
 
@@ -39,6 +41,10 @@ export async function listInbox(args: {
   const limit = Math.min(100, args.limit ?? 50);
 
   return withOrgContext(args.orgId, async (tx) => {
+    // Every statement here names the org as well as relying on RLS, so on a
+    // connection that bypasses RLS the inbox holds this org's work only. The
+    // patient is joined within the visit's org: the visit's patient FK is
+    // id-only.
     const visits = await tx.$queryRaw<
       {
         id: string;
@@ -53,9 +59,17 @@ export async function listInbox(args: {
       SELECT v.id, v.visit_type, v.status, v.scheduled_start,
              v.patient_id, p.first_name, p.last_name
       FROM visit v
-      JOIN patient p ON p.id = v.patient_id
-      WHERE v.clinician_user_id = ${args.userId}::uuid
+      JOIN patient p ON p.id = v.patient_id AND p.org_id = v.org_id
+      WHERE v.org_id = ${args.orgId}::uuid
+        AND v.clinician_user_id = ${args.userId}::uuid
         AND v.status IN ('scheduled', 'in_progress', 'documented')
+        -- A signed visit on a "Not billed" type is finished, not waiting to be
+        -- submitted: documented is where it rests (audit R18). Without this it
+        -- would sit in the clinician's inbox as "Submit ..." for good.
+        AND NOT (v.status = 'documented' AND EXISTS (
+              SELECT 1 FROM org_visit_type t
+               WHERE t.org_id = v.org_id AND t.slug = v.visit_type
+                 AND t.coding_basis = 'non_billable'))
       ORDER BY COALESCE(v.scheduled_start, v.created_at) DESC
       LIMIT ${limit}
     `;
@@ -71,7 +85,8 @@ export async function listInbox(args: {
     >`
       SELECT id, cpt_code, attribute, state, claimed_at
       FROM analyst_attestation_request
-      WHERE claimed_by_user_id = ${args.userId}::uuid
+      WHERE org_id = ${args.orgId}::uuid
+        AND claimed_by_user_id = ${args.userId}::uuid
         AND status = 'in_progress'
       ORDER BY claimed_at DESC NULLS LAST
       LIMIT ${limit}
@@ -88,7 +103,8 @@ export async function listInbox(args: {
       denials = await tx.$queryRaw`
         SELECT id, cpt_code, carc_code, denied_at, denied_amount_cents
         FROM superbill_denial
-        WHERE decision = 'pending'
+        WHERE org_id = ${args.orgId}::uuid
+          AND decision = 'pending'
         ORDER BY denied_at DESC
         LIMIT ${limit}
       `;
@@ -97,6 +113,12 @@ export async function listInbox(args: {
     // §15.3 re-verification reminders: active attestations hitting the
     // 15/5/0-days-remaining marks TODAY (shouldRemindToday). Fetch the
     // ≤16-day window and let the pure helper pick today's exact marks.
+    //
+    // Today is the practice's (0107). CURRENT_DATE is the database session's,
+    // and the pure helper's default was the server's clock in UTC, so from
+    // 8 pm in Ohio the window and the marks were a day ahead: the "expires in
+    // 15 days" reminder came a day early, and "expires TODAY" the evening
+    // before. As a UTC midnight, which is how daysUntilExpiry counts days.
     let expiring: {
       id: string;
       cpt_code: string;
@@ -104,7 +126,10 @@ export async function listInbox(args: {
       expires_at: Date;
       payer_name: string | null;
     }[] = [];
+    let today: Date | null = null;
     if (args.canAttest) {
+      const day = orgToday(await readOrgTimeZone(tx, args.orgId));
+      today = new Date(`${day}T00:00:00Z`);
       // Bounded window [today, +16d): rows already past expiry can never hit a
       // 15/5/0 mark and — while they wait for the on-read sweep — would only
       // starve the LIMIT. ASC = most urgent first among today's reminders.
@@ -112,9 +137,10 @@ export async function listInbox(args: {
         SELECT a.id, a.cpt_code, a.state, a.expires_at, p.name AS payer_name
         FROM analyst_attestation a
         LEFT JOIN payer p ON p.id = a.payer_id
-        WHERE a.status = 'active'
-          AND a.expires_at >= CURRENT_DATE
-          AND a.expires_at <= (CURRENT_DATE + INTERVAL '16 days')
+        WHERE a.org_id = ${args.orgId}::uuid
+          AND a.status = 'active'
+          AND a.expires_at >= ${day}::date
+          AND a.expires_at <= ${addDaysIso(day, 16)}::date
         ORDER BY a.expires_at ASC
         LIMIT ${limit}
       `;
@@ -172,8 +198,8 @@ export async function listInbox(args: {
     const remindedAt = new Date().toISOString();
     for (const a of expiring) {
       const att = { status: "active" as const, expiresAt: a.expires_at };
-      if (!shouldRemindToday(att)) continue;
-      const remaining = daysUntilExpiry(a.expires_at);
+      if (!today || !shouldRemindToday(att, today)) continue;
+      const remaining = daysUntilExpiry(a.expires_at, today);
       out.push({
         key: `att-exp:${a.id}`,
         kind: "attestation_expiring",

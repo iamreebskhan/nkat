@@ -37,11 +37,6 @@ export interface DraftLine {
   units?: number;
   /** Principal ICD-10 the line is justified by. */
   diagnosisIcd10?: string;
-  /**
-   * Time spent on the visit in minutes. Some E/M codes have a minimum
-   * threshold; we surface it when the caller passes it.
-   */
-  timeMinutes?: number;
 }
 
 /** The patient + payer context every line shares. */
@@ -81,6 +76,12 @@ export interface CodeRuleSet {
   providerTaxonomyAllowed?: string[];
   /** Citation id, for the popover "why?" surface. */
   payerRuleId?: string;
+  /**
+   * What the payer's documentation standard requires that the note does not
+   * document, in the payer's words (audit R19). Set by the predict service
+   * for a saved bill; absent means nothing is known to be missing.
+   */
+  documentationMissing?: string[];
 }
 
 export type RiskBand = "low" | "medium" | "high" | "block";
@@ -98,7 +99,8 @@ export interface RiskReason {
     | "prior_auth_missing"
     | "frequency_exceeded"
     | "taxonomy_disallowed"
-    | "stale_rule";
+    | "stale_rule"
+    | "documentation_incomplete";
   /** Human-readable explanation, suitable for popovers. */
   message: string;
   /** How much this contributes to the score, in [0,1]. */
@@ -302,6 +304,20 @@ export function scoreLine(args: {
       message: `Clinician taxonomy ${context.clinicianTaxonomy} is not in the payer's allowed set for ${line.code}.`,
       contribution: 0.6,
       payerRuleId: rules.payerRuleId,
+    });
+  }
+
+  // --- 8. Payer documentation standard (audit R19) ------------------
+  // The payer's own manual says this code needs these in the note, and the
+  // note does not have them: exposed on the first record review.
+  if (rules.documentationMissing && rules.documentationMissing.length > 0) {
+    reasons.push({
+      code: "documentation_incomplete",
+      message: `The payer requires ${rules.documentationMissing.join(", ")} in the note for ${line.code}; the note does not document ${rules.documentationMissing.length === 1 ? "it" : "them"}.`,
+      contribution: 0.6,
+      // No payerRuleId: that id is the code's COVERAGE rule, and the badge
+      // would offer it as the citation for a charting requirement it says
+      // nothing about.
     });
   }
 

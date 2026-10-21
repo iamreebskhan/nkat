@@ -69,13 +69,6 @@ export default function PatientsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Debounced search refetch.
-  useEffect(() => {
-    const t = setTimeout(() => fetchRows(), search ? 250 : 0);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, status]);
-
   async function fetchRows() {
     setLoading(true);
     setError(null);
@@ -99,6 +92,13 @@ export default function PatientsPage() {
       setLoading(false);
     }
   }
+
+  // Debounced search refetch.
+  useEffect(() => {
+    const t = setTimeout(() => fetchRows(), search ? 250 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, status]);
 
   const empty = useMemo(() => !loading && rows.length === 0, [loading, rows]);
 

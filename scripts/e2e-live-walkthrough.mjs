@@ -1,11 +1,15 @@
-import { requireDemoPassword } from "./lib/test-credentials.mjs";
+import { harnessAccount } from "./lib/test-credentials.mjs";
 /**
  * FULL live UI walkthrough — drives a real headless browser through every
  * page + key button of the running app, so you DON'T have to log in and
  * click. Screenshots every step to ./screenshots/*.png for visual review.
  *
- * Logs into the seeded demo account (livedemo@pallio.io), which already has
- * Ada/Grace + a visit/superbill/denial, so the data-rich UI actually renders.
+ * Logs in as the harness account (scripts/lib/test-credentials.mjs), which
+ * R36 moved off the demo tenant. The account must already exist: any API
+ * harness script signs it up on its first run, and the runbook runs
+ * verify-master-ui first. The walkthrough's first step then seeds what the
+ * data-rich pages need (Ada, a visit, a superbill, a denial) if the org has
+ * none yet, so a first run against a fresh harness org passes.
  *
  * Run on the VPS (has Playwright + Chromium; used by e2e-ui.mjs already):
  *   BASE_URL=https://app.pallio.io node scripts/e2e-live-walkthrough.mjs
@@ -20,8 +24,7 @@ import { join } from "node:path";
 
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
 const HEADLESS = process.env.HEADLESS !== "false";
-const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = requireDemoPassword();
+const { email: EMAIL, password: PASSWORD } = harnessAccount();
 const SHOTS = join(process.cwd(), "screenshots");
 mkdirSync(SHOTS, { recursive: true });
 
@@ -45,6 +48,11 @@ async function shot(page, name) {
   page.setDefaultTimeout(20_000);
   const body = () => page.locator("body").innerText().catch(() => "");
   const has = async (re) => re.test(await body());
+  // Authenticated API calls: page.request shares the browser context's cookies.
+  const api = async (m, p, data) => {
+    const r = await page.request.fetch(`${BASE}${p}`, { method: m, ...(data ? { data } : {}) });
+    return (await r.json().catch(() => null))?.data;
+  };
 
   async function step(name, fn) {
     try {
@@ -74,6 +82,36 @@ async function shot(page, name) {
         page.getByRole("button", { name: /sign in|log ?in|continue/i }).first().click(),
       ]);
       return `landed on ${page.url().replace(BASE, "")}`;
+    });
+
+    // ── seed the harness org ───────────────────────────────────────────
+    // Later steps open Ada, a visit's superbill and a denial. The demo tenant
+    // always had them; a fresh harness org has none, so they are created here
+    // through the logged-in session, and only when missing, so repeat runs
+    // do not pile rows up.
+    let adaPatientId = "";
+    await step("seed: Ada + a visit, superbill and denial", async () => {
+      const me = await api("GET", "/api/auth/me");
+      const payers = (await api("GET", "/api/billing/payers"))?.payers || [];
+      const payerId = (payers.find((p) => /aetna/i.test(p.name)) || payers[0])?.id;
+      const list = (await api("GET", "/api/patients?limit=200"))?.rows || [];
+      adaPatientId = list.find((p) => p.firstName === "Ada" && p.lastName === "Lovelace")?.id
+        || (await api("POST", "/api/patients", {
+          demographics: { firstName: "Ada", lastName: "Lovelace", dateOfBirth: "1942-03-08", sexAssignedAtBirth: "F", state: "OH", city: "Dublin" },
+          insurance: { primaryPayerId: payerId, primaryMemberId: "W1" },
+          clinical: { acuity: "critical" }, consents: { hipaaAcknowledged: true, goalsOfCareConsent: true, telehealthConsent: true }, careTeam: {},
+        }))?.id;
+      if (!adaPatientId) throw new Error("could not find or create Ada Lovelace");
+      const visits = (await api("GET", "/api/visits?limit=100"))?.rows || [];
+      const denials = (await api("GET", "/api/denials?limit=1"))?.rows || [];
+      if (visits.length && denials.length) return `reused Ada ${adaPatientId.slice(0, 8)} and the org's visits/denials`;
+      // confirmDoubleBook: fixture ignores the 8-visit/day capacity guard.
+      const visitId = (await api("POST", "/api/visits", { patientId: adaPatientId, clinicianUserId: me.userId, visitType: "established_patient_home", scheduledStart: new Date(Date.now() + 86400000).toISOString(), isTelehealth: false, confirmDoubleBook: true }))?.id;
+      await api("PATCH", `/api/visits/${visitId}/document`, { totalMinutes: 45, documentText: "note", cptCodesAssigned: ["99349"], icd10Codes: ["Z51.5"] });
+      const superbillId = (await api("POST", `/api/visits/${visitId}/superbill`))?.id;
+      const denialId = (await api("POST", "/api/denials", { superbillId, cptCode: "99349", carcCode: "16", denialReason: "lacks info", deniedAmountCents: 15000, deniedAt: new Date().toISOString() }))?.id;
+      if (!denialId) throw new Error("could not seed a visit → superbill → denial");
+      return `seeded Ada ${adaPatientId.slice(0, 8)} + denial ${denialId.slice(0, 8)}`;
     });
 
     // ── patients caseload ──────────────────────────────────────────────
@@ -201,21 +239,9 @@ async function shot(page, name) {
     // hydrates its buttons client-side — so opening a random row and reading
     // immediately was racy. This exercises the exact FE→BE button path.
     await step("denial workflow: decide → refile → outcome (new buttons)", async () => {
-      // page.request shares the logged-in context cookies → authenticated.
-      const api = async (m, p, data) => {
-        const r = await page.request.fetch(`${BASE}${p}`, { method: m, ...(data ? { data } : {}) });
-        return (await r.json().catch(() => null))?.data;
-      };
+      // Ada comes from the seed step at the top of the walkthrough.
       const me = await api("GET", "/api/auth/me");
-      const payers = (await api("GET", "/api/billing/payers"))?.payers || [];
-      const payerId = (payers.find((p) => /aetna/i.test(p.name)) || payers[0])?.id;
-      const list = (await api("GET", "/api/patients?limit=200"))?.rows || [];
-      const patientId = list.find((p) => p.firstName === "Ada" && p.lastName === "Lovelace")?.id
-        || (await api("POST", "/api/patients", {
-          demographics: { firstName: "Ada", lastName: "Lovelace", dateOfBirth: "1942-03-08", sexAssignedAtBirth: "F", state: "OH", city: "Dublin" },
-          insurance: { primaryPayerId: payerId, primaryMemberId: "W1" },
-          clinical: { acuity: "critical" }, consents: { hipaaAcknowledged: true, goalsOfCareConsent: true, telehealthConsent: true }, careTeam: {},
-        }))?.id;
+      const patientId = adaPatientId;
       // confirmDoubleBook: fixture ignores the 8-visit/day capacity guard.
       const visitId = (await api("POST", "/api/visits", { patientId, clinicianUserId: me.userId, visitType: "established_patient_home", scheduledStart: new Date(Date.now() + 86400000).toISOString(), isTelehealth: false, confirmDoubleBook: true }))?.id;
       await api("PATCH", `/api/visits/${visitId}/document`, { totalMinutes: 45, documentText: "note", cptCodesAssigned: ["99349"], icd10Codes: ["Z51.5"] });

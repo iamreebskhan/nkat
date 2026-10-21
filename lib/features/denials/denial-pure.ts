@@ -115,6 +115,18 @@ export interface DenialMetrics {
   byPayerId: { payerId: string | null; count: number; deniedCents: number }[];
 }
 
+/**
+ * What the denials screen gets: the metrics plus a name for every payer they
+ * mention and for the payer being filtered on, read from payer itself so a
+ * withdrawn payer keeps its name. The screen used to map ids through
+ * /api/billing/payers, active payers only since R17, so a withdrawn payer's
+ * row printed the first 8 characters of its UUID and the filter caption read
+ * "for this payer".
+ */
+export interface DenialSummary extends DenialMetrics {
+  payerNames: Record<string, string>;
+}
+
 interface DenialMetricInput {
   carcCode: string;
   payerId: string | null;

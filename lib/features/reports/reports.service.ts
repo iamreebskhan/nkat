@@ -5,6 +5,8 @@
  * thin Prisma query → handed to the pure aggregator.
  */
 import { withOrgContext } from "@/lib/db";
+import { addDaysIso, orgToday } from "@/lib/features/org/org-date";
+import { readOrgTimeZone } from "@/lib/features/org/org-time-zone";
 import {
   denialRateTrend,
   denialsByPayer,
@@ -30,19 +32,28 @@ export interface ReportsOverview {
  * One-call dashboard aggregator. Pulls the last 30 days of denials +
  * superbills + visits from the org, plus every rulebook row, and
  * returns everything the /reports page needs.
+ *
+ * The window is a range of the practice's calendar days ('YYYY-MM-DD',
+ * inclusive), by default the 30 ending on its today (0107). Days are bound
+ * into ::date as strings: a JS Date binds as a timestamptz, whose ::date is
+ * its day in the database session's zone, so a window of Dates took in the
+ * 14th's bills on a Karachi session and August's on a New York one.
  */
 export async function getOverview(args: {
   orgId: string;
-  fromDate?: Date;
-  toDate?: Date;
+  fromDay?: string;
+  toDay?: string;
+  /** For tests; the practice's today is taken from it. */
+  now?: Date;
 }): Promise<ReportsOverview> {
-  const toDate = args.toDate ?? new Date();
-  // 29, not 30: enumerateUtcDays is inclusive of both endpoints, so a 30-day
-  // offset produced 31 points and the card rendered "31 days" under a "(30d)"
-  // heading. Today plus the 29 before it is 30 days.
-  const fromDate = args.fromDate ?? new Date(toDate.getTime() - 29 * 86_400_000);
-
   return withOrgContext(args.orgId, async (tx) => {
+    const tz = await readOrgTimeZone(tx, args.orgId);
+    const toDay = args.toDay ?? orgToday(tz, args.now);
+    // 29, not 30: enumerateUtcDays is inclusive of both endpoints, so a 30-day
+    // offset produced 31 points and the card rendered "31 days" under a "(30d)"
+    // heading. Today plus the 29 before it is 30 days.
+    const fromDay = args.fromDay ?? addDaysIso(toDay, -29);
+
     const denials = await tx.$queryRaw<
       {
         carc_code: string;
@@ -53,12 +64,22 @@ export async function getOverview(args: {
         outcome: string;
         denied_at: Date;
         superbill_id: string | null;
+        claim_dos: Date;
       }[]
     >`
-      SELECT carc_code, payer_id, cpt_code,
-             denied_amount_cents, decision, outcome, denied_at, superbill_id
-      FROM superbill_denial
-      WHERE denied_at BETWEEN ${fromDate}::timestamptz AND ${toDate}::timestamptz
+      -- The same claim cohort as the billed dollars below: claims whose date
+      -- of service is in the window (audit R29). Windowed by the day of the
+      -- denial, denials never met their own claims' billed dollars —
+      -- denials land weeks after service — and the rate read 0%.
+      SELECT d.carc_code, d.payer_id, d.cpt_code,
+             d.denied_amount_cents, d.decision, d.outcome, d.denied_at, d.superbill_id,
+             s.date_of_service AS claim_dos
+        FROM superbill_denial d
+        JOIN superbill s ON s.id = d.superbill_id AND s.org_id = d.org_id
+       -- Every report names the org as well as relying on RLS: on a
+       -- connection that bypasses RLS these were every org's figures.
+       WHERE d.org_id = ${args.orgId}::uuid
+         AND s.date_of_service BETWEEN ${fromDay}::date AND ${toDay}::date
     `;
     const denialRows = denials.map((d) => ({
       carcCode: d.carc_code,
@@ -69,6 +90,7 @@ export async function getOverview(args: {
       outcome: d.outcome,
       deniedAt: d.denied_at,
       superbillId: d.superbill_id,
+      claimDateOfService: d.claim_dos,
     }));
 
     const superbills = await tx.$queryRaw<
@@ -83,7 +105,8 @@ export async function getOverview(args: {
       SELECT payer_id, status, billed_amount_cents, paid_amount_cents,
              date_of_service
       FROM superbill
-      WHERE date_of_service BETWEEN ${fromDate}::date AND ${toDate}::date
+      WHERE org_id = ${args.orgId}::uuid
+        AND date_of_service BETWEEN ${fromDay}::date AND ${toDay}::date
     `;
     const sbRows = superbills.map((s) => ({
       payerId: s.payer_id,
@@ -104,8 +127,9 @@ export async function getOverview(args: {
     >`
       SELECT visit_type, status, clinician_user_id, scheduled_start, start_time
       FROM visit
-      WHERE COALESCE(start_time, scheduled_start, created_at)
-            BETWEEN ${fromDate}::timestamptz AND ${toDate}::timestamptz
+      WHERE org_id = ${args.orgId}::uuid
+        AND (COALESCE(start_time, scheduled_start, created_at) AT TIME ZONE ${tz})::date
+            BETWEEN ${fromDay}::date AND ${toDay}::date
     `;
     const visitRows = visits.map((v) => ({
       visitType: v.visit_type,
@@ -147,15 +171,14 @@ export async function getOverview(args: {
     }
 
     return {
-      range: {
-        fromDate: fromDate.toISOString().slice(0, 10),
-        toDate: toDate.toISOString().slice(0, 10),
-      },
+      range: { fromDate: fromDay, toDate: toDay },
+      // The pure helper keys days by UTC midnight, the same Date a DATE
+      // column comes back as, so the days are handed over at UTC midnight.
       denialRateTrend: denialRateTrend({
         superbills: sbRows,
         denials: denialRows,
-        fromDate,
-        toDate,
+        fromDate: new Date(`${fromDay}T00:00:00Z`),
+        toDate: new Date(`${toDay}T00:00:00Z`),
       }),
       denialsByPayer: byPayer.map((p) => ({
         ...p,

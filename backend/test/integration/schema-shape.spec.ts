@@ -42,11 +42,16 @@ integrationDescribe('Schema shape (integration)', () => {
     'email_send',
     'idempotency_record',
     'synthesis_cache',
+    // 0081 put these under RLS: each carries org_id, and signup_attempt and
+    // feature_flag used to be listed below as global. feature_flag's policy
+    // also admits org_id IS NULL, its global defaults.
+    'signup_attempt',
+    'migration_0080_reground_journal',
+    'feature_flag',
   ];
 
   const NON_RLS_PLATFORM_TABLES = [
     // Cross-tenant by design — see migration comments.
-    'signup_attempt', // admin-only audit log
     'email_suppression', // SES-policy global suppression list
     'system_setting', // platform-global settings (cache version)
   ];
@@ -75,7 +80,6 @@ integrationDescribe('Schema shape (integration)', () => {
     'dme_master_list',
     'wc_state_fee_schedule',
     'ihs_encounter_rate',
-    'feature_flag',
     'asc_payment_indicator',
     'ub04_bill_type',
     'revenue_code_product_line',

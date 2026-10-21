@@ -5,7 +5,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { ok, parseJson, parseSearchParams, handleServiceError } from "@/lib/api";
+import { ok, fail, parseJson, parseSearchParams, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { createTimeOff, listTimeOff } from "@/lib/features/schedule/time-off.service";
 
@@ -36,15 +36,24 @@ export async function POST(req: NextRequest): Promise<Response> {
   const body = await parseJson(req, Body);
   if (body instanceof Response) return body;
   try {
+    // The caller's permissions travel with the booking: schedule.create lets a
+    // clinician add PTO, but it says nothing about WHOSE calendar, and the Add
+    // PTO composer offers every active member in a dropdown. createTimeOff is
+    // what decides, so a second caller cannot reach the table without it.
     const r = await createTimeOff({
       orgId: session.orgId,
       createdBy: session.userId,
+      createdByPermissions: session.permissions,
       clinicianUserId: body.clinicianUserId,
       startDate: body.startDate,
       endDate: body.endDate,
       reason: body.reason,
     });
-    return ok(r, { status: 201 });
+    // 403 rather than the 422 the membership refusal uses: this one is about
+    // who is asking, not about what they sent. handleServiceError has no 403
+    // branch, which is why the service returns this instead of throwing.
+    if (r.id === null) return fail(r.refusedReason, { status: 403 });
+    return ok({ id: r.id }, { status: 201 });
   } catch (err) {
     return handleServiceError(err);
   }

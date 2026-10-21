@@ -1,4 +1,4 @@
-import { requireDemoPassword } from "./lib/test-credentials.mjs";
+import { harnessAccount } from "./lib/test-credentials.mjs";
 /**
  * Verify the MASTER / OPERATOR (platform-admin) surface live.
  *
@@ -24,8 +24,7 @@ import { requireDemoPassword } from "./lib/test-credentials.mjs";
  *   (omit OPERATOR_* to run the gating half only.)
  */
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
-const USER_EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const USER_PASSWORD = requireDemoPassword();
+const { email: USER_EMAIL, password: USER_PASSWORD, orgName: USER_ORG, fullName: USER_NAME } = harnessAccount();
 const OP_EMAIL = process.env.OPERATOR_EMAIL || "";
 const OP_PASSWORD = process.env.OPERATOR_PASSWORD || "";
 const OP_MFA = process.env.OPERATOR_MFA || ""; // TOTP code, if the operator account has 2FA
@@ -73,7 +72,7 @@ console.log(`\n████  MASTER / OPERATOR SURFACE → ${BASE}  ████
 console.log("████ A. Master surface is locked from regular users (org_admin) ████");
 const user = mkClient();
 {
-  const su = await user.req("POST", "/api/auth/signup", { email: USER_EMAIL, password: USER_PASSWORD, fullName: "Live Tester", orgName: "Pallio Live Demo", baaAccepted: true });
+  const su = await user.req("POST", "/api/auth/signup", { email: USER_EMAIL, password: USER_PASSWORD, fullName: USER_NAME, orgName: USER_ORG, baaAccepted: true });
   if (su.s !== 201) await user.req("POST", "/api/auth/login", { email: USER_EMAIL, password: USER_PASSWORD });
 }
 const uMe = (await user.req("GET", "/api/auth/me")).j?.data;

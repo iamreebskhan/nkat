@@ -6,7 +6,9 @@ import {
   daysRemainingInMedicareWindow,
   isInsideMedicareWindow,
   nextStatuses,
+  visitTypeHistoryWarning,
 } from "../visit-pure";
+import type { VisitTypeHint } from "../visit.types";
 
 describe("computeTotalMinutes", () => {
   it("rounds 29:59 down to 29", () => {
@@ -95,5 +97,42 @@ describe("Medicare 11-day window", () => {
   it("daysRemaining is 0 outside the window", () => {
     expect(daysRemainingInMedicareWindow(dos, new Date("2026-05-23T08:00:00Z"))).toBe(0);
     expect(daysRemainingInMedicareWindow(dos, new Date("2026-05-11T08:00:00Z"))).toBe(0);
+  });
+});
+
+describe("visitTypeHistoryWarning — Pallio's history against the band chosen", () => {
+  const seen: VisitTypeHint = {
+    lastVisitAt: "2025-09-25T14:00:00.000Z",
+    lastVisitStatus: "documented",
+    windowStart: "2023-09-25T14:00:00.000Z",
+    suggestedBasis: "established_patient_home",
+  };
+  const none: VisitTypeHint = {
+    lastVisitAt: null,
+    lastVisitStatus: null,
+    windowStart: "2023-09-25T14:00:00.000Z",
+    suggestedBasis: "new_patient_home",
+  };
+
+  it("an established type with no visit in the window looks new", () => {
+    expect(visitTypeHistoryWarning("established_patient_home", none)).toBe("looks_new");
+  });
+
+  it("a new-patient type after a visit in the window looks established", () => {
+    expect(visitTypeHistoryWarning("new_patient_home", seen)).toBe("looks_established");
+  });
+
+  it("CONTROL — says nothing when the history agrees with the band", () => {
+    expect(visitTypeHistoryWarning("established_patient_home", seen)).toBeNull();
+    expect(visitTypeHistoryWarning("new_patient_home", none)).toBeNull();
+  });
+
+  it("says nothing for a band new-vs-established does not apply to, or with no hint", () => {
+    for (const band of ["advance_care_planning", "non_billable", "inpatient_consult"] as const) {
+      expect(visitTypeHistoryWarning(band, seen)).toBeNull();
+      expect(visitTypeHistoryWarning(band, none)).toBeNull();
+    }
+    expect(visitTypeHistoryWarning("established_patient_home", null)).toBeNull();
+    expect(visitTypeHistoryWarning("new_patient_home", null)).toBeNull();
   });
 });

@@ -57,7 +57,12 @@ export default function PlatformSettingsPage() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  // From a timer, so load()'s setLoading/setError don't run synchronously in
+  // the effect body and cascade a second render.
+  useEffect(() => {
+    const t = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(t);
+  }, []);
 
   async function save() {
     if (!editing) return;

@@ -20,9 +20,17 @@ import { Field, Select, TextArea, TextInput } from "@/components/forms/field";
 import { InfoTip } from "@/components/ui/info-tip";
 import { Wizard, type WizardStep } from "@/components/wizard/wizard";
 import {
+  CONTACT_RELATIONSHIPS,
+  CONTACT_RELATIONSHIP_LABELS,
+  type ContactRelationship,
+} from "@/lib/features/patients/contacts.types";
+import { coverageGap } from "@/lib/features/patients/coverage-gap";
+import { checkCoveragePair } from "@/lib/features/patients/insurance-pure";
+import {
   CreatePatientSchema,
   type CreatePatient,
 } from "@/lib/features/patients/patient.types";
+import { isValidNpi } from "@/lib/features/team/clinician";
 
 const EMPTY: CreatePatient = {
   demographics: {
@@ -78,7 +86,11 @@ export default function NewPatientPage() {
   // Payer reference list for the Insurance step. The patient's payer is what
   // every downstream coverage rule keys on, so it must be a real pick — not a
   // pasted UUID.
-  const [payers, setPayers] = useState<{ id: string; name: string; states: string[] }[]>([]);
+  // ruleStates: where Pallio holds live rules for the payer (audit R17), for the
+  // no-rules note under Coverage state.
+  const [payers, setPayers] = useState<
+    { id: string; name: string; states: string[]; ruleStates?: string[] }[]
+  >([]);
   useEffect(() => {
     fetch("/api/billing/payers")
       .then((r) => r.json())
@@ -113,6 +125,14 @@ export default function NewPatientPage() {
       .catch(() => setRoster(null));
   }, []);
 
+  // The emergency contact becomes the first Family & caregivers entry (audit
+  // R30), which needs a name: a phone or relationship alone is refused by the
+  // server, so the step refuses it first.
+  const ecNeedsName =
+    !data.demographics.emergencyContactName?.trim() &&
+    Boolean(data.demographics.emergencyContactPhone || data.demographics.emergencyContactRelationship);
+  const refNpi = data.clinical.referringPhysicianNpi?.trim() ?? "";
+
   const steps: WizardStep[] = [
     {
       key: "demographics",
@@ -123,7 +143,7 @@ export default function NewPatientPage() {
           data.demographics.firstName &&
             data.demographics.lastName &&
             data.demographics.dateOfBirth,
-        ),
+        ) && !ecNeedsName,
       render: () => {
         return (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -240,10 +260,18 @@ export default function NewPatientPage() {
                 autoComplete="tel"
               />
             </Field>
-            <Field id="ec-name" label="Emergency contact name" optional>
+            <Field
+              id="ec-name"
+              label="Emergency contact name"
+              optional
+              explain="Saved to the patient's Family & caregivers, where more family, caregivers and a healthcare POA can be added after intake."
+              error={ecNeedsName ? "Add a name, or clear the phone and relationship." : undefined}
+            >
               <TextInput
                 id="ec-name"
                 value={data.demographics.emergencyContactName ?? ""}
+                invalid={ecNeedsName}
+                autoComplete="off"
                 onChange={(e) =>
                   setDemographics(
                     "emergencyContactName",
@@ -251,6 +279,36 @@ export default function NewPatientPage() {
                   )
                 }
               />
+            </Field>
+            <Field id="ec-phone" label="Emergency contact phone" optional>
+              <TextInput
+                id="ec-phone"
+                type="tel"
+                autoComplete="off"
+                value={data.demographics.emergencyContactPhone ?? ""}
+                onChange={(e) =>
+                  setDemographics("emergencyContactPhone", e.target.value || undefined)
+                }
+              />
+            </Field>
+            <Field id="ec-relationship" label="Relationship to patient" optional>
+              <Select
+                id="ec-relationship"
+                value={data.demographics.emergencyContactRelationship ?? ""}
+                onChange={(e) =>
+                  setDemographics(
+                    "emergencyContactRelationship",
+                    (e.target.value || undefined) as ContactRelationship | undefined,
+                  )
+                }
+              >
+                <option value="">—</option>
+                {CONTACT_RELATIONSHIPS.map((r) => (
+                  <option key={r} value={r}>
+                    {CONTACT_RELATIONSHIP_LABELS[r]}
+                  </option>
+                ))}
+              </Select>
             </Field>
           </div>
         );
@@ -263,14 +321,31 @@ export default function NewPatientPage() {
         "Which insurance organization covers this patient, and in which state. This is what Pallio uses to show the right billing codes at the point of care.",
       // Both empty is allowed (insurance often isn't known at intake). A HALF-set
       // pair is not: payer-without-state (or the reverse) silently breaks every
-      // coverage lookup, which is worse than knowing nothing.
-      isValid: () =>
-        Boolean(data.insurance.primaryPayerId) === Boolean(data.insurance.insuranceState),
+      // coverage lookup, which is worse than knowing nothing. Nor is a pair the
+      // payer does not cover (audit R37), for the same reason.
+      isValid: () => {
+        if (Boolean(data.insurance.primaryPayerId) !== Boolean(data.insurance.insuranceState)) {
+          return false;
+        }
+        const payer = payers.find((p) => p.id === data.insurance.primaryPayerId);
+        return (
+          !payer ||
+          checkCoveragePair(
+            { name: payer.name, statesServed: payer.states },
+            data.insurance.insuranceState,
+          ) === null
+        );
+      },
       render: () => {
         const selectedPayer = payers.find((p) => p.id === data.insurance.primaryPayerId);
         const noneSet = !data.insurance.primaryPayerId && !data.insurance.insuranceState;
         const halfSet =
           Boolean(data.insurance.primaryPayerId) !== Boolean(data.insurance.insuranceState);
+        // not_served is the sentence the server refuses with (audit R37), so
+        // the form and the API agree, and isValid above still blocks on it.
+        // no_rules is a note, never a block (audit R17): the payer is listed
+        // for the state but Pallio holds no live rules there yet.
+        const gap = coverageGap(selectedPayer, data.insurance.insuranceState);
         return (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {noneSet && (
@@ -289,6 +364,14 @@ export default function NewPatientPage() {
                 or clear both.
               </p>
             )}
+            {gap?.kind === "not_served" && (
+              <p
+                role="alert"
+                className="md:col-span-2 text-sm text-red-700 bg-red-50 ring-1 ring-inset ring-red-600/30 rounded-md px-3 py-2"
+              >
+                {gap.message}
+              </p>
+            )}
             <Field
               id="payer-id"
               label="Insurance organization"
@@ -301,11 +384,12 @@ export default function NewPatientPage() {
                 onChange={(e) => {
                   const id = e.target.value || undefined;
                   setInsurance("primaryPayerId", id);
-                  // Default the policy state to the payer's state when it only
-                  // serves one — saves a keystroke and avoids a mismatched pair.
+                  // Keep the state only if the new payer covers it (audit R37);
+                  // a payer that serves a single state fills it in.
                   const p = payers.find((x) => x.id === id);
-                  if (p && p.states.length === 1 && !data.insurance.insuranceState) {
-                    setInsurance("insuranceState", p.states[0]);
+                  const cur = data.insurance.insuranceState;
+                  if (p && p.states.length > 0 && (!cur || !p.states.includes(cur))) {
+                    setInsurance("insuranceState", p.states.length === 1 ? p.states[0] : undefined);
                   }
                 }}
               >
@@ -328,20 +412,45 @@ export default function NewPatientPage() {
                   : "USPS 2-letter — the state the policy is issued in."
               }
             >
-              <TextInput
-                id="ins-state"
-                maxLength={2}
-                placeholder={data.demographics.state ?? "OH"}
-                value={data.insurance.insuranceState ?? ""}
-                onChange={(e) =>
-                  setInsurance(
-                    "insuranceState",
-                    e.target.value.toUpperCase() || undefined,
-                  )
-                }
-                className="uppercase"
-              />
+              {selectedPayer && selectedPayer.states.length > 0 ? (
+                // Only the states this payer covers can be picked (audit R37).
+                // A free two-letter box let CareSource Ohio be paired with UT.
+                <Select
+                  id="ins-state"
+                  value={data.insurance.insuranceState ?? ""}
+                  onChange={(e) => setInsurance("insuranceState", e.target.value || undefined)}
+                >
+                  <option value="">Select…</option>
+                  {selectedPayer.states.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <TextInput
+                  id="ins-state"
+                  maxLength={2}
+                  placeholder={data.demographics.state ?? "OH"}
+                  value={data.insurance.insuranceState ?? ""}
+                  onChange={(e) =>
+                    setInsurance(
+                      "insuranceState",
+                      e.target.value.toUpperCase() || undefined,
+                    )
+                  }
+                  className="uppercase"
+                />
+              )}
             </Field>
+            {gap?.kind === "no_rules" && (
+              // Amber, not an alert: the pair is valid and the wizard goes on.
+              // It says now why every lookup for this patient will be a
+              // benchmark, instead of leaving that to be found out later.
+              <p className="md:col-span-2 text-sm text-amber-800 bg-amber-50 ring-1 ring-inset ring-amber-600/30 rounded-md px-3 py-2">
+                {gap.message}
+              </p>
+            )}
             <Field id="mem-id" label="Member ID" optional>
               <TextInput
                 id="mem-id"
@@ -406,7 +515,13 @@ export default function NewPatientPage() {
                   placeholder="C50.911"
                 />
               </Field>
-              <Field id="ref-npi" label="Referring physician NPI" optional>
+              <Field
+                id="ref-npi"
+                label="Referring physician NPI"
+                optional
+                explain="The referring physician joins your outside-provider roster. With an NPI they stay one entry, however many patients they refer."
+                error={refNpi && !isValidNpi(refNpi) ? "Ten digits with a valid check digit." : undefined}
+              >
                 <TextInput
                   id="ref-npi"
                   value={data.clinical.referringPhysicianNpi ?? ""}
@@ -497,7 +612,7 @@ export default function NewPatientPage() {
               checked={data.consents.telehealthConsent}
               onChange={(v) => setConsents("telehealthConsent", v)}
               label="Telehealth consent"
-              explain="Required only if the patient may receive telehealth visits. Without it, telehealth visit types can't be billed for this patient."
+              explain="Recorded on the chart; pre-fills the consent acknowledgment on this patient's telehealth visits."
             />
           </div>
         );

@@ -33,14 +33,13 @@ export function Icd10Picker({ selected, onChange, disabled }: Props) {
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Debounced search. Clearing the matches below two characters and raising
+  // `loading` happen in the input's onChange, with the keystroke, so this
+  // effect only schedules the fetch.
   useEffect(() => {
-    if (query.trim().length < 2) {
-      setMatches([]);
-      return;
-    }
+    if (query.trim().length < 2) return;
     let abandoned = false;
     const ctrl = new AbortController();
-    setLoading(true);
     const t = setTimeout(() => {
       fetch(`/api/billing/icd10?query=${encodeURIComponent(query.trim())}`, {
         signal: ctrl.signal,
@@ -101,7 +100,13 @@ export function Icd10Picker({ selected, onChange, disabled }: Props) {
           type="text"
           value={query}
           disabled={disabled}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            // Set with the keystroke rather than from the search effect,
+            // which would cascade a second render.
+            if (e.target.value.trim().length < 2) setMatches([]);
+            else setLoading(true);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();

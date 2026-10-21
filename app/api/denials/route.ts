@@ -9,6 +9,7 @@ import { requireAuth } from "@/lib/auth";
 import {
   listDenials,
   logDenial,
+  summarizeDenials,
 } from "@/lib/features/denials/denial.service";
 import {
   DENIAL_DECISIONS,
@@ -20,6 +21,7 @@ const ListSchema = z.object({
   superbillId: z.string().uuid().optional(),
   payerId: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
 });
 
 export async function GET(req: NextRequest): Promise<Response> {
@@ -34,7 +36,15 @@ export async function GET(req: NextRequest): Promise<Response> {
     orgId: session.orgId,
     ...params,
   });
-  return ok({ rows, total: rows.length });
+  // Figures over the whole filtered set, not the page (audit R34).
+  // Sequential: parallel withOrgContext transactions exhausted the pool.
+  const metrics = await summarizeDenials({
+    orgId: session.orgId,
+    decision: params.decision,
+    superbillId: params.superbillId,
+    payerId: params.payerId,
+  });
+  return ok({ rows, total: metrics.total, metrics });
 }
 
 export async function POST(req: NextRequest): Promise<Response> {

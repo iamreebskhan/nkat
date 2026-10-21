@@ -44,10 +44,13 @@ type Selection = { checked: boolean; minutes: string; note: string | null };
 export function VisitServicesPanel({
   visitId,
   visitType,
+  readOnly = false,
 }: {
   visitId: string;
   /** Narrows the catalog to services scoped to this type (walkthrough 02:34). */
   visitType?: string;
+  /** Signed visit: what was provided is part of the attested record (audit R15). */
+  readOnly?: boolean;
 }) {
   const [catalog, setCatalog] = useState<VisitServiceView[]>([]);
   const [selected, setSelected] = useState<Record<string, Selection>>({});
@@ -168,6 +171,7 @@ export function VisitServicesPanel({
                         type="checkbox"
                         id={`svc-${s.id}`}
                         checked={on}
+                        disabled={readOnly}
                         onChange={() => toggle(s.id)}
                         className="mt-1"
                       />
@@ -201,6 +205,7 @@ export function VisitServicesPanel({
                               },
                             }))
                           }
+                          disabled={readOnly}
                           placeholder="min"
                           aria-label={`Minutes spent on ${s.name}`}
                           className="h-8 w-16 rounded-md border border-slate-300 px-2 text-xs tabular"
@@ -219,11 +224,12 @@ export function VisitServicesPanel({
             )}
 
             <div className="flex items-center gap-3 pt-1">
-              <Button variant="secondary" onClick={save} loading={saving}>
+              <Button variant="secondary" onClick={save} loading={saving} disabled={readOnly}>
                 Save services
               </Button>
               <span className="text-xs text-slate-500" aria-live="polite">
                 {chosen} selected{savedAt ? ` · saved ${savedAt}` : ""}
+                {readOnly ? " · locked — the visit is signed" : ""}
               </span>
             </div>
           </>

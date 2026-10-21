@@ -64,8 +64,11 @@ export interface DenialAnalysisInput {
   denialReason?: string | null;
   deniedAmountCents?: number;
   icd10Codes?: string[];
-  /** Service date — used to fetch the rule row that was effective then. */
-  dateOfService: Date;
+  /**
+   * The bill's date of service, 'YYYY-MM-DD' — the rule row effective that
+   * day is the one the denial is judged against.
+   */
+  dateOfService: string;
 }
 
 export interface DenialAnalysisResult {

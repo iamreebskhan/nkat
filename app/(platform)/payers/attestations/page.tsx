@@ -30,6 +30,8 @@ export default function AttestationsPage() {
   const [tab, setTab] = useState<Tab>("queue");
   const [queue, setQueue] = useState<AttestationRequestView[]>([]);
   const [active, setActive] = useState<AttestationView[]>([]);
+  /** The practice's today, from the server; null until the list loads. */
+  const [practiceToday, setPracticeToday] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +51,7 @@ export default function AttestationsPage() {
         }
         setQueue(qr.data.rows ?? []);
         setActive(ar.data.rows ?? []);
+        setPracticeToday(typeof ar.data.today === "string" ? ar.data.today : null);
       } catch {
         if (!abandoned) setError("Network error.");
       } finally {
@@ -60,7 +63,15 @@ export default function AttestationsPage() {
     };
   }, []);
 
-  const today = useMemo(() => new Date(), []);
+  // Days are counted from the practice's today, at UTC midnight as
+  // daysUntilExpiry counts every day. `new Date()` here was the browser's
+  // instant, which daysUntilExpiry turned into its UTC day: from 8 pm in Ohio
+  // every attestation read a day nearer expiry, and one on its last day read
+  // as overdue.
+  const today = useMemo(
+    () => (practiceToday ? new Date(`${practiceToday}T00:00:00Z`) : new Date()),
+    [practiceToday],
+  );
   const grouped = useMemo(
     () => groupByFreshness(active.map((a) => ({ status: a.status, expiresAt: a.expiresAt })), today),
     [active, today],

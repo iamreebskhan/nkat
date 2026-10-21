@@ -1,4 +1,4 @@
-import { requireDemoPassword } from "./lib/test-credentials.mjs";
+import { harnessAccount } from "./lib/test-credentials.mjs";
 /**
  * Verify the fixes shipped AFTER the full-platform scan (PR #74) actually
  * work live, front-to-back — the wiring the general probes don't exercise:
@@ -17,8 +17,7 @@ import { requireDemoPassword } from "./lib/test-credentials.mjs";
  *   BASE_URL=https://app.pallio.io node scripts/verify-scan-fixes.mjs
  */
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
-const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = requireDemoPassword();
+const { email: EMAIL, password: PASSWORD, orgName: ORG_NAME, fullName } = harnessAccount();
 const s = Date.now();
 let cookie = "";
 const results = [];
@@ -37,8 +36,8 @@ async function req(m, p, b) {
 
 console.log(`\n████  VERIFY POST-SCAN FIXES (#74) → ${BASE}  ████\n`);
 
-// ── login (demo account) ────────────────────────────────────────────
-const su = await req("POST", "/api/auth/signup", { email: EMAIL, password: PASSWORD, fullName: "Live Tester", orgName: "Pallio Live Demo", baaAccepted: true });
+// ── login (harness account; the first run signs it up) ──────────────
+const su = await req("POST", "/api/auth/signup", { email: EMAIL, password: PASSWORD, fullName, orgName: ORG_NAME, baaAccepted: true });
 if (su.s !== 201) ok("login", (await req("POST", "/api/auth/login", { email: EMAIL, password: PASSWORD })).s === 200);
 else ok("signup", true);
 const me = (await req("GET", "/api/auth/me")).j?.data;

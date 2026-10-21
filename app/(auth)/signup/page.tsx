@@ -100,7 +100,7 @@ export default function SignupPage() {
                   className="mt-0.5"
                 />
                 <span className="text-sm text-slate-700">
-                  I have read and agree to Pallio's{" "}
+                  I have read and agree to Pallio&rsquo;s{" "}
                   <button
                     type="button"
                     onClick={() => setShowBaa((v) => !v)}

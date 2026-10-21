@@ -38,9 +38,22 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
 
   // Hydrate the session with the user's org permissions and sign in.
   const permissions = await withOrgContext(result.orgId, async (tx) => {
+    // org_id as well as user_id, and it is NOT redundant with RLS — the same
+    // predicate login() carries, for the same reason. This is the second place
+    // in the app that mints a session, and lib/auth.ts requireAuth() gates
+    // every route on session.permissions alone, so what comes back here is the
+    // user's authority for the whole session.
+    // redeemInvite reuses the existing app_user row when the invited address is
+    // already on file, so the person accepting a second org's invite routinely
+    // holds grants elsewhere; .env.local notes the preview deployment connects
+    // as a superuser, which bypasses RLS, and on that connection the query
+    // without this line returned all 8 of multi@example.test's grants instead
+    // of the 4 held in the org being joined — a grant of team.permissions made
+    // in one tenant becoming effective in the other.
     const rows = await tx.$queryRaw<{ permission: string }[]>`
       SELECT permission FROM user_permission
       WHERE user_id = ${result.userId}::uuid
+        AND org_id = ${result.orgId}::uuid
       ORDER BY permission
     `;
     return rows.map((r) => r.permission);
@@ -49,7 +62,8 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
   const session: Session = {
     userId: result.userId,
     orgId: result.orgId,
-    role: "org_admin",
+    // The template they were invited with (audit R38), not org_admin for all.
+    role: result.roleTemplate,
     permissions,
     email: result.email,
   };

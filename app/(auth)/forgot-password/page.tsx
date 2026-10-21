@@ -38,7 +38,7 @@ export default function ForgotPasswordPage() {
         ) : (
           <>
             <p className="text-sm text-slate-600 mt-1 mb-5">
-              Enter your work email and we'll send a reset link.
+              Enter your work email and we&rsquo;ll send a reset link.
             </p>
             <form onSubmit={submit} className="space-y-4">
               <input

@@ -39,7 +39,10 @@ const PushSchema = z.object({
 
 export async function POST(req: NextRequest): Promise<Response> {
   // Rulebook editors flag gaps; analysts then claim + resolve.
-  const session = await requireAuth(["knowledge.edit"]);
+  // Raising a request only queues it for an analyst. Billing agents and
+  // clinicians who hit an unknown rule got a 403 from the buttons offered to
+  // them (audit R38). Claim, resolve and regenerate keep their stricter gates.
+  const session = await requireAuth(["knowledge.view"]);
   if (session instanceof Response) return session;
   const body = await parseJson(req, PushSchema);
   if (body instanceof Response) return body;

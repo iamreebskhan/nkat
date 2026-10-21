@@ -7,6 +7,8 @@
 import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { type CoverageStatus } from "@/lib/features/billing/payer-rule.repository";
+import { orgToday } from "@/lib/features/org/org-date";
+import { readOrgTimeZone } from "@/lib/features/org/org-time-zone";
 import { upsertOrgRule } from "@/lib/features/rulebook/org-rule.repository";
 import { defaultExpiry } from "./attestation-pure";
 import type {
@@ -88,10 +90,22 @@ export async function createAttestation(args: {
 
   return withOrgContext(orgId, async (tx) => {
     if (payload.supersedesId) {
+      // The attestation being replaced must be this org's (any status: an
+      // expired one is re-verified too). supersedes_id's foreign key is
+      // checked with row security off, so an id from another org was stored
+      // as this one's lineage, and on a connection that bypasses RLS the
+      // UPDATE below retired their attestation.
+      const prior = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM analyst_attestation
+         WHERE id = ${payload.supersedesId}::uuid AND org_id = ${orgId}::uuid
+         LIMIT 1
+      `;
+      if (!prior[0]) throw new NotFoundError("The attestation this replaces was not found.");
       await tx.$executeRaw`
         UPDATE analyst_attestation
            SET status = 're_verified', updated_at = now()
          WHERE id = ${payload.supersedesId}::uuid
+           AND org_id = ${orgId}::uuid
            AND status = 'active'
       `;
     }
@@ -185,7 +199,9 @@ export async function getAttestation(args: {
 }): Promise<AttestationView | null> {
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<AttRow[]>`
-      SELECT * FROM analyst_attestation WHERE id = ${args.id}::uuid LIMIT 1
+      SELECT * FROM analyst_attestation
+       WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+       LIMIT 1
     `;
     return rows[0] ? rowToView(rows[0]) : null;
   });
@@ -202,8 +218,8 @@ export async function listAttestations(args: {
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<AttRow[]>`
       SELECT * FROM analyst_attestation
-      WHERE
-        (${args.status ?? null}::text IS NULL OR status = ${args.status ?? null})
+      WHERE org_id = ${args.orgId}::uuid
+        AND (${args.status ?? null}::text IS NULL OR status = ${args.status ?? null})
         AND (${args.payerId ?? null}::uuid IS NULL OR payer_id = ${args.payerId ?? null}::uuid)
         AND (${args.cptCode ?? null}::text IS NULL OR cpt_code = ${args.cptCode ?? null})
       ORDER BY expires_at ASC
@@ -221,7 +237,9 @@ export async function voidAttestation(args: {
 }): Promise<void> {
   await withOrgContext(args.orgId, async (tx) => {
     const exists = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM analyst_attestation WHERE id = ${args.id}::uuid LIMIT 1
+      SELECT id FROM analyst_attestation
+       WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+       LIMIT 1
     `;
     if (exists.length === 0) throw new NotFoundError("Attestation not found.");
     await tx.$executeRaw`
@@ -232,6 +250,7 @@ export async function voidAttestation(args: {
              void_reason = ${args.reason},
              updated_at = now()
        WHERE id = ${args.id}::uuid
+         AND org_id = ${args.orgId}::uuid
          AND status = 'active'
     `;
     // Also drop the mirrored rulebook row so the void actually removes
@@ -256,20 +275,32 @@ export async function voidAttestation(args: {
  * Sweep: flip any active row past its expires_at to `expired`. Called
  * opportunistically by GET /api/attestations before each list read, so
  * freshness counts stay accurate without a scheduler dependency.
+ *
+ * Past it by the practice's today (0107). now()::date is the database
+ * session's day, which on a server east of the practice expired an
+ * attestation on the evening before its last day. Named by org as well as
+ * RLS, since it writes.
  */
 export async function sweepExpired(args: {
   orgId: string;
 }): Promise<{ swept: number }> {
   return withOrgContext(args.orgId, async (tx) => {
+    const today = orgToday(await readOrgTimeZone(tx, args.orgId));
     const r = await tx.$queryRaw<{ id: string }[]>`
       UPDATE analyst_attestation
          SET status = 'expired', updated_at = now()
        WHERE status = 'active'
-         AND expires_at < now()::date
+         AND expires_at < ${today}::date
+         AND org_id = ${args.orgId}::uuid
        RETURNING id
     `;
     return { swept: r.length };
   });
+}
+
+/** The practice's today ('YYYY-MM-DD'), which attestation freshness is counted from. */
+export async function attestationToday(args: { orgId: string }): Promise<string> {
+  return withOrgContext(args.orgId, async (tx) => orgToday(await readOrgTimeZone(tx, args.orgId)));
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +373,8 @@ export async function listAttestationRequests(args: {
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<ReqRow[]>`
       SELECT * FROM analyst_attestation_request
-      WHERE (${args.status ?? null}::text IS NULL OR status = ${args.status ?? null})
+      WHERE org_id = ${args.orgId}::uuid
+        AND (${args.status ?? null}::text IS NULL OR status = ${args.status ?? null})
       ORDER BY created_at DESC
       LIMIT ${limit}
     `;
@@ -363,11 +395,30 @@ export async function claimRequest(args: {
              claimed_at = now(),
              updated_at = now()
        WHERE id = ${args.id}::uuid
+         AND org_id = ${args.orgId}::uuid
          AND status = 'open'
     `;
   });
 }
 
+/**
+ * Close a queued gap by citing the attestation that answers it.
+ *
+ * The citation is taken from the analyst_attestation row this org can
+ * actually see, not from the id the caller posted. attestationId arrives
+ * validated only as a uuid, and the FK's own check runs with row security
+ * disabled, so the old single-table UPDATE happily filed another tenant's
+ * attestation id against this org's request: the queue said "resolved" and
+ * cited a document GET /api/attestations/[id] then 404s for everyone here.
+ * A non-existent id was worse — an FK violation, i.e. a 500. Joining
+ * analyst_attestation makes both of those a plain miss; a.org_id = r.org_id
+ * says the same thing in the statement, so the join still holds if the tenant
+ * GUC is ever missed (local dev connects as a superuser, which bypasses RLS).
+ *
+ * The status guard mirrors claimRequest's: a request that is already resolved
+ * cannot be silently re-pointed at a different attestation. Zero rows is a
+ * refusal, never a 200 that changed nothing.
+ */
 export async function resolveRequest(args: {
   orgId: string;
   id: string;
@@ -375,14 +426,22 @@ export async function resolveRequest(args: {
   note?: string;
 }): Promise<void> {
   await withOrgContext(args.orgId, async (tx) => {
-    await tx.$executeRaw`
-      UPDATE analyst_attestation_request
+    const updated = await tx.$executeRaw`
+      UPDATE analyst_attestation_request r
          SET status = 'resolved',
-             resolved_attestation_id = ${args.attestationId}::uuid,
+             resolved_attestation_id = a.id,
              resolved_at = now(),
-             resolution_note = COALESCE(${args.note ?? null}, resolution_note),
+             resolution_note = COALESCE(${args.note ?? null}, r.resolution_note),
              updated_at = now()
-       WHERE id = ${args.id}::uuid
+        FROM analyst_attestation a
+       WHERE r.id = ${args.id}::uuid
+         AND a.id = ${args.attestationId}::uuid
+         AND a.org_id = r.org_id
+         AND r.status IN ('open', 'in_progress')
+         AND r.org_id = ${args.orgId}::uuid
     `;
+    if (updated === 0) {
+      throw new NotFoundError("That request is not open, or that attestation was not found.");
+    }
   });
 }

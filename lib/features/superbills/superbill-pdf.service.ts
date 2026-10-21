@@ -9,7 +9,11 @@ import puppeteer, { type Browser } from "puppeteer";
 
 import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
+import { formatCodes, type CodeUnits } from "@/lib/features/billing/code-units";
+import { claimRefFor } from "@/lib/features/remittances/claim-ref";
 import { logPhiExport } from "@/lib/hipaa/phi-access-log";
+
+import { submissionStamp } from "./superbill-pure";
 
 let _browser: Browser | null = null;
 async function getBrowser(): Promise<Browser> {
@@ -23,14 +27,21 @@ async function getBrowser(): Promise<Browser> {
 
 interface SuperbillData {
   id: string;
+  /** The visit this bills — the same key the patient record export prints (R28). */
+  visit_id: string;
   status: string;
   date_of_service: Date;
   cpt_codes: string[];
+  /** Units per code when more than one (0106); {} = one each. */
+  cpt_units: CodeUnits | null;
   icd10_codes: string[];
   modifiers: string[] | null;
   member_id_snapshot: string;
   provider_npi: string;
   provider_name: string;
+  billing_npi: string | null;
+  place_of_service_code: string;
+  pos_description: string | null;
   billed_amount_cents: bigint;
   paid_amount_cents: bigint | null;
   payer_name: string | null;
@@ -54,15 +65,17 @@ export async function generateSuperbillPdf(args: {
 
   const fetched = await withOrgContext(orgId, async (tx) => {
     const rows = await tx.$queryRaw<SuperbillData[]>`
-      SELECT s.id, s.status, s.date_of_service,
-             s.cpt_codes, s.icd10_codes, s.modifiers,
-             s.member_id_snapshot, s.provider_npi, s.provider_name,
+      SELECT s.id, s.visit_id, s.status, s.date_of_service,
+             s.cpt_codes, s.cpt_units, s.icd10_codes, s.modifiers,
+             s.member_id_snapshot, s.provider_npi, s.provider_name, s.billing_npi,
+             s.place_of_service_code, pos.description AS pos_description,
              s.billed_amount_cents, s.paid_amount_cents,
              p.name AS payer_name,
              s.patient_id, pt.first_name, pt.last_name, pt.date_of_birth
       FROM superbill s
       LEFT JOIN payer p ON p.id = s.payer_id
       JOIN patient pt ON pt.id = s.patient_id
+      LEFT JOIN pos ON pos.pos = s.place_of_service_code
       WHERE s.id = ${superbillId}::uuid
       LIMIT 1
     `;
@@ -110,6 +123,11 @@ export async function generateSuperbillPdf(args: {
   return { pdfBytes, superbill: fetched.sb };
 }
 
+/**
+ * The printed bill. Its status line says "as recorded in Pallio" (audit R35):
+ * the PDF travels in the audit packet, where a bare "Status: paid" reads as the
+ * payer's word rather than the org's own record.
+ */
 function renderHtml(d: { sb: SuperbillData; orgName: string; primary: string }): string {
   const { sb, orgName, primary } = d;
   const dob = sb.date_of_birth.toISOString().slice(0, 10);
@@ -132,6 +150,7 @@ function renderHtml(d: { sb: SuperbillData; orgName: string; primary: string }):
   .mono { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
   .totals { font-size: 13px; font-weight: 700; }
   .footer { margin-top: 24px; font-size: 9px; color: #64748b; text-align: center; }
+  .stamp { display: inline-block; margin-bottom: 4px; padding: 2px 6px; border: 1px solid #b91c1c; color: #b91c1c; font-weight: 700; }
 </style></head><body>
   <div class="hd">
     <div>
@@ -140,7 +159,10 @@ function renderHtml(d: { sb: SuperbillData; orgName: string; primary: string }):
     </div>
     <div class="meta">
       <div>Superbill <span class="mono">${esc(sb.id)}</span></div>
-      <div>Status: <strong>${esc(sb.status)}</strong></div>
+      <div>Patient account no. (box 26): <span class="mono">${esc(claimRefFor(sb.id))}</span></div>
+      <div>Visit <span class="mono">${esc(sb.visit_id)}</span></div>
+      ${submissionStamp(sb.status) ? `<div class="stamp">${esc(submissionStamp(sb.status) ?? "")}</div>` : ""}
+      <div>Status (as recorded in Pallio): <strong>${esc(sb.status)}</strong></div>
       <div>DOS: <strong>${dos}</strong></div>
     </div>
   </div>
@@ -155,15 +177,17 @@ function renderHtml(d: { sb: SuperbillData; orgName: string; primary: string }):
 
   <h2>Provider</h2>
   <table>
-    <tr><td class="k">Name</td><td>${esc(sb.provider_name)}</td></tr>
-    <tr><td class="k">NPI</td><td class="mono">${esc(sb.provider_npi)}</td></tr>
+    <tr><td class="k">Rendering provider</td><td>${esc(sb.provider_name)}</td></tr>
+    <tr><td class="k">Rendering NPI (box 24J)</td><td class="mono">${esc(sb.provider_npi || "not recorded")}</td></tr>
+    <tr><td class="k">Billing provider NPI (box 33a)</td><td class="mono">${esc(sb.billing_npi || "not recorded")}</td></tr>
   </table>
 
   <h2>Codes</h2>
   <table>
-    <tr><td class="k">CPT / HCPCS</td><td class="mono">${(sb.cpt_codes ?? []).join(", ") || "—"}</td></tr>
-    <tr><td class="k">ICD-10</td><td class="mono">${(sb.icd10_codes ?? []).join(", ") || "—"}</td></tr>
-    <tr><td class="k">Modifiers</td><td class="mono">${(sb.modifiers ?? []).join(", ") || "—"}</td></tr>
+    <tr><td class="k">CPT / HCPCS</td><td class="mono">${esc(formatCodes(sb.cpt_codes ?? [], sb.cpt_units) || "—")}</td></tr>
+    <tr><td class="k">ICD-10</td><td class="mono">${esc((sb.icd10_codes ?? []).join(", ") || "—")}</td></tr>
+    <tr><td class="k">Modifiers</td><td class="mono">${esc((sb.modifiers ?? []).join(", ") || "—")}</td></tr>
+    <tr><td class="k">Place of service</td><td>${esc(sb.place_of_service_code)}${sb.pos_description ? ` — ${esc(sb.pos_description)}` : ""}</td></tr>
   </table>
 
   <h2>Charges</h2>

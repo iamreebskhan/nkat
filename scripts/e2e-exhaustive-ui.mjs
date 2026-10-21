@@ -1,4 +1,4 @@
-import { requireDemoPassword } from "./lib/test-credentials.mjs";
+import { harnessAccount } from "./lib/test-credentials.mjs";
 /**
  * EXHAUSTIVE live UI crawl — visits EVERY page, clicks EVERY safe button,
  * and exercises the two flows no other harness drives:
@@ -31,8 +31,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
-const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = requireDemoPassword();
+const { email: EMAIL, password: PASSWORD } = harnessAccount();
 const OP_EMAIL = process.env.OPERATOR_EMAIL || "";
 const OP_PASSWORD = process.env.OPERATOR_PASSWORD || "";
 const INCLUDE_AI = process.env.INCLUDE_AI === "1";
@@ -151,7 +150,7 @@ async function crawlPage(page, path, tag) {
   console.log(`     click-everything policy: destructive skipped, AI ${INCLUDE_AI ? "INCLUDED" : "skipped (INCLUDE_AI=1 to include)"}\n`);
   const browser = await chromium.launch({ headless: process.env.HEADLESS !== "false" });
   const { page } = await loginContext(browser, EMAIL, PASSWORD);
-  ok("demo login", true);
+  ok("harness login", true);
 
   // ── seed deterministic detail-page targets via the authenticated session ──
   // Seeding failures must be LOUD: a silent 4xx here previously left ids
@@ -168,7 +167,14 @@ async function crawlPage(page, path, tag) {
   const payers = (await api("GET", "/api/billing/payers"))?.payers || [];
   const payerId = (payers.find((p) => /aetna/i.test(p.name)) || payers[0])?.id;
   const patients = (await api("GET", "/api/patients?limit=200"))?.rows || [];
-  const patientId = patients.find((p) => p.firstName === "Ada")?.id || patients[0]?.id;
+  // A fresh harness org has no patients (the demo tenant always did), and
+  // without one every detail page below is skipped. Create the fixture instead.
+  const patientId = patients.find((p) => p.firstName === "Ada")?.id || patients[0]?.id
+    || (await api("POST", "/api/patients", {
+      demographics: { firstName: "Ada", lastName: "Lovelace", dateOfBirth: "1942-03-08", sexAssignedAtBirth: "F", state: "OH", city: "Dublin" },
+      insurance: { primaryPayerId: payerId, primaryMemberId: "W1" },
+      clinical: { acuity: "critical" }, consents: { hipaaAcknowledged: true, goalsOfCareConsent: true, telehealthConsent: true }, careTeam: {},
+    }))?.id;
   // a visit ~tomorrow so the schedule week-grid has a draggable card
   // confirmDoubleBook: fixtures deliberately ignore the 8-visit/day capacity
   // guard — weeks of harness runs stack visits on the demo clinician's

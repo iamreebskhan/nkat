@@ -8,7 +8,7 @@
  * Live API exercises happen in the gold-standard eval (gated by
  * EVAL=1) and the integration suite (later phase).
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/env", () => ({
   env: () => ({
@@ -75,12 +75,28 @@ vi.mock("@/lib/ai/embedder", () => ({
   EMBEDDING_DIMS: 1024,
 }));
 
+import { withOrgContext } from "@/lib/db";
+
 import { lookupRule } from "../rule-lookup.service";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 
+/** The zone readOrgTimeZone finds for any org here, until a case says otherwise. */
+let orgZone = "America/New_York";
+
+beforeEach(() => {
+  orgZone = "America/New_York";
+  // readOrgTimeZone's read, for a lookup sent with no date of service.
+  vi.mocked(withOrgContext).mockImplementation(async (_orgId, fn) =>
+    (fn as (tx: unknown) => Promise<unknown>)({
+      $queryRaw: () => Promise.resolve([{ timezone: orgZone }]),
+    }),
+  );
+});
+
 afterEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe("lookupRule decision flow (vision §18.6)", () => {
@@ -284,6 +300,69 @@ describe("lookupRule org-first resolution", () => {
     expect(mockFetchOrgRule).toHaveBeenCalledWith(
       expect.objectContaining({ orgId: CALLER_ORG, code: "99350" }),
     );
+  });
+
+  /**
+   * The date of service the rules are matched on is a calendar day (0107).
+   * It was a JS Date — `new Date(req.dos)`, else the server's now — bound into
+   * comparisons with the rules' DATE columns, which read each DATE as midnight
+   * in the database session's zone.
+   */
+  describe("the date of service", () => {
+    const dosOf = (mock: ReturnType<typeof vi.fn>) =>
+      (mock.mock.calls[0]![0] as { dos: unknown }).dos;
+
+    it("matches every library on the day sent, without reading the org's zone", async () => {
+      mockFetchOrgRule.mockResolvedValue(null);
+      mockFetchPayerRule.mockResolvedValue(globalRow());
+      await lookupRule({ ...req, dos: "2026-09-22" });
+      expect(dosOf(mockFetchOrgRule)).toBe("2026-09-22");
+      expect(dosOf(mockFetchPayerRule)).toBe("2026-09-22");
+      expect(vi.mocked(withOrgContext)).not.toHaveBeenCalled();
+    });
+
+    it("with none sent, is today where the practice is, not the server's UTC day", async () => {
+      // 9:30 pm on 20 Oct in Ohio is already 21 Oct in UTC.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-21T01:30:00Z"));
+      mockFetchOrgRule.mockResolvedValue(null);
+      mockFetchPayerRule.mockResolvedValue(globalRow());
+      await lookupRule(req);
+      expect(dosOf(mockFetchOrgRule)).toBe("2026-10-20");
+      expect(dosOf(mockFetchPayerRule)).toBe("2026-10-20");
+    });
+
+    it("CONTROL: the day follows the practice's own zone, here Honolulu's", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-21T01:30:00Z"));
+      orgZone = "Pacific/Honolulu";
+      mockFetchOrgRule.mockResolvedValue(null);
+      mockFetchPayerRule.mockResolvedValue(globalRow());
+      await lookupRule(req);
+      // Honolulu is UTC−10: 3:30 pm on the 20th.
+      expect(dosOf(mockFetchPayerRule)).toBe("2026-10-20");
+      vi.setSystemTime(new Date("2026-10-21T12:00:00Z"));
+      vi.clearAllMocks();
+      mockFetchPayerRule.mockResolvedValue(globalRow());
+      await lookupRule(req);
+      expect(dosOf(mockFetchPayerRule)).toBe("2026-10-21");
+    });
+
+    it("platform tooling with no org gets the default practice zone", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-21T01:30:00Z"));
+      mockFetchPayerRule.mockResolvedValue(globalRow());
+      await lookupRule({ ...req, orgId: undefined });
+      expect(dosOf(mockFetchPayerRule)).toBe("2026-10-20");
+      expect(vi.mocked(withOrgContext)).not.toHaveBeenCalled();
+    });
+
+    it("cites an org rule with the practice's day of its last edit", async () => {
+      mockFetchOrgRule.mockResolvedValue(orgRow({ lastEditedDay: "2026-07-14" }));
+      mockFetchPayerRule.mockResolvedValue(null);
+      const r = await lookupRule({ ...req, dos: "2026-09-22" });
+      expect(r.citation?.effectiveDate).toBe("2026-07-14");
+    });
   });
 
   it("carries the global library alongside as comparison", async () => {

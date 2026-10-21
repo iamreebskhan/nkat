@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { ok, fail, parseJson, parseSearchParams, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+import { withOrgContext } from "@/lib/db";
 import {
   getBusyForClinician,
   pushVisitToGoogle,
@@ -27,6 +28,37 @@ const ListSchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 
+/**
+ * How many visits match the list's filters — the size of the whole list, not
+ * of one page.
+ *
+ * `total` used to be visits.length, so the patient chart read "50 visits on
+ * file" for a patient with 206 of them and the 156 oldest vanished without a
+ * word. That is audit R34, declared fixed in components/ui/pager.tsx: it was
+ * fixed for the two billing queues and missed here.
+ *
+ * The predicates are listVisits' own, character for character. A total counted
+ * over a different row set is a fresh untruth in place of the old one.
+ */
+async function countVisits(args: {
+  orgId: string;
+  patientId?: string;
+  status?: (typeof VISIT_STATUSES)[number];
+  clinicianUserId?: string;
+}): Promise<number> {
+  return withOrgContext(args.orgId, async (tx) => {
+    const rows = await tx.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(*)::bigint AS n FROM visit v
+       WHERE
+         v.org_id = ${args.orgId}::uuid
+         AND (${args.patientId ?? null}::uuid IS NULL OR v.patient_id = ${args.patientId ?? null}::uuid)
+         AND (${args.status ?? null}::text IS NULL OR v.status = ${args.status ?? null})
+         AND (${args.clinicianUserId ?? null}::uuid IS NULL OR v.clinician_user_id = ${args.clinicianUserId ?? null}::uuid)
+    `;
+    return Number(rows[0]?.n ?? 0);
+  });
+}
+
 export async function GET(req: NextRequest): Promise<Response> {
   // visits.view.all and visits.view.own are both acceptable here; the
   // service-layer filter via clinicianUserId restricts the row set when
@@ -43,17 +75,29 @@ export async function GET(req: NextRequest): Promise<Response> {
   const params = parseSearchParams(url, ListSchema);
   if (params instanceof Response) return params;
 
+  // If only .own, force the filter to this user. The count has to be given the
+  // same narrowed value, or a clinician would be told how many visits the whole
+  // org has while being shown only their own.
+  const clinicianUserId = canSeeAll ? params.clinicianUserId : session.userId;
+
   const visits = await listVisits({
     orgId: session.orgId,
     patientId: params.patientId,
     status: params.status,
-    // If only .own, force the filter to this user.
-    clinicianUserId: canSeeAll
-      ? params.clinicianUserId
-      : session.userId,
+    clinicianUserId,
     limit: params.limit,
   });
-  return ok({ rows: visits, total: visits.length });
+  // Sequential, not Promise.all: each of these opens its own withOrgContext
+  // transaction to set the tenant GUC, and firing them together exhausted the
+  // Prisma pool on the claims screen (P2028), which then rendered as an empty
+  // queue.
+  const total = await countVisits({
+    orgId: session.orgId,
+    patientId: params.patientId,
+    status: params.status,
+    clinicianUserId,
+  });
+  return ok({ rows: visits, total });
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
@@ -93,7 +137,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       const cap = await getDailyCapacityStatus({
         orgId: session.orgId,
         clinicianUserId: body.clinicianUserId,
-        dayIso: body.scheduledStart,
+        at: body.scheduledStart,
       });
       if (cap.over) {
         return fail(

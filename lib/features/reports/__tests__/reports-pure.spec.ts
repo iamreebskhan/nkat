@@ -230,3 +230,30 @@ describe("ruleCoverage", () => {
     expect(ruleCoverage([]).coverageRate).toBe(0);
   });
 });
+
+describe("denialRateTrend — keyed to the claim's date of service (audit R29)", () => {
+  const billed = {
+    payerId: PAYER_A, status: "submitted", billedAmountCents: 100_00,
+    paidAmountCents: null, dateOfService: "2026-05-01",
+  };
+  const range = { fromDate: new Date("2026-05-01T00:00:00Z"), toDate: new Date("2026-05-20T00:00:00Z") };
+
+  it("attributes a denial to its claim's date of service, not the day it was denied", () => {
+    const series = denialRateTrend({
+      superbills: [billed],
+      denials: [denial({ deniedAmountCents: 25_00, deniedAt: "2026-05-20T10:00:00Z", claimDateOfService: "2026-05-01" })],
+      ...range,
+    });
+    expect(series[0]!.value).toBe(25);
+    expect(series[19]!.value).toBe(0);
+  });
+
+  it("keyed to the denial date — the old math — the same claim read 0% every day", () => {
+    const series = denialRateTrend({
+      superbills: [billed],
+      denials: [denial({ deniedAmountCents: 25_00, deniedAt: "2026-05-20T10:00:00Z" })],
+      ...range,
+    });
+    expect(series.every((p) => p.value === 0)).toBe(true);
+  });
+});

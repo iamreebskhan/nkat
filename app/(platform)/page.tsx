@@ -78,14 +78,25 @@ export default async function PlatformHome() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
           <CardHeader>
-            <CardTitle>Denial rate trend (30d)</CardTitle>
+            {/* Per date of service (audit R29): denied $ ÷ billed $ for the
+                claims with that service date. Keyed to the denial date, a
+                denial never met its own claim and this read 0% everywhere. */}
+            <CardTitle>Denial rate by date of service (30d)</CardTitle>
             <CardDescription>
-              Peak {peakDenialRate.toFixed(1)}% · {overview?.denialRateTrend.length ?? 0} days
+              Peak {peakDenialRate.toFixed(1)}% · denied $ ÷ billed $ for claims with that service date
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {!overview || overview.denialRateTrend.length === 0 ? (
+            {!overview ? (
               <p className="text-sm text-slate-500 py-8 text-center">No data in the last 30 days.</p>
+            ) : overview.revenue.billedCents === 0 ? (
+              <p className="text-sm text-slate-500 py-8 text-center">
+                Nothing billed with a service date in the last 30 days.
+              </p>
+            ) : peakDenialRate === 0 ? (
+              <p className="text-sm text-slate-500 py-8 text-center">
+                No denials on claims with a service date in the last 30 days.
+              </p>
             ) : (
               <>
                 <div className="flex items-end gap-1 h-40">

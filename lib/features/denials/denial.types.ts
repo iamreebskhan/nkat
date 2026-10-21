@@ -61,6 +61,8 @@ export const DecideDenialSchema = z.object({
 export const RefileSchema = z.object({
   refiledAt: Iso.optional(),
   notes: z.string().max(2000).optional(),
+  /** Refile over a payer documentation gap, with the reason (audit R19). */
+  documentationOverride: z.object({ reason: z.string().trim().min(10).max(500) }).optional(),
 });
 
 export const RecordOutcomeSchema = z.object({
@@ -101,6 +103,12 @@ export interface DenialView {
   outcomeAt: string | null;
   outcomeAmountCents: number | null;
   outcomeNotes: string | null;
+
+  /**
+   * 'remittance' when posted from a payer's 835, carrying the payer's own
+   * CARC; 'recorded' when logged or marked in Pallio (audit R10).
+   */
+  source: "recorded" | "remittance";
 
   createdAt: string;
   updatedAt: string;

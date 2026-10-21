@@ -5,6 +5,14 @@
  */
 import { z } from "zod";
 
+import { CONTACT_RELATIONSHIPS, NpiSchema, PhoneSchema } from "./contacts.types";
+import type { PayerType } from "@/lib/features/billing/payer-types";
+import type { ProlongedServiceCode } from "@/lib/features/billing/prolonged-code";
+
+// Re-exported: the patient's own number, the emergency contact's, and every
+// contact's and outside provider's share one rule (audit R30).
+export { PhoneSchema };
+
 export const PATIENT_STATUSES = [
   "active",
   "discharged",
@@ -22,7 +30,6 @@ const StateAbbr = z
   .regex(/^[A-Z]{2}$/, "Use the 2-letter USPS abbreviation");
 
 const Icd10 = z.string().regex(/^[A-Z]\d{2}(\.\d{1,4})?$/i, "Invalid ICD-10");
-const Npi = z.string().regex(/^\d{10}$/, "NPI must be 10 digits");
 
 const NameSchema = z
   .string()
@@ -46,15 +53,15 @@ export const DemographicsSchema = z.object({
     .string()
     .regex(/^\d{5}(-\d{4})?$/, "ZIP: 5 digits, optional -4")
     .optional(),
-  phone: z
-    .string()
-    .regex(/^[\d\s().+-]{7,20}$/, "Invalid phone")
-    .optional(),
-  emergencyContactName: z.string().max(120).optional(),
-  emergencyContactPhone: z
-    .string()
-    .regex(/^[\d\s().+-]{7,20}$/, "Invalid phone")
-    .optional(),
+  phone: PhoneSchema.optional(),
+  /**
+   * The intake wizard's emergency contact. Create-only: createPatient files it
+   * as a patient_contact row (audit R30), and from then on it is edited on the
+   * chart's Family & caregivers card, never through PATCH /api/patients.
+   */
+  emergencyContactName: z.string().trim().max(120).optional(),
+  emergencyContactPhone: PhoneSchema.optional(),
+  emergencyContactRelationship: z.enum(CONTACT_RELATIONSHIPS).optional(),
 });
 export type Demographics = z.infer<typeof DemographicsSchema>;
 
@@ -86,8 +93,13 @@ export type Insurance = z.infer<typeof InsuranceSchema>;
 /** Step 3 — clinical context. */
 export const ClinicalSchema = z.object({
   primaryDiagnosisIcd10: Icd10.optional(),
-  referringPhysicianNpi: Npi.optional(),
-  referringPhysicianName: z.string().max(150).optional(),
+  /**
+   * Create-only, like the emergency contact: createPatient files the pair on
+   * the org's outside-provider roster and links it as the referring physician
+   * (audit R30). The NPI must pass its check digit, as a roster NPI does.
+   */
+  referringPhysicianNpi: NpiSchema.optional(),
+  referringPhysicianName: z.string().trim().max(150).optional(),
   palliativeReferralReason: z.string().max(2000).optional(),
   /** Phase D — palliative-care acuity. */
   acuity: z.enum(["low", "medium", "high", "critical"]).optional(),
@@ -168,6 +180,22 @@ export interface PatientView {
   primaryPayerId: string | null;
   /** Payer display name — resolved on detail reads (list reads carry the id only). */
   primaryPayerName: string | null;
+  /**
+   * The payer's payer_type, resolved on detail reads (list reads carry null);
+   * null when there is no payer. Picks the prolonged-service code (audit R17):
+   * Medicare and Medicare Advantage bill that time as G0318, everyone else as
+   * 99417. It is read off the patient's own payer, active or not, because a
+   * payer withdrawn from the roster still covers the patients already on it,
+   * and the active-only payer list would call them non-Medicare.
+   */
+  primaryPayerType: PayerType | null;
+  /**
+   * The prolonged-service code the payer's record names (0108), resolved on
+   * detail reads like the type; null when it names none, so the type decides
+   * (prolongedServiceCodeFor). Set where a payer takes the other code than its
+   * type would, e.g. an Ohio Medicaid managed-care plan that takes G0318.
+   */
+  primaryPayerProlongedCode: ProlongedServiceCode | null;
   primaryMemberId: string | null;
   /** Policy state; falls back to the address state for rule lookups. */
   insuranceState: string | null;
@@ -184,16 +212,65 @@ export interface PatientView {
     socialWorker: CareTeamMemberView;
     billingAgent: CareTeamMemberView;
   };
+  /**
+   * When the patient consented to telehealth at intake (audit R22), as an ISO
+   * timestamp; null = not recorded. It pre-ticks, and never replaces, each
+   * telehealth visit's own consent acknowledgment. Resolved on detail reads;
+   * list reads carry null.
+   */
+  telehealthConsentAt: string | null;
   status: PatientStatus;
   createdAt: string;
   updatedAt: string;
 }
 
-/** PATCH shape — every field optional, schema-validated subset of CreatePatient. */
+/**
+ * The intake telehealth consent that pre-ticks a visit's own consent box
+ * (audit R22), or null when it must not. Only an open visit (scheduled or in
+ * progress) that is telehealth, by its box or by its type, and has no consent
+ * of its own yet takes it: a signed visit shows only what was attested. The
+ * tick is where the clinician starts, not a substitute for their answer; the
+ * server still refuses to sign a telehealth visit whose own flag is unset.
+ */
+export function intakeTelehealthConsentFor(
+  visit: {
+    status: string;
+    isTelehealth: boolean;
+    visitTypeIsTelehealth: boolean;
+    telehealthConsentDocumented: boolean;
+  },
+  patient: Pick<PatientView, "telehealthConsentAt">,
+): string | null {
+  const open = visit.status === "scheduled" || visit.status === "in_progress";
+  const tele = visit.isTelehealth || visit.visitTypeIsTelehealth;
+  if (!open || !tele || visit.telehealthConsentDocumented) return null;
+  return patient.telehealthConsentAt;
+}
+
+/**
+ * PATCH shape — every field optional, schema-validated subset of CreatePatient.
+ *
+ * The emergency contact and the referring physician are not in it (audit
+ * R30): they live in patient_contact and patient_external_provider and are
+ * edited through their own endpoints. .strict() makes a PATCH that still
+ * sends them fail with a 422 naming the key. Stripping them silently would
+ * repeat the drop this replaced, where the demographics branch discarded all
+ * but name and DOB while its audit row said demographics had changed.
+ */
 export const UpdatePatientSchema = z.object({
-  demographics: DemographicsSchema.partial().optional(),
+  demographics: DemographicsSchema.omit({
+    emergencyContactName: true,
+    emergencyContactPhone: true,
+    emergencyContactRelationship: true,
+  })
+    .partial()
+    .strict()
+    .optional(),
   insurance: InsuranceSchema.partial().optional(),
-  clinical: ClinicalSchema.partial().optional(),
+  clinical: ClinicalSchema.omit({ referringPhysicianNpi: true, referringPhysicianName: true })
+    .partial()
+    .strict()
+    .optional(),
   careTeam: UpdateCareTeamSchema.optional(),
   status: z.enum(PATIENT_STATUSES).optional(),
 });

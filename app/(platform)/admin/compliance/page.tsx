@@ -39,7 +39,12 @@ export default function CompliancePage() {
   }
 
   useEffect(() => {
-    void load();
+    // Started from a timer rather than synchronously in the effect body, where
+    // load()'s setLoading/setError would cascade a second render.
+    const t = setTimeout(() => {
+      void load();
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   const okCount = checks.filter((c) => c.ok).length;

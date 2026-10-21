@@ -29,13 +29,17 @@ trailer<</Size 6/Root 1 0 R>>
 );
 
 describe("extractPdfText", () => {
+  // The only test in the suite that boots pdfjs. It runs in ~0.4s alone but
+  // spends most of that on cold module init, so under a loaded worker pool it
+  // was intermittently overrunning the 5s default. Headroom here rather than a
+  // global timeout, which would just hide a genuinely hung test elsewhere.
   it("reads the text layer", async () => {
     const r = await extractPdfText(ONE_PAGE_PDF);
     expect(r.complete).toBe(true);
     expect(r.pages).toBe(1);
     expect(r.text).toContain("Prior authorization is required after five visits.");
     expect(r.reason).toBeNull();
-  });
+  }, 30_000);
 
   it("reports a file it cannot parse instead of returning empty text", async () => {
     // The dangerous failure: "" looks exactly like a clean scan of a

@@ -98,11 +98,18 @@ export default function HealthPage() {
   }
 
   useEffect(() => {
-    void probe();
-    // Not on the 5s liveness interval: this one walks the whole rule library.
-    void loadLibrary();
+    // The first probe and the library read are started from a timer, so
+    // neither state-setting call runs synchronously in the effect body.
+    const first = setTimeout(() => {
+      void probe();
+      // Not on the 5s liveness interval: this one walks the whole rule library.
+      void loadLibrary();
+    }, 0);
     const id = setInterval(probe, 5_000);
-    return () => clearInterval(id);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
   }, []);
 
   // Anything not "ok" is what an operator came here to find, so it goes first

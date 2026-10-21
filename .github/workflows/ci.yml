@@ -85,10 +85,60 @@ jobs:
             echo "== $f =="
             psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$f"
           done
-          for f in ../db/seed/*.sql; do
-            echo "== $f =="
-            psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$f"
+          # ---- seeds: db/seed/MANIFEST order, never a glob ----------------
+          # `for f in db/seed/*.sql` applied them in the filesystem's ASCII
+          # order, where '-' (0x2D) sorts before '.' (0x2E), so
+          # payer-rules-denial-attributes-2.sql (round 2) ran BEFORE
+          # payer-rules-denial-attributes.sql (round 1). Rule seeds expire what
+          # they supersede and then revive their own rows with
+          # ON CONFLICT (id) DO UPDATE ... expiration_date = NULL, so whichever
+          # runs last wins: CI validated a library with round 1 live on all 28
+          # keys the two share, while production — which applies MANIFEST order
+          # through scripts/deploy.sh — served round 2. Round 1's own header
+          # records that inversion as a production incident. Glob order also ran
+          # the ingestion seeds before payer-medicare.sql, leaving every
+          # Medicare ingestion source with payer_id NULL and therefore inert.
+          # db/test/0003_rule_supersession.sql fails if either comes back.
+          SEED_DIR=../db/seed
+          apply_seed() {
+            echo "== $SEED_DIR/$1 =="
+            psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$SEED_DIR/$1"
+          }
+          MANIFEST_SEEDS="$(sed 's/#.*//' "$SEED_DIR/MANIFEST" | tr -d '\r' | awk 'NF')"
+          # The fixtures MANIFEST deliberately keeps out of the deploy. CI still
+          # applies them — tenant-demo-palliative.sql:11 says each push proves
+          # they apply — and WHERE matters:
+          #   * 0018 writes 15 payer_rule keys the rule library also writes.
+          #     After the library it would leave TWO live rules on each, and
+          #     fetchPayerRule ends in LIMIT 1, so the answer a clinician sees
+          #     would depend on row order. It goes before, as glob order did.
+          #   * tenant-demo-palliative.sql prices its demo superbills by reading
+          #     payer_rule, so it goes after the library, as glob order did.
+          # lib/__tests__/ci-seed-order-drift.spec.ts fails if a seed beside
+          # MANIFEST lands in neither list.
+          FIXTURES_BEFORE_RULES="0016_phase11_design_partner_subscription.sql
+                                 0017_test_users.sql
+                                 0018_test_palliative_payer_rules.sql
+                                 0020_local_clinical_fixture.sql
+                                 ingestion-source-medicare-pdf.sql"
+          FIXTURES_AFTER_RULES="tenant-demo-palliative.sql"
+          fixtures_done=0
+          for f in $MANIFEST_SEEDS; do
+            case "$f" in
+              payer-rules-*)
+                if [ "$fixtures_done" -eq 0 ]; then
+                  for x in $FIXTURES_BEFORE_RULES; do apply_seed "$x"; done
+                  fixtures_done=1
+                fi
+                ;;
+            esac
+            apply_seed "$f"
           done
+          if [ "$fixtures_done" -eq 0 ]; then
+            echo "::error::db/seed/MANIFEST lists no payer-rules-* seed, so the CI fixtures were never applied"
+            exit 1
+          fi
+          for x in $FIXTURES_AFTER_RULES; do apply_seed "$x"; done
           for f in ../db/test/*.sql; do
             echo "== $f =="
             psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$f"
@@ -137,10 +187,47 @@ jobs:
           PGPASSWORD: admin_dev_only_change_in_prod
         run: |
           set -euo pipefail
-          for f in db/seed/*.sql; do
-            echo "== $f =="
-            psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$f"
+          # Order comes from db/seed/MANIFEST — the same file scripts/deploy.sh
+          # walks — so the rule library this job validates is the one production
+          # applies. See the identical block in backend-integration-tests above
+          # for the incident that made a glob here a bug: rule seeds supersede
+          # each other, so ASCII order put round 1 of the denial-attributes pair
+          # last and CI served the older UnitedHealthcare Ohio rule on all 28
+          # keys the two share. db/test/0003_rule_supersession.sql now fails on
+          # that, and on the Medicare ingestion sources glob order left unbound.
+          SEED_DIR=db/seed
+          apply_seed() {
+            echo "== $SEED_DIR/$1 =="
+            psql -h localhost -U admin -d billing_rules -v ON_ERROR_STOP=1 -f "$SEED_DIR/$1"
+          }
+          MANIFEST_SEEDS="$(sed 's/#.*//' "$SEED_DIR/MANIFEST" | tr -d '\r' | awk 'NF')"
+          # 0018 writes payer_rule keys the library also writes, so it must come
+          # before the library or both stay live and fetchPayerRule's LIMIT 1
+          # picks arbitrarily; tenant-demo-palliative.sql reads payer_rule to
+          # price its superbills, so it must come after.
+          FIXTURES_BEFORE_RULES="0016_phase11_design_partner_subscription.sql
+                                 0017_test_users.sql
+                                 0018_test_palliative_payer_rules.sql
+                                 0020_local_clinical_fixture.sql
+                                 ingestion-source-medicare-pdf.sql"
+          FIXTURES_AFTER_RULES="tenant-demo-palliative.sql"
+          fixtures_done=0
+          for f in $MANIFEST_SEEDS; do
+            case "$f" in
+              payer-rules-*)
+                if [ "$fixtures_done" -eq 0 ]; then
+                  for x in $FIXTURES_BEFORE_RULES; do apply_seed "$x"; done
+                  fixtures_done=1
+                fi
+                ;;
+            esac
+            apply_seed "$f"
           done
+          if [ "$fixtures_done" -eq 0 ]; then
+            echo "::error::db/seed/MANIFEST lists no payer-rules-* seed, so the CI fixtures were never applied"
+            exit 1
+          fi
+          for x in $FIXTURES_AFTER_RULES; do apply_seed "$x"; done
       - name: Run schema tests
         env:
           PGPASSWORD: admin_dev_only_change_in_prod

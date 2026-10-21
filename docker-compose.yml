@@ -13,8 +13,10 @@
 #   - Frontend (run separately):     `npm --prefix frontend run dev` → :5173
 #
 # The `migrate` service is a one-shot: it applies every db/migrations/*.sql
-# file then every db/seed/*.sql file in order, then exits 0. `backend`
-# waits for `migrate` to succeed before starting.
+# file, then the seeds in db/seed/MANIFEST order (NOT filesystem order — see
+# the comment on the service), then runs db/test and exits 0. `backend` waits
+# for `migrate` to succeed before starting, so a database built wrong stops the
+# stack instead of serving superseded rules.
 
 services:
   db:
@@ -39,9 +41,10 @@ services:
       retries: 20
 
   migrate:
-    # One-shot: applies migrations + seeds, exits 0. Re-running is safe;
-    # the seeds all use ON CONFLICT DO NOTHING and migrations are
-    # idempotent at the schema level (CREATE TABLE IF NOT EXISTS, etc.).
+    # One-shot: applies migrations + seeds, exits 0. NOT re-runnable against a
+    # volume it has already built: 35 migrations create tables without IF NOT
+    # EXISTS, so a second run stops at 0002 (relation "code" already exists)
+    # before any seed runs. Start again with `docker compose down -v`.
     image: pgvector/pgvector:pg16
     container_name: billing_rules_migrate
     depends_on:
@@ -62,8 +65,71 @@ services:
           echo "  -- $$f"
           psql -v ON_ERROR_STOP=1 -f "$$f"
         done
-        echo "==> applying seeds..."
-        for f in /db/seed/*.sql; do
+        # ---- seeds: db/seed/MANIFEST order, never a glob --------------------
+        # This loop used to be `for f in /db/seed/*.sql`. Filesystem order is
+        # ASCII order, where '-' (0x2D) sorts before '.' (0x2E), so
+        # payer-rules-denial-attributes-2.sql (round 2) ran BEFORE
+        # payer-rules-denial-attributes.sql (round 1). Rule seeds expire what
+        # they supersede and then revive their own rows with
+        # ON CONFLICT (id) DO UPDATE ... expiration_date = NULL, so whichever
+        # runs last wins: this stack built a library with round 1 live on all
+        # 28 keys the two share, while production applies MANIFEST order
+        # through scripts/deploy.sh and served round 2. Round 1's own header
+        # records that inversion as a production incident — the older
+        # UnitedHealthcare Ohio rule, without the TIN edit, served with no
+        # error and correct row counts. Glob order also ran the ingestion seeds
+        # before payer-medicare.sql, leaving every Medicare ingestion source
+        # bound to no payer and therefore inert. This is the same three-phase
+        # walk .github/workflows/ci.yml does; keep the two in step.
+        echo "==> applying seeds (db/seed/MANIFEST order)..."
+        SEED_DIR=/db/seed
+        apply_seed() {
+          echo "  -- $$SEED_DIR/$$1"
+          psql -v ON_ERROR_STOP=1 -f "$$SEED_DIR/$$1"
+        }
+        MANIFEST_SEEDS="$$(sed 's/#.*//' "$$SEED_DIR/MANIFEST" | tr -d '\r' | awk 'NF')"
+        # The fixtures sit beside MANIFEST and are deliberately not in it, so
+        # the deploy never applies them. This stack does, and WHERE matters:
+        #   * 0018 writes 15 payer_rule keys the rule library also writes.
+        #     After the library it leaves TWO live rules on each, and
+        #     fetchPayerRule ends in LIMIT 1, so the answer a clinician sees
+        #     would depend on row order. It goes before, as glob order did.
+        #   * tenant-demo-palliative.sql prices its demo superbills by reading
+        #     payer_rule, so it goes after the library, as glob order did.
+        FIXTURES_BEFORE_RULES="0016_phase11_design_partner_subscription.sql
+                               0017_test_users.sql
+                               0018_test_palliative_payer_rules.sql
+                               0020_local_clinical_fixture.sql
+                               ingestion-source-medicare-pdf.sql"
+        FIXTURES_AFTER_RULES="tenant-demo-palliative.sql"
+        fixtures_done=0
+        for f in $$MANIFEST_SEEDS; do
+          case "$$f" in
+            payer-rules-*)
+              if [ "$$fixtures_done" -eq 0 ]; then
+                for x in $$FIXTURES_BEFORE_RULES; do apply_seed "$$x"; done
+                fixtures_done=1
+              fi
+              ;;
+          esac
+          apply_seed "$$f"
+        done
+        if [ "$$fixtures_done" -eq 0 ]; then
+          echo "migrate: db/seed/MANIFEST lists no payer-rules-* seed, so the fixtures were never applied" >&2
+          exit 1
+        fi
+        for x in $$FIXTURES_AFTER_RULES; do apply_seed "$$x"; done
+        # ---- db/test: the part that can actually fail -----------------------
+        # Until 2026-09 this one-shot ended at "done." and never ran db/test,
+        # so a local stack built in the wrong seed order came up green and
+        # answered every lookup with the superseded rule. `backend` waits on
+        # this service completing successfully, so a wrong library now stops
+        # the stack instead of serving a clinician the older answer.
+        # db/test/0002_rls_isolation.sql inserts two clearly-named fixture
+        # rows (org slugs 'acme' and 'beta', one client_company each) and
+        # leaves them; that is the same thing db/test.ps1 has always done.
+        echo "==> running db/test..."
+        for f in /db/test/*.sql; do
           echo "  -- $$f"
           psql -v ON_ERROR_STOP=1 -f "$$f"
         done

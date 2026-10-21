@@ -15,6 +15,10 @@
  * picker snappy even during a busy charting session.
  */
 import { prisma } from "@/lib/db";
+import { payerRuleSourceKind } from "@/lib/features/rulebook/rulebook-pure";
+
+import { gateDescriptor, isAmaPlaceholder } from "./code-pure";
+import { hasAmaLicense } from "./code.service";
 
 /** Hint badges the picker shows next to each code. */
 export type SourceKind = "crawler" | "analyst" | "ai" | "manual" | "unknown";
@@ -144,12 +148,15 @@ export async function getAllowedCodesForPayer(args: {
       COALESCE(category, 'zzz') ASC, code ASC
   `;
 
+  const licensed = hasAmaLicense();
   const mapped: AllowedCode[] = rows.map((r) => ({
     payerId: r.payer_id,
     state: r.state,
     productLine: r.product_line,
     code: r.code,
-    descriptor: r.descriptor,
+    // CPT text is AMA-licensed (audit R21). The view selects it raw, so it is
+    // gated here, the one place every picker path passes through.
+    descriptor: gateDescriptor(r.code_system, r.descriptor, licensed) ?? "",
     category: r.category,
     codeSystem: r.code_system,
     coverageStatus: r.coverage_status,
@@ -159,7 +166,10 @@ export async function getAllowedCodesForPayer(args: {
     createdBy: r.created_by,
     sourceDocId: r.source_doc_id,
     sourceQuote: r.source_quote,
-    sourceKind: r.source_kind,
+    // Not the view's source_kind: its CASE compares created_by with 'crawler'
+    // and 'cms' exactly, so every rule extracted from a published document
+    // ('extract:…', most of the library) read "Unsourced" (audit R21).
+    sourceKind: payerRuleSourceKind(r.created_by),
     modifierRequired: r.modifier_required,
     priorAuthRequired: r.prior_auth_required,
     hasFrequencyLimit: r.has_frequency_limit,
@@ -192,7 +202,9 @@ export async function searchAllowedCodes(args: {
     .filter(
       (r) =>
         r.code.toLowerCase().startsWith(q) ||
-        r.descriptor.toLowerCase().includes(q),
+        // A withheld CPT descriptor is not text to search: matching "ama"
+        // against the placeholder would return every CPT code.
+        (!isAmaPlaceholder(r.descriptor) && r.descriptor.toLowerCase().includes(q)),
     )
     .slice(0, limit);
 }

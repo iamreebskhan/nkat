@@ -60,7 +60,7 @@ export default function BillingPage() {
       setError(data.error ?? "Checkout failed.");
       return;
     }
-    window.location.href = data.data.url;
+    window.location.assign(data.data.url);
   }
 
   return (

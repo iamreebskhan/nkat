@@ -25,8 +25,11 @@ import {
 import type { PatientView } from "@/lib/features/patients/patient.types";
 import type { VisitView } from "@/lib/features/visits/visit.types";
 import { ThreadPanel } from "@/components/messaging/thread-panel";
+import { ExternalProvidersCard } from "@/components/patients/external-providers-card";
+import { PatientContactsCard } from "@/components/patients/patient-contacts-card";
+import { VitalsTrend } from "@/components/patients/vitals-trend";
 
-type Tab = "overview" | "visits" | "billing" | "care-plan" | "messages";
+type Tab = "overview" | "visits" | "vitals" | "billing" | "care-plan" | "messages";
 
 export default function PatientDetailPage({
   params,
@@ -36,6 +39,12 @@ export default function PatientDetailPage({
   const { id } = use(params);
   const [patient, setPatient] = useState<PatientView | null>(null);
   const [visits, setVisits] = useState<VisitView[]>([]);
+  /**
+   * Every visit this patient has, which is not always how many are listed
+   * below: the fetch asks for the newest 200, the API's maximum. What lets the
+   * tab say "Latest 200 of 206" rather than "200 visits on file" (audit R34).
+   */
+  const [visitTotal, setVisitTotal] = useState(0);
   const [tab, setTab] = useState<Tab>("overview");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +53,9 @@ export default function PatientDetailPage({
   // server-side gate exactly.
   const [selfUserId, setSelfUserId] = useState<string | null>(null);
   const [canEditCareTeam, setCanEditCareTeam] = useState(false);
+  // Family, caregivers and outside providers (audit R30) gate on
+  // patients.edit, exactly as their API routes do.
+  const [canEditPatient, setCanEditPatient] = useState(false);
   // ACTIVE org roster for the care-team selects — ?active=1 keeps the picker
   // consistent with what the patient service will accept (suspended/removed
   // members are rejected with a 422).
@@ -53,6 +65,7 @@ export default function PatientDetailPage({
       .then((r) => r.json())
       .then((d) => {
         if (d.success && d.data?.userId) setSelfUserId(d.data.userId);
+        if (d.success) setCanEditPatient((d.data?.permissions ?? []).includes("patients.edit"));
         const can =
           d.success &&
           ((d.data?.permissions ?? []).includes("patients.careteam.edit") ||
@@ -101,7 +114,11 @@ export default function PatientDetailPage({
       try {
         const [pRes, vRes] = await Promise.all([
           fetch(`/api/patients/${id}`),
-          fetch(`/api/visits?patientId=${id}&limit=50`),
+          // 200, the list API's own maximum and what the superbills card below
+          // already asks for. At 50 a 206-visit patient had 156 visits — the
+          // start of the illness — reachable from nowhere in the product; the
+          // count beside the tab made that honest without making it readable.
+          fetch(`/api/visits?patientId=${id}&limit=200`),
         ]);
         const p = await pRes.json();
         const v = await vRes.json();
@@ -111,7 +128,10 @@ export default function PatientDetailPage({
           return;
         }
         setPatient(p.data);
-        if (v.success) setVisits(v.data.rows ?? []);
+        if (v.success) {
+          setVisits(v.data.rows ?? []);
+          setVisitTotal(Number(v.data?.total ?? 0));
+        }
       } catch {
         if (!abandoned) setError("Network error.");
       } finally {
@@ -165,7 +185,7 @@ export default function PatientDetailPage({
       </header>
 
       <div className="border-b border-slate-200 mb-6 flex gap-1">
-        {(["overview", "visits", "billing", "care-plan", "messages"] as const).map((t) => (
+        {(["overview", "visits", "vitals", "billing", "care-plan", "messages"] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -297,6 +317,10 @@ export default function PatientDetailPage({
               ))}
             </CardContent>
           </Card>
+          {/* Family, caregivers and outside providers (audit R30). Each card
+              loads its own endpoint. */}
+          <PatientContactsCard patientId={id} canEdit={canEditPatient} className="md:col-span-2" />
+          <ExternalProvidersCard patientId={id} canEdit={canEditPatient} className="md:col-span-2" />
         </div>
       )}
 
@@ -304,7 +328,15 @@ export default function PatientDetailPage({
         <Card>
           <CardHeader>
             <CardTitle>Visits</CardTitle>
-            <CardDescription>{visits.length} visit{visits.length === 1 ? "" : "s"} on file</CardDescription>
+            {/* "on file" has to mean on file. The fetch asks for the newest
+                200, so a patient with more than that is told the page is a
+                page — the oldest visits, the start of the illness, are the
+                ones behind it. Same shape as the billing tab below. */}
+            <CardDescription>
+              {visitTotal > visits.length
+                ? `Latest ${visits.length} of ${visitTotal} visits`
+                : `${visits.length} visit${visits.length === 1 ? "" : "s"} on file`}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {visits.length === 0 ? (
@@ -317,7 +349,10 @@ export default function PatientDetailPage({
                       <span className="font-medium">{v.visitType.replace(/_/g, " ")}</span>
                       <span className="text-slate-500 tabular">
                         {" · "}
-                        {(v.startTime ?? v.scheduledStart ?? v.createdAt).slice(0, 10)}
+                        {/* The practice's day; slicing the instant gave its UTC
+                            day, a day late for an Ohio evening visit. A visit
+                            with no time yet shows the day it was booked. */}
+                        {v.serviceDay ?? v.createdAt.slice(0, 10)}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -336,6 +371,8 @@ export default function PatientDetailPage({
           </CardContent>
         </Card>
       )}
+
+      {tab === "vitals" && <VitalsTrend patientId={id} />}
 
       {tab === "billing" && <BillingTab patientId={id} />}
 
@@ -428,19 +465,20 @@ interface SuperbillRow {
 
 function BillingTab({ patientId }: { patientId: string }) {
   const [rows, setRows] = useState<SuperbillRow[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let abandoned = false;
-    fetch(`/api/superbills?limit=200`)
+    // Filtered in SQL. This fetched the org's 200 newest bills and filtered
+    // them here, so a patient whose bills were older than those 200 showed
+    // none at all (audit R34).
+    fetch(`/api/superbills?patientId=${patientId}&limit=200`)
       .then((r) => r.json())
       .then((d) => {
         if (abandoned || !d.success) return;
-        // Filter client-side to this patient — list endpoint doesn't yet
-        // take patientId. Add when needed at scale.
-        setRows((d.data?.rows ?? []).filter((r: SuperbillRow & { patientId?: string }) =>
-          r.patientId === patientId,
-        ));
+        setRows(d.data?.rows ?? []);
+        setTotal(Number(d.data?.total ?? 0));
       })
       .finally(() => {
         if (!abandoned) setLoading(false);
@@ -460,7 +498,7 @@ function BillingTab({ patientId }: { patientId: string }) {
             ? "Loading…"
             : rows.length === 0
               ? "No superbills yet — generate one from a documented visit."
-              : `${rows.length} superbill${rows.length === 1 ? "" : "s"} · $${(billed / 100).toFixed(2)} billed · $${(paid / 100).toFixed(2)} paid`}
+              : `${total > rows.length ? `Latest ${rows.length} of ${total} superbills` : `${rows.length} superbill${rows.length === 1 ? "" : "s"}`} · $${(billed / 100).toFixed(2)} billed · $${(paid / 100).toFixed(2)} paid`}
         </CardDescription>
       </CardHeader>
       {rows.length > 0 && (

@@ -27,6 +27,7 @@ import {
   type CoverageStatus,
   type PayerRuleAttribute,
 } from "@/lib/features/billing/payer-rule.repository";
+import { dateColumnIso, isCalendarDay } from "@/lib/features/org/org-date";
 
 /** Mirrors the org_rulebook_row.origin CHECK (migration 0031). */
 export type OrgRuleOrigin = "source" | "org_upload" | "org_override" | "analyst";
@@ -49,6 +50,8 @@ export interface OrgRuleHit {
   sourceQuote: string | null;
   expiresAt: Date | null;
   lastEditedAt: Date | null;
+  /** lastEditedAt's day where the practice is ('YYYY-MM-DD'), for a citation. */
+  lastEditedDay: string | null;
   /** Set when origin='analyst' — the attestation this mirrors. */
   sourceAttestationId: string | null;
   /** The global rule this row was derived from, if any. */
@@ -66,6 +69,8 @@ interface OrgRuleRow {
   source_quote: string | null;
   expires_at: Date | null;
   last_edited_at: Date | null;
+  /** A DATE: Prisma returns it as a Date at UTC midnight. */
+  last_edited_day: Date | null;
   source_attestation_id: string | null;
   source_payer_rule_id: string | null;
 }
@@ -77,11 +82,11 @@ export interface FetchOrgRuleInput {
   code: string;
   attribute: PayerRuleAttribute;
   /**
-   * Date of service. Org rows have no effective_date, but an
+   * Date of service, 'YYYY-MM-DD'. Org rows have no effective_date, but an
    * attestation-backed row that had already expired by the DOS must not
    * answer for it.
    */
-  dos: Date;
+  dos: string;
 }
 
 /**
@@ -110,15 +115,22 @@ export async function fetchOrgRule(
         r.source_quote          AS source_quote,
         r.expires_at            AS expires_at,
         r.last_edited_at        AS last_edited_at,
+        (r.last_edited_at AT TIME ZONE o.timezone)::date AS last_edited_day,
         r.source_attestation_id AS source_attestation_id,
         r.source_payer_rule_id  AS source_payer_rule_id
       FROM org_rulebook_row r
+      JOIN org o ON o.id = r.org_id
       WHERE r.org_id    = ${input.orgId}::uuid
         AND r.payer_id  = ${input.payerId}::uuid
         AND r.state     = ${input.state}
         AND r.cpt_code  = ${input.code}
         AND r.attribute = ${dbAttribute}
-        AND (r.expires_at IS NULL OR r.expires_at > ${input.dos})
+        -- Still in force when the date of service began where the practice
+        -- is (0107). expires_at is an instant and the DOS a day; this
+        -- compared it with a JS Date, which made "the day" whatever the
+        -- caller's instant fell in.
+        AND (r.expires_at IS NULL
+             OR r.expires_at > (${input.dos}::date::timestamp AT TIME ZONE o.timezone))
         -- Human decisions (analyst call, manual override, uploaded
         -- rulebook) always answer. Machine-written rows (origin
         -- 'source' — the AI-synthesized cache) must clear the same
@@ -149,6 +161,7 @@ export async function fetchOrgRule(
     sourceQuote: row.source_quote,
     expiresAt: row.expires_at,
     lastEditedAt: row.last_edited_at,
+    lastEditedDay: row.last_edited_day ? dateColumnIso(row.last_edited_day) : null,
     sourceAttestationId: row.source_attestation_id,
     sourcePayerRuleId: row.source_payer_rule_id,
   };
@@ -211,10 +224,19 @@ export async function upsertOrgRule(
 ): Promise<{ rowId: string; skipped: boolean }> {
   const dbAttribute =
     ATTRIBUTE_DB_MAP[input.attribute as PayerRuleAttribute] ?? input.attribute;
+  // An attestation expires on a DAY. Written as a bare 'YYYY-MM-DD' into
+  // timestamptz it became midnight in the database session's zone, so the
+  // instant it stopped answering moved with the server. It is the start of
+  // that day where the practice is (0107), which is what fetchOrgRule
+  // compares the date of service against. An instant is stored as given.
+  const expiresDay =
+    typeof input.expiresAt === "string" && isCalendarDay(input.expiresAt) ? input.expiresAt : null;
   const expiresAt =
-    input.expiresAt instanceof Date
-      ? input.expiresAt.toISOString()
-      : (input.expiresAt ?? null);
+    expiresDay !== null
+      ? null
+      : input.expiresAt instanceof Date
+        ? input.expiresAt.toISOString()
+        : (input.expiresAt ?? null);
 
   return withOrgContext(input.orgId, async (tx) => {
     const rulebookId = await getOrCreateRulebookId(tx, input.orgId);
@@ -232,7 +254,10 @@ export async function upsertOrgRule(
         ${input.origin}, ${input.confidence},
         ${input.sourcePayerRuleId ?? null}::uuid, ${input.sourceQuote},
         ${input.sourceAttestationId ?? null}::uuid,
-        ${expiresAt}::timestamptz, ${input.byUserId ?? null}::uuid, now()
+        COALESCE(${expiresAt}::timestamptz,
+                 (${expiresDay}::date::timestamp AT TIME ZONE
+                    (SELECT o.timezone FROM org o WHERE o.id = ${input.orgId}::uuid))),
+        ${input.byUserId ?? null}::uuid, now()
       )
       ON CONFLICT (rulebook_id, payer_id, state, cpt_code, attribute)
       DO UPDATE SET

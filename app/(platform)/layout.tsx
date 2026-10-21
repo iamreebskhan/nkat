@@ -50,7 +50,8 @@ export default async function PlatformLayout({
         userEmail={session.email}
         orgName={orgName}
       />
-      <main className="flex-1 min-w-0 bg-[var(--color-canvas)]">
+      {/* pt-14 under md clears the fixed mobile nav bar the sidebar renders. */}
+      <main className="flex-1 min-w-0 bg-[var(--color-canvas)] pt-14 md:pt-0">
         {children}
       </main>
     </div>

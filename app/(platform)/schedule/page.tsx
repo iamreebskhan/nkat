@@ -22,9 +22,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { loadClinicianOptions } from "@/lib/features/schedule/clinician-options";
+import { visitTypeHistoryWarning } from "@/lib/features/visits/visit-pure";
 import {
+  NEW_PATIENT_LOOKBACK_YEARS,
   TELEHEALTH_MODALITIES,
-  VISIT_TYPES,
+  type VisitType,
+  type VisitTypeHint,
   type VisitView,
 } from "@/lib/features/visits/visit.types";
 
@@ -53,16 +57,39 @@ export default function SchedulePage() {
 
   const router = useRouter();
   const [preselectPatientId, setPreselectPatientId] = useState("");
+  /**
+   * The visit picked up for a tap-to-move.
+   *
+   * Rescheduling used to be HTML5 drag-and-drop only. HTML5 DnD does not fire
+   * on touch at all, so on the device this product is actually used on — the
+   * client, 20 Aug 2026 [12:30]: "most nurse practitioners actually see the
+   * patients with an iPad and touchscreen, so they just click through it" —
+   * the schedule board was read-only. Drag still works for a mouse; this is
+   * the path that works for a finger.
+   */
+  const [moving, setMoving] = useState<{ id: string; label: string; start: string | null } | null>(
+    null,
+  );
 
   // Read ?patientId= client-side (see note on the component above). Runs once
   // on mount; opens the composer pre-filled when arriving from a patient's
   // "Schedule visit" link.
+  // Deferred to a microtask so the setState lands after the effect body
+  // rather than synchronously inside it, which React flags as a cascading
+  // render (react-hooks/set-state-in-effect).
   useEffect(() => {
-    const pid = new URLSearchParams(window.location.search).get("patientId");
-    if (pid) {
-      setPreselectPatientId(pid);
-      setComposing(true);
-    }
+    let abandoned = false;
+    void Promise.resolve().then(() => {
+      if (abandoned) return;
+      const pid = new URLSearchParams(window.location.search).get("patientId");
+      if (pid) {
+        setPreselectPatientId(pid);
+        setComposing(true);
+      }
+    });
+    return () => {
+      abandoned = true;
+    };
   }, []);
 
   const days = useMemo(
@@ -97,7 +124,16 @@ export default function SchedulePage() {
   }
 
   useEffect(() => {
-    void reload();
+    let abandoned = false;
+    // Deferred for the same reason as the mount effect above: reload() sets
+    // state, and calling it straight from the effect body is a synchronous
+    // setState in React's eyes.
+    void Promise.resolve().then(() => {
+      if (!abandoned) void reload();
+    });
+    return () => {
+      abandoned = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekStart]);
 
@@ -106,12 +142,25 @@ export default function SchedulePage() {
     const orig = originalIso ? new Date(originalIso) : new Date();
     const target = new Date(`${dayIso}T00:00:00`);
     target.setHours(orig.getHours(), orig.getMinutes(), 0, 0);
-    const r = await fetch(`/api/visits/${visitId}/reschedule`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ scheduledStart: target.toISOString() }),
-    });
-    const d = await r.json();
+    const send = (confirmDoubleBook: boolean) =>
+      fetch(`/api/visits/${visitId}/reschedule`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          scheduledStart: target.toISOString(),
+          ...(confirmDoubleBook ? { confirmDoubleBook: true } : {}),
+        }),
+      });
+    let r = await send(false);
+    let d = await r.json();
+    // 409: the clinician's day is at capacity, or Google Calendar has
+    // something there — the checks booking makes. Offer to move it anyway,
+    // as the booking form offers to schedule anyway.
+    if (r.status === 409) {
+      if (!window.confirm(`${d.error ?? "That slot is taken."}\n\nMove it anyway?`)) return;
+      r = await send(true);
+      d = await r.json();
+    }
     if (!d.success) {
       alert(d.error ?? "Reschedule failed.");
       return;
@@ -124,7 +173,11 @@ export default function SchedulePage() {
     for (const v of visits) {
       const ts = v.scheduledStart ?? v.startTime;
       if (!ts) continue;
-      const day = ts.slice(0, 10);
+      // The day in the viewer's own zone, which is what the columns and the
+      // times on the chips are in, and what the printed route sheet files it
+      // under. ts.slice(0, 10) was the UTC day: a 3 pm Ohio visit seen from
+      // Karachi sat under Wednesday showing "0:00", which is Thursday there.
+      const day = isoDay(new Date(ts));
       const arr = map.get(day) ?? [];
       arr.push(v);
       map.set(day, arr);
@@ -144,7 +197,9 @@ export default function SchedulePage() {
                 a hydration mismatch and forcing React to regenerate the tree
                 on every load of this page. */}
             Week of {weekStart.toLocaleDateString("en-US", { month: "long", day: "numeric" })}.
-            Drag a visit to another day to reschedule.
+            {moving
+              ? " Now tap the day to move it to."
+              : " Tap a visit to move it, or drag it to another day."}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -194,6 +249,24 @@ export default function SchedulePage() {
       {loading && <p className="text-slate-500">Loading…</p>}
       {error && <p role="alert" className="text-red-700">{error}</p>}
 
+      {moving && (
+        <div
+          role="status"
+          className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-600/30"
+        >
+          <span>
+            Moving <strong>{moving.label}</strong> — tap the day to move it to.
+          </span>
+          <button
+            type="button"
+            onClick={() => setMoving(null)}
+            className="rounded-md bg-white px-3 py-1.5 text-xs font-medium ring-1 ring-inset ring-amber-600/40"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
         {days.map((day) => {
           const dayIso = isoDay(day);
@@ -201,7 +274,11 @@ export default function SchedulePage() {
             (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? ""),
           );
           const dayPto = timeOff.filter((t) => dayIso >= t.startDate && dayIso <= t.endDate);
-          const dayBusy = externalBusy.filter((b) => b.start.slice(0, 10) === dayIso);
+          // As the visits: the viewer's day, not the UTC one. An all-day event
+          // can arrive as a bare date, which is already the day.
+          const dayBusy = externalBusy.filter(
+            (b) => (/^\d{4}-\d{2}-\d{2}$/.test(b.start) ? b.start : isoDay(new Date(b.start))) === dayIso,
+          );
           const isToday = dayIso === isoDay(new Date());
           return (
             <div
@@ -212,7 +289,21 @@ export default function SchedulePage() {
                 const orig = e.dataTransfer.getData("text/visit-start");
                 if (id) void reschedule(id, dayIso, orig || null);
               }}
-              className={`rounded-md border min-h-48 flex flex-col ${isToday ? "border-emerald-400 bg-emerald-50/20" : "border-slate-200"}`}
+              // While a visit is picked up, the whole column is the drop
+              // target — a finger needs a target it can actually hit, not a
+              // 20px chip.
+              onClick={
+                moving
+                  ? () => {
+                      const m = moving;
+                      setMoving(null);
+                      void reschedule(m.id, dayIso, m.start);
+                    }
+                  : undefined
+              }
+              className={`rounded-md border min-h-48 flex flex-col ${
+                moving ? "cursor-pointer ring-2 ring-inset ring-amber-400/60 hover:bg-amber-50/40" : ""
+              } ${isToday ? "border-emerald-400 bg-emerald-50/20" : "border-slate-200"}`}
             >
               <div className="px-2 py-1.5 border-b border-slate-100 text-xs font-medium text-slate-600 flex items-center justify-between">
                 <span>{day.toLocaleDateString(undefined, { weekday: "short" })}</span>
@@ -240,14 +331,46 @@ export default function SchedulePage() {
                         v.totalMinutes ? `· ${v.totalMinutes} min` : "",
                         v.clinicianName ? `· ${v.clinicianName}` : "",
                       ].filter(Boolean).join(" ")}
-                      className={`rounded px-1.5 py-1 text-[11px] cursor-grab active:cursor-grabbing ring-1 ring-inset ${providerColor(v.clinicianUserId)}`}
+                      className={`visit-chip rounded px-1.5 py-1 text-[11px] cursor-grab active:cursor-grabbing ring-1 ring-inset ${
+                        moving?.id === v.id ? "ring-2 ring-amber-500" : ""
+                      } ${providerColor(v.clinicianUserId)}`}
                     >
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="tabular font-medium">{timeOf(v.scheduledStart ?? v.startTime)}</span>
-                        {v.isTelehealth && <span className="text-[9px]">ðŸ“¹</span>}
-                      </div>
-                      <div className="truncate">{v.patientName ?? v.visitType.replace(/_/g, " ")}</div>
-                      {v.patientCity && <div className="truncate text-[10px] opacity-70">{v.patientCity}</div>}
+                      {/*
+                        The move affordance is its own button rather than the
+                        whole chip, because the chip also holds a link and
+                        nesting a link inside a button is invalid. Picking up
+                        and putting down are the same gesture on a touch
+                        screen, so this toggles. stopPropagation keeps the tap
+                        off the day column, which is the drop target while a
+                        move is in flight.
+                      */}
+                      <button
+                        type="button"
+                        aria-pressed={moving?.id === v.id}
+                        aria-label={`Move ${v.patientName ?? "visit"}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMoving((cur) =>
+                            cur?.id === v.id
+                              ? null
+                              : {
+                                  id: v.id,
+                                  label: v.patientName ?? v.visitType.replace(/_/g, " "),
+                                  start: v.scheduledStart ?? null,
+                                },
+                          );
+                        }}
+                        className="w-full text-left"
+                      >
+                        <span className="flex items-center justify-between gap-1">
+                          <span className="tabular font-medium">{timeOf(v.scheduledStart ?? v.startTime)}</span>
+                          {v.isTelehealth && <span className="text-[9px]">📹</span>}
+                        </span>
+                        <span className="block truncate">{v.patientName ?? v.visitType.replace(/_/g, " ")}</span>
+                        {v.patientCity && (
+                          <span className="block truncate text-[10px] opacity-70">{v.patientCity}</span>
+                        )}
+                      </button>
                       <Link
                         href={`/visits/${v.id}/document`}
                         className="text-[10px] underline opacity-80"
@@ -314,14 +437,25 @@ function isoDay(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// The clinician list for both composers comes from loadClinicianOptions
+// (lib/features/schedule/clinician-options.ts): the roster for someone who can
+// see it, otherwise just themselves. See that file for why.
+
 function PtoComposer({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
   const [members, setMembers] = useState<MemberOption[]>([]);
   const [form, setForm] = useState({ clinicianUserId: "", startDate: "", endDate: "", reason: "" });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    fetch("/api/team/members").then((r) => r.json()).then((m) => {
-      if (m.success) setMembers(m.data?.rows ?? []);
+    // active=1, like the care-team pickers: offer only people the server will
+    // accept. createTimeOff now refuses a clinician who is not an active
+    // member of this org, so this keeps the picker and the rule in step —
+    // before it did, a removed member offered here was booked off work on a
+    // roster they were no longer on, and nobody was told.
+    void loadClinicianOptions().then((opts) => {
+      setMembers(opts);
+      // Someone who may only book their own leave has exactly one choice.
+      if (opts.length === 1) setForm((f) => ({ ...f, clinicianUserId: opts[0]!.userId }));
     });
   }, []);
   async function submit(e: React.FormEvent) {
@@ -392,43 +526,92 @@ function NewVisitComposer({
   const [members, setMembers] = useState<MemberOption[]>([]);
   // The org's own types, not the five built-in coding bands (client
   // walkthrough 02:30 — "agar koi visit type ho raha hai jo hum ne add karna hai").
-  const [visitTypes, setVisitTypes] = useState<{ slug: string; label: string }[]>([]);
+  // isTelehealth: the type forces telehealth (audit R22). codingBasis: the CPT
+  // band it bills as, which the history note below is judged against.
+  const [visitTypes, setVisitTypes] = useState<
+    { slug: string; label: string; codingBasis: VisitType; isTelehealth?: boolean }[]
+  >([]);
+  // No visit type is chosen for the scheduler. This started on
+  // "established_patient_home" and kept it whenever the org had that slug —
+  // every seeded org does — so from a chart's "Schedule visit" link, with the
+  // patient and the clinician's own name filled in, one click booked an
+  // established visit, and a first visit was coded on the established ladder.
   const [form, setForm] = useState({
     patientId: defaultPatientId,
     clinicianUserId: "",
-    visitType: "established_patient_home",
+    visitType: "",
     scheduledStart: defaultDateTimeLocal(),
     isTelehealth: false,
     telehealthModality: "audio_video" as (typeof TELEHEALTH_MODALITIES)[number],
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Pallio's own history for this patient before the time being booked, and
+   * the patient + time it was asked for — a hint for another patient or date
+   * is never shown against this one.
+   */
+  const [history, setHistory] = useState<{ key: string; hint: VisitTypeHint } | null>(null);
 
   useEffect(() => {
     void Promise.all([
       // 200 is the API's max limit — 500 was rejected with a 400, leaving the
       // patient dropdown empty and the composer unusable.
       fetch("/api/patients?limit=200").then((r) => r.json()),
-      fetch("/api/team/members").then((r) => r.json()),
+      // active=1: scheduleVisit refuses a clinician who is not an active
+      // member of this org, so the picker offers exactly who the server will
+      // take. Before either existed, a visit could be assigned to a member who
+      // was no longer active and then belonged to someone who could not open it.
+      // Falls back to the signed-in clinician alone when they cannot see the
+      // roster — see loadClinicianOptions.
+      loadClinicianOptions(),
       fetch("/api/settings/visit-types").then((r) => r.json()),
-    ]).then(([p, m, t]) => {
+    ]).then(([p, opts, t]) => {
       if (p.success) setPatients(p.data?.rows ?? []);
-      if (m.success) setMembers(m.data?.rows ?? []);
-      if (t.success) {
-        const types = t.data?.types ?? [];
-        setVisitTypes(types);
-        // Default to the org's first type — the previous hard-coded default
-        // may not even be one of theirs.
-        if (types.length > 0) {
-          setForm((f) =>
-            types.some((x: { slug: string }) => x.slug === f.visitType)
-              ? f
-              : { ...f, visitType: types[0].slug },
-          );
-        }
-      }
+      setMembers(opts);
+      if (opts.length === 1) setForm((f) => ({ ...f, clinicianUserId: opts[0]!.userId }));
+      // The types only. None is picked: which one is right depends on whether
+      // the practice has seen this patient, which is the scheduler's call.
+      if (t.success) setVisitTypes(t.data?.types ?? []);
     });
   }, []);
+
+  // What Pallio has on this patient before the time being booked. Debounced,
+  // because every answer is a read of the patient's history and is logged as
+  // PHI access; a refusal or a failure shows nothing rather than an error.
+  const historyKey = `${form.patientId}|${form.scheduledStart}`;
+  useEffect(() => {
+    const at = new Date(form.scheduledStart);
+    if (!form.patientId || Number.isNaN(at.getTime())) return;
+    let abandoned = false;
+    const timer = setTimeout(() => {
+      fetch(
+        `/api/patients/${form.patientId}/visit-type-hint?at=${encodeURIComponent(at.toISOString())}`,
+      )
+        .then((r) => r.json())
+        .then((d) => {
+          if (!abandoned && d?.success) setHistory({ key: historyKey, hint: d.data as VisitTypeHint });
+        })
+        .catch(() => {
+          /* no hint is a safe answer: nothing is chosen for them either way */
+        });
+    }, 300);
+    return () => {
+      abandoned = true;
+      clearTimeout(timer);
+    };
+  }, [form.patientId, form.scheduledStart, historyKey]);
+  const hint = history?.key === historyKey ? history.hint : null;
+  const chosenBasis = visitTypes.find((t) => t.slug === form.visitType)?.codingBasis;
+  const mismatch = chosenBasis ? visitTypeHistoryWarning(chosenBasis, hint) : null;
+
+  // A telehealth visit type forces the box on (audit R22); scheduleVisit does
+  // the same server-side. Derived rather than written into form, so picking
+  // an in-person type again restores whatever the clinician had chosen.
+  const typeForcesTelehealth = visitTypes.some(
+    (t) => t.slug === form.visitType && t.isTelehealth === true,
+  );
+  const telehealth = form.isTelehealth || typeForcesTelehealth;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -439,8 +622,8 @@ function NewVisitComposer({
       clinicianUserId: form.clinicianUserId,
       visitType: form.visitType,
       scheduledStart: new Date(form.scheduledStart).toISOString(),
-      isTelehealth: form.isTelehealth,
-      ...(form.isTelehealth ? { telehealthModality: form.telehealthModality } : {}),
+      isTelehealth: telehealth,
+      ...(telehealth ? { telehealthModality: form.telehealthModality } : {}),
     };
     const res = await fetch("/api/visits", {
       method: "POST",
@@ -485,7 +668,7 @@ function NewVisitComposer({
       <CardHeader>
         <CardTitle>New visit</CardTitle>
         <CardDescription>
-          Pick a patient + clinician + time. Toggle telehealth to add modality.
+          Pick a patient + clinician + visit type + time. Toggle telehealth to add modality.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -519,17 +702,29 @@ function NewVisitComposer({
             </Field>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Visit type" required>
-              <select
-                value={form.visitType}
-                onChange={(e) => setForm({ ...form, visitType: e.target.value })}
-                className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white"
-              >
-                {visitTypes.map((t) => (
-                  <option key={t.slug} value={t.slug}>{t.label}</option>
-                ))}
-              </select>
-            </Field>
+            <div>
+              <Field label="Visit type" required>
+                <select
+                  required
+                  value={form.visitType}
+                  onChange={(e) => setForm({ ...form, visitType: e.target.value })}
+                  className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white"
+                >
+                  <option value="" disabled>Choose a visit type…</option>
+                  {visitTypes.map((t) => (
+                    <option key={t.slug} value={t.slug}>{t.label}</option>
+                  ))}
+                </select>
+              </Field>
+              {/* Advisory only: Pallio cannot see visits from before the
+                  practice used it, so this never picks or blocks a type. */}
+              {hint && <p className="mt-1 text-xs text-slate-600">{historyLine(hint)}</p>}
+              {hint && mismatch && (
+                <p className="mt-1 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-900 ring-1 ring-inset ring-amber-600/30">
+                  {mismatchLine(mismatch, hint)}
+                </p>
+              )}
+            </div>
             <Field label="Scheduled start" required>
               <input
                 required
@@ -544,12 +739,16 @@ function NewVisitComposer({
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input
                 type="checkbox"
-                checked={form.isTelehealth}
+                checked={telehealth}
+                disabled={typeForcesTelehealth}
                 onChange={(e) => setForm({ ...form, isTelehealth: e.target.checked })}
               />
               <span>Telehealth</span>
+              {typeForcesTelehealth && (
+                <span className="text-xs text-slate-500">Set by the visit type</span>
+              )}
             </label>
-            {form.isTelehealth && (
+            {telehealth && (
               <select
                 value={form.telehealthModality}
                 onChange={(e) => setForm({ ...form, telehealthModality: e.target.value as typeof form.telehealthModality })}
@@ -572,7 +771,7 @@ function NewVisitComposer({
             <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
             <Button
               type="submit"
-              disabled={submitting || !form.patientId || !form.clinicianUserId}
+              disabled={submitting || !form.patientId || !form.clinicianUserId || !form.visitType}
             >
               {submitting ? "Scheduling…" : "Schedule visit"}
             </Button>
@@ -611,6 +810,34 @@ function defaultDateTimeLocal(): string {
   d.setHours(d.getHours() + 1);
   const pad = (n: number) => n.toString().padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** The date of an earlier visit, as the history lines name it. */
+function hintDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+/**
+ * What Pallio's history says, in one line under the Visit type select. The
+ * no-history line names outside records on purpose: a patient the practice saw
+ * in its previous EHR is established, and Pallio cannot see that.
+ */
+function historyLine(h: VisitTypeHint): string {
+  if (!h.lastVisitAt) {
+    return `No visit for this patient in Pallio in the ${NEW_PATIENT_LOOKBACK_YEARS} years before this date — a New patient type fits. If your practice saw them outside Pallio (e.g. the previous EHR) in that time, choose an Established type.`;
+  }
+  if (h.lastVisitStatus === "scheduled") {
+    return `Booked in this practice for ${hintDate(h.lastVisitAt)} — if that visit takes place, this one is Established.`;
+  }
+  return `Seen in this practice on ${hintDate(h.lastVisitAt)} — an Established type fits.`;
+}
+
+/** The amber note when the chosen type's band and Pallio's history disagree. */
+function mismatchLine(kind: "looks_new" | "looks_established", h: VisitTypeHint): string {
+  if (kind === "looks_new" || !h.lastVisitAt) {
+    return `Pallio has no visit for this patient in the ${NEW_PATIENT_LOOKBACK_YEARS} years before this date. If your practice has not seen them in that time either, this is a New patient visit.`;
+  }
+  return `${h.lastVisitStatus === "scheduled" ? "Booked for" : "Seen on"} ${hintDate(h.lastVisitAt)}: payers treat a new-patient code within ${NEW_PATIENT_LOOKBACK_YEARS} years of a visit by this practice as established.`;
 }
 
 function timeOf(iso: string | null): string {

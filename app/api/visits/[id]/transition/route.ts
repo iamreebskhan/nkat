@@ -13,11 +13,7 @@ import { z } from "zod";
 import { ok, parseJson, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { transitionVisit } from "@/lib/features/visits/visit.service";
-import {
-  buildDraftFromVisit,
-  persistDraft,
-} from "@/lib/features/superbills/superbill.service";
-import { reportError } from "@/lib/observability/sentry";
+import { autoDraftSuperbill } from "@/lib/features/superbills/auto-draft";
 import { VISIT_STATUSES } from "@/lib/features/visits/visit.types";
 
 interface Params {
@@ -58,24 +54,26 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
     // withOrgContext, and buildDraftFromVisit opens another. persistDraft is
     // idempotent on visit_id, so a later Create Bill opens this same row.
     //
-    // Best-effort: a visit with no codes yet still signs successfully. Losing
-    // the sign-off because billing prep failed would be the worse outcome.
-    let billId: string | null = null;
+    // Best-effort: the visit signs even if the draft fails, because losing an
+    // attested sign-off to a billing-prep failure would be the worse outcome.
+    // But the outcome is RETURNED now — autoDraftError carries a reason the
+    // clinician can read — rather than going to error tracking alone, where
+    // it left the screen saying "Submitted" over a visit with no bill.
+    let superbillId: string | null = null;
+    let autoDraftError: string | null = null;
+    // A "Not billed" visit type never gets here: transitionVisit refuses
+    // pending_billing for it (audit R18), so no draft is attempted.
     if (body.to === "pending_billing") {
-      try {
-        const draft = await buildDraftFromVisit({ orgId: session.orgId, visitId: id });
-        const saved = await persistDraft({
-          orgId: session.orgId,
-          draft,
-          actorUserId: session.userId,
-        });
-        billId = saved.id;
-      } catch (err) {
-        reportError(err, { source: "transition:autoDraftSuperbill" });
-      }
+      const draft = await autoDraftSuperbill({
+        orgId: session.orgId,
+        visitId: id,
+        actorUserId: session.userId,
+      });
+      superbillId = draft.superbillId;
+      autoDraftError = draft.reason;
     }
 
-    return ok({ ...r, superbillId: billId });
+    return ok({ ...r, superbillId, autoDraftError });
   } catch (err) {
     return handleServiceError(err);
   }

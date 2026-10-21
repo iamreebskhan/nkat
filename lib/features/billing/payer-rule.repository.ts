@@ -12,6 +12,8 @@
  */
 import { prisma } from "@/lib/db";
 
+import type { PayerType } from "./payer-types";
+
 export type PayerRuleAttribute =
   | "covered"
   | "prior_auth"
@@ -54,19 +56,13 @@ export const ATTRIBUTE_DB_MAP: Record<PayerRuleAttribute, string> = {
 
 export type CoverageStatus = "covered" | "not_covered" | "varies" | "unknown";
 
-/** Mirrors the payer.payer_type CHECK in db/migrations/0003_payers_and_rules.sql. */
-export type PayerType =
-  | "medicare_mac"
-  | "medicare_advantage_org"
-  | "medicaid_state"
-  | "medicaid_mco"
-  | "commercial"
-  | "tpa"
-  | "workers_comp"
-  | "auto_no_fault"
-  | "tribal"
-  | "self_insured"
-  | "other";
+/**
+ * Mirrors the payer.payer_type CHECK in db/migrations/0003_payers_and_rules.sql.
+ * The values now live in ./payer-types as a list (audit R17), free of this
+ * module's DB import so the client roster page can use them; re-exported here
+ * for every existing importer.
+ */
+export { PAYER_TYPES, type PayerType } from "./payer-types";
 
 /**
  * Which `payer_rule.product_line` a payer's rules are filed under, given
@@ -122,8 +118,14 @@ export interface FetchRuleInput {
   productLine: string;
   code: string;
   attribute: PayerRuleAttribute;
-  /** Date of service. Rules effective on or before this date win. */
-  dos: Date;
+  /**
+   * Date of service, 'YYYY-MM-DD'. Rules effective on or before this day win.
+   * A day, compared with the rule's DATE columns as a date: this was a JS
+   * Date, which binds as a timestamptz, and comparing a DATE with one reads
+   * the DATE as midnight in the database session's zone (0107). West of UTC
+   * a rule effective on the date of service did not answer for it.
+   */
+  dos: string;
 }
 
 export interface PayerRuleHit {
@@ -213,8 +215,8 @@ export async function fetchPayerRule(
     WHERE pr.state        = ${input.state}
       AND pr.code         = ${input.code}
       AND pr.attribute    = ${dbAttribute}
-      AND pr.effective_date <= ${input.dos}
-      AND (pr.expiration_date IS NULL OR pr.expiration_date > ${input.dos})
+      AND pr.effective_date <= ${input.dos}::date
+      AND (pr.expiration_date IS NULL OR pr.expiration_date > ${input.dos}::date)
       -- One payer, one rule. There used to be a second branch here on
       -- "pr.payer_id IS NULL", described as a statewide-Medicaid fallback
       -- where one ingestion of a state policy answered for every MCO.
@@ -273,7 +275,8 @@ export async function fetchBenchmarkRules(input: {
   state: string;
   code: string;
   attribute: PayerRuleAttribute;
-  dos: Date;
+  /** Date of service, 'YYYY-MM-DD', as FetchRuleInput's. */
+  dos: string;
   excludePayerId: string;
 }): Promise<BenchmarkHit[]> {
   const dbAttribute = ATTRIBUTE_DB_MAP[input.attribute] ?? input.attribute;
@@ -292,8 +295,8 @@ export async function fetchBenchmarkRules(input: {
       AND pr.code      = ${input.code}
       AND pr.attribute = ${dbAttribute}
       AND pr.payer_id <> ${input.excludePayerId}::uuid
-      AND pr.effective_date <= ${input.dos}
-      AND (pr.expiration_date IS NULL OR pr.expiration_date > ${input.dos})
+      AND pr.effective_date <= ${input.dos}::date
+      AND (pr.expiration_date IS NULL OR pr.expiration_date > ${input.dos}::date)
       AND pr.coverage_status <> 'unknown'
     ORDER BY
       -- Medicare is the reference every payer is compared against.
@@ -329,12 +332,26 @@ export async function getPayerType(payerId: string): Promise<PayerType | null> {
   return rows[0]?.payer_type ?? null;
 }
 
-/** List all configured payers — used to populate the rule-lookup dropdown. */
+/**
+ * The payers an org can pick. Every picker reads this: intake, rule lookup,
+ * denials, attestations, cheat sheets, onboarding.
+ *
+ * ACTIVE ROWS ONLY (audit R17). This returned every row and ignored
+ * payer.active, so a retired plan could never leave the pickers. A patient
+ * already on a withdrawn payer still shows its name, because getPatient joins
+ * the payer itself.
+ */
 export interface PayerOption {
   id: string;
   name: string;
   type: PayerType;
   states: string[];
+  /**
+   * States holding at least one live payer_rule for this payer (audit R17), so
+   * intake can say "listed for NC, but no rules there": Aetna is listed for
+   * OH/NC/SC and has live rules only in OH.
+   */
+  ruleStates: string[];
 }
 
 export async function listPayers(): Promise<PayerOption[]> {
@@ -343,17 +360,26 @@ export async function listPayers(): Promise<PayerOption[]> {
       id: string;
       name: string;
       payer_type: PayerType;
-      states_served: string[];
+      states_served: string[] | null;
+      rule_states: string[] | null;
     }[]
   >`
-    SELECT id, name, payer_type, states_served
-    FROM payer
-    ORDER BY name ASC
+    SELECT p.id, p.name, p.payer_type, p.states_served,
+           ARRAY(
+             SELECT DISTINCT pr.state::text
+               FROM payer_rule pr
+              WHERE pr.payer_id = p.id AND pr.expiration_date IS NULL
+              ORDER BY 1
+           ) AS rule_states
+      FROM payer p
+     WHERE p.active
+     ORDER BY p.name ASC
   `;
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
     type: r.payer_type,
     states: r.states_served ?? [],
+    ruleStates: r.rule_states ?? [],
   }));
 }

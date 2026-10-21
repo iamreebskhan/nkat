@@ -105,13 +105,13 @@ export function RuleSidebar({ payerId, state, cptCodes, attribute = "covered" }:
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!payerId || !state || cptCodes.length === 0) {
-      setResults({});
-      return;
-    }
     let abandoned = false;
-    setLoading(true);
     (async () => {
+      if (!payerId || !state || cptCodes.length === 0) {
+        setResults({});
+        return;
+      }
+      setLoading(true);
       const next: Record<string, RuleResult | null> = {};
       // Sequential not parallel — keeps server load in check + each
       // request potentially fires Anthropic. The clinician sees results

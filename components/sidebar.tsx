@@ -12,6 +12,7 @@
  */
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -82,16 +83,60 @@ type Props = {
 
 export function Sidebar({ items, badges = {}, orgName, userEmail }: Props) {
   const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+
+  // The drawer closes on the tap that navigates (see the nav links below)
+  // rather than in an effect watching pathname — same result, no cascading
+  // render, and it also closes when the tapped link is the current page.
 
   return (
-    <aside
-      className={cn(
-        "flex flex-col w-64 shrink-0 border-r border-slate-800",
-        "bg-[var(--color-sidebar-bg)] text-[var(--color-sidebar-fg)]",
-        "h-screen sticky top-0",
+    <>
+      {/*
+        Below md the sidebar becomes a drawer and this bar carries the toggle.
+
+        A fixed 256px `w-64` left 119px of usable width on a 375px screen —
+        measured, not estimated, and flagged in globals.css as needing a design
+        change rather than a stylesheet one. That matters because the client
+        told us what the device is, 20 Aug 2026 [12:30]: "most nurse
+        practitioners actually see the patients with an iPad and touchscreen."
+      */}
+      <div className="md:hidden fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-slate-800 bg-[var(--color-sidebar-bg)] px-3 text-[var(--color-sidebar-fg)]">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls="primary-nav"
+          aria-label={open ? "Close navigation" : "Open navigation"}
+          className="grid h-11 w-11 place-items-center rounded-md text-2xl leading-none text-white hover:bg-white/10"
+        >
+          {open ? "×" : "☰"}
+        </button>
+        <span className="font-display text-lg tracking-tight text-white">Pallio</span>
+      </div>
+
+      {open && (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => setOpen(false)}
+          className="md:hidden fixed inset-0 z-40 bg-black/50"
+        />
       )}
-      aria-label="Primary navigation"
-    >
+
+      <aside
+        id="primary-nav"
+        className={cn(
+          "flex flex-col w-64 shrink-0 border-r border-slate-800",
+          "bg-[var(--color-sidebar-bg)] text-[var(--color-sidebar-fg)]",
+          "h-screen sticky top-0",
+          // Off-canvas drawer under md; unchanged sticky column at md and up.
+          "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50",
+          "max-md:transition-transform max-md:duration-200 motion-reduce:max-md:transition-none",
+          open ? "max-md:translate-x-0" : "max-md:-translate-x-full",
+        )}
+        aria-label="Primary navigation"
+        aria-hidden={undefined}
+      >
       {/* Brand */}
       <div className="px-5 py-5 border-b border-slate-800">
         <div className="font-display text-xl tracking-tight text-white">
@@ -117,6 +162,7 @@ export function Sidebar({ items, badges = {}, orgName, userEmail }: Props) {
                 <Link
                   href={item.href}
                   aria-current={active ? "page" : undefined}
+                  onClick={() => setOpen(false)}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2 rounded-md text-sm",
                     "transition-colors",
@@ -173,6 +219,7 @@ export function Sidebar({ items, badges = {}, orgName, userEmail }: Props) {
         </div>
       )}
     </aside>
+    </>
   );
 }
 

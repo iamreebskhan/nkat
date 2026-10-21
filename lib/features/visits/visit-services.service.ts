@@ -139,13 +139,17 @@ export async function listServiceCatalog(args: {
   visitType?: string;
 }): Promise<VisitServiceView[]> {
   return withOrgContext(args.orgId, async (tx) => {
+    // The org is named as well as enforced by RLS, for the catalog and for
+    // the provided rows counted against it. Every selected column is grouped;
+    // usage_count stays bigint.
     const rows = await tx.$queryRaw<CatalogRow[]>`
       SELECT s.id, s.name, s.description, s.category, s.cpt_hint, s.active,
              s.sort_order, s.visit_types,
-             (SELECT COUNT(*)::bigint FROM visit_service_provided p WHERE p.service_id = s.id)
-               AS usage_count
+             COUNT(p.visit_id)::bigint AS usage_count
       FROM visit_service s
-      WHERE (${args.includeInactive ?? false}::boolean OR s.active)
+      LEFT JOIN visit_service_provided p ON p.service_id = s.id AND p.org_id = s.org_id
+      WHERE s.org_id = ${args.orgId}::uuid
+        AND (${args.includeInactive ?? false}::boolean OR s.active)
         -- Empty visit_types = applies to every type, which is how everything
         -- seeded by 0060 behaves. Client walkthrough 02:34: different visit
         -- types carry different services.
@@ -154,6 +158,8 @@ export async function listServiceCatalog(args: {
           OR cardinality(s.visit_types) = 0
           OR ${args.visitType ?? null}::text = ANY(s.visit_types)
         )
+      GROUP BY s.id, s.name, s.description, s.category, s.cpt_hint, s.active,
+               s.sort_order, s.visit_types
       ORDER BY s.sort_order, s.name
     `;
     return rows.map(toView);
@@ -169,9 +175,10 @@ export async function createService(args: {
   const p = args.payload;
   return withOrgContext(args.orgId, async (tx) => {
     // The unique index is case-insensitive; check first so the user gets a
-    // clear 422 instead of a raw constraint violation.
+    // clear 422 instead of a raw constraint violation. This org's catalog
+    // only, named as well as enforced by RLS: another org's name is no clash.
     const dupe = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM visit_service WHERE lower(name) = lower(${p.name}) LIMIT 1
+      SELECT id FROM visit_service WHERE lower(name) = lower(${p.name}) AND org_id = ${args.orgId}::uuid LIMIT 1
     `;
     if (dupe[0]) throw new ValidationError(`"${p.name}" is already in the catalog.`);
 
@@ -183,8 +190,8 @@ export async function createService(args: {
         ${args.orgId}::uuid, ${p.name}, ${p.description ?? null},
         ${p.category ?? "clinical"}, ${p.cptHint ?? null},
         ${p.visitTypes ?? []}::text[],
-        -- New entries land at the end of the picker.
-        COALESCE((SELECT MAX(sort_order) + 10 FROM visit_service), 100)
+        -- New entries land at the end of this org's picker.
+        COALESCE((SELECT MAX(sort_order) + 10 FROM visit_service WHERE org_id = ${args.orgId}::uuid), 100)
       )
       RETURNING id
     `;
@@ -214,10 +221,13 @@ export async function updateService(args: {
       const dupe = await tx.$queryRaw<{ id: string }[]>`
         SELECT id FROM visit_service
          WHERE lower(name) = lower(${p.name}) AND id <> ${args.id}::uuid
+           AND org_id = ${args.orgId}::uuid
          LIMIT 1
       `;
       if (dupe[0]) throw new ValidationError(`"${p.name}" is already in the catalog.`);
     }
+    // Another org's service is not found, in the same words as a missing one:
+    // the org is named as well as enforced by RLS.
     const n = await tx.$executeRaw`
       UPDATE visit_service SET
         name = COALESCE(${p.name ?? null}, name),
@@ -230,6 +240,7 @@ export async function updateService(args: {
         active = COALESCE(${p.active ?? null}::boolean, active),
         updated_at = now()
       WHERE id = ${args.id}::uuid
+        AND org_id = ${args.orgId}::uuid
     `;
     if (n === 0) throw new NotFoundError("Service not found.");
     // Deactivating a service removes it from the documentation picker for
@@ -270,8 +281,12 @@ export async function listVisitServices(args: {
     >`
       SELECT p.service_id, s.name, s.category, s.cpt_hint, p.minutes, p.note
       FROM visit_service_provided p
-      JOIN visit_service s ON s.id = p.service_id
+      -- This org's rows on this org's services, named as well as enforced by
+      -- RLS: a row written against another org's service id does not show
+      -- that org's catalog entry.
+      JOIN visit_service s ON s.id = p.service_id AND s.org_id = p.org_id
       WHERE p.visit_id = ${args.visitId}::uuid
+        AND p.org_id = ${args.orgId}::uuid
       ORDER BY s.sort_order, s.name
     `;
     return rows.map((r) => ({
@@ -297,10 +312,21 @@ export async function setVisitServices(args: {
 }): Promise<{ count: number }> {
   const items = args.payload.services;
   return withOrgContext(args.orgId, async (tx) => {
-    const visit = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM visit WHERE id = ${args.visitId}::uuid LIMIT 1
+    // The org is named as well as enforced by RLS, here and in the catalog
+    // check and DELETE below, so another org's visit and services are refused.
+    const visit = await tx.$queryRaw<{ id: string; status: string }[]>`
+      SELECT id, status FROM visit WHERE id = ${args.visitId}::uuid AND org_id = ${args.orgId}::uuid LIMIT 1
     `;
     if (!visit[0]) throw new NotFoundError("Visit not found.");
+    // What was provided on an attested visit is part of what was attested
+    // (audit R15). This whole-set replace used to run on a signed, billed
+    // visit with no check and no trace. Corrections go in an addendum.
+    // Same statuses as visit.service's LOCKED_AFTER_SIGNING.
+    if (["documented", "pending_billing", "billed"].includes(visit[0].status)) {
+      throw new ValidationError(
+        "This visit is signed — services recorded on an attested visit cannot be changed. Add an addendum instead.",
+      );
+    }
 
     if (items.length > 0) {
       // Reject ids from outside this org's catalog (or already deactivated)
@@ -309,6 +335,7 @@ export async function setVisitServices(args: {
       const known = await tx.$queryRaw<{ id: string }[]>`
         SELECT id FROM visit_service
          WHERE id = ANY(${ids}::uuid[])
+           AND org_id = ${args.orgId}::uuid
            AND (
              active
              -- A service deactivated after it was already recorded on this
@@ -328,7 +355,7 @@ export async function setVisitServices(args: {
     }
 
     await tx.$executeRaw`
-      DELETE FROM visit_service_provided WHERE visit_id = ${args.visitId}::uuid
+      DELETE FROM visit_service_provided WHERE visit_id = ${args.visitId}::uuid AND org_id = ${args.orgId}::uuid
     `;
     for (const i of items) {
       await tx.$executeRaw`

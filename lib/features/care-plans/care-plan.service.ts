@@ -49,9 +49,11 @@ export async function upsertCarePlan(
   return withOrgContext(args.orgId, async (tx) => {
     // Verify the patient exists FOR THIS TENANT first — RLS hides
     // cross-tenant patients, so this guards against creating an
-    // orphan/cross-tenant care plan row.
+    // orphan/cross-tenant care plan row. Named by org as well: on a
+    // connection that bypasses RLS the id alone found another org's patient,
+    // and the upsert below (one plan per patient) then wrote onto their plan.
     const patientExists = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM patient WHERE id = ${args.patientId}::uuid LIMIT 1
+      SELECT id FROM patient WHERE id = ${args.patientId}::uuid AND org_id = ${args.orgId}::uuid LIMIT 1
     `;
     if (patientExists.length === 0) throw new NotFoundError("Patient not found.");
 
@@ -132,6 +134,7 @@ export async function getCarePlan(args: {
              last_updated_visit_id, created_at, updated_at
       FROM care_plan
       WHERE patient_id = ${args.patientId}::uuid
+        AND org_id = ${args.orgId}::uuid
       LIMIT 1
     `;
     const r = rows[0];
@@ -175,8 +178,9 @@ export async function listCarePlanVersions(args: {
     >`
       SELECT v.version, v.document, v.snapshot_visit_id, v.created_at
       FROM care_plan_version v
-      JOIN care_plan cp ON cp.id = v.care_plan_id
+      JOIN care_plan cp ON cp.id = v.care_plan_id AND cp.org_id = v.org_id
       WHERE cp.patient_id = ${args.patientId}::uuid
+        AND cp.org_id = ${args.orgId}::uuid
       ORDER BY v.version DESC
       LIMIT ${limit}
     `;

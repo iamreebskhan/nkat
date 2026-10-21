@@ -18,6 +18,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { CodeDescriptor } from "@/components/billing/code-descriptor";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -30,6 +31,13 @@ import {
   CoverageBadge,
   type CoverageStatus,
 } from "@/components/ui/coverage-badge";
+import { InfoTip } from "@/components/ui/info-tip";
+import {
+  confidenceDisplay,
+  isPlaceholderRow,
+  summarizeConfidence,
+  type ConfidenceTone,
+} from "@/lib/features/rulebook/rulebook-pure";
 import type {
   RulebookRowView,
   RulebookView,
@@ -105,15 +113,20 @@ export default function RulebookPage() {
   }
 
   useEffect(() => {
-    load();
-    // Analysts (internal staff) keep one-click access to the
-    // attestation queue now that /payers redirects here.
-    fetch("/api/auth/me")
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.success) setCanAttest(d.data.permissions?.includes("knowledge.attest") ?? false);
-      })
-      .catch(() => {});
+    // Started from a timer, as on the audit page, so no setState is reachable
+    // synchronously from the effect body (load() sets state after its fetch).
+    const t = setTimeout(() => {
+      load();
+      // Analysts (internal staff) keep one-click access to the
+      // attestation queue now that /payers redirects here.
+      fetch("/api/auth/me")
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.success) setCanAttest(d.data.permissions?.includes("knowledge.attest") ?? false);
+        })
+        .catch(() => {});
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   // Honor the onboarding wizard's choice: ?init=generate auto-generates,
@@ -121,13 +134,17 @@ export default function RulebookPage() {
   // "upload" users landed with no pointer to the uploader).
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("init") === "generate") {
-      void generate();
-    } else if (params.get("init") === "upload") {
-      document.getElementById("path-b-upload")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-
+    // Also from a timer: generate() sets state before its first await, and
+    // same-delay timers run in order, so it still starts after load() above.
+    const t = setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("init") === "generate") {
+        void generate();
+      } else if (params.get("init") === "upload") {
+        document.getElementById("path-b-upload")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   async function generate() {
@@ -313,7 +330,22 @@ export default function RulebookPage() {
                       <th className="text-left font-semibold px-4 py-2">Description</th>
                       <th className="text-left font-semibold px-4 py-2">Coverage</th>
                       <th className="text-left font-semibold px-4 py-2">Rules</th>
-                      <th className="text-left font-semibold px-4 py-2">Confidence</th>
+                      <th className="text-left font-semibold px-4 py-2">
+                        <span className="inline-flex items-center gap-1">
+                          Confidence
+                          <InfoTip label="How to read confidence">
+                            <span className="normal-case tracking-normal font-normal">
+                              How strongly the rule&rsquo;s source supports it. Published CMS and
+                              payer documents: 60–95%, by document type. Analyst payer calls: 60%. AI drafts: 40%,
+                              pending review. Machine-written rules under 50% never answer a
+                              billing lookup; Pallio&rsquo;s published library answers instead. The
+                              headline is the code&rsquo;s weakest rule on file. &ldquo;No rule on
+                              file&rdquo; means Pallio holds no rule for this payer, state and code
+                              yet: flag it for attestation.
+                            </span>
+                          </InfoTip>
+                        </span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -437,8 +469,10 @@ function CptRows(props: {
   const primaryStatus =
     (primary && (edits[primary.id]?.coverageStatus ?? primary.coverageStatus)) ??
     "unknown";
-  // Confidence shown is the max across attrs (best evidence we have for this CPT).
-  const maxConfidence = Math.max(...cpt.attrs.map((a) => a.confidence ?? 0));
+  // The WEAKEST rule on file, and how many attributes have none (audit R21).
+  // This printed the maximum, which hid the placeholders entirely.
+  const summary = summarizeConfidence(cpt.attrs);
+  const weakest = summary.weakest === null ? null : cpt.attrs[summary.weakest];
 
   return (
     <>
@@ -454,19 +488,15 @@ function CptRows(props: {
         </td>
         <td className="px-4 py-2 font-mono tabular text-xs text-slate-900">{cpt.cptCode}</td>
         <td className="px-4 py-2 text-slate-700">
-          {/* The service bakes "[AMA license required]" into this column for
-              CPT codes when the org has no AMA licence, so the table showed a
-              raw developer token next to real HCPCS descriptions. Say what it
-              actually means. Client walkthrough [04:44]. */}
-          {cpt.cptDescription === "[AMA license required]" ? (
-            <span
-              className="text-slate-400 italic"
-              title="CPT descriptors are licensed by the AMA. Add your licence under Settings → Billing to show them."
-            >
-              Descriptor licensed by the AMA
-            </span>
+          {/* The service swaps CPT text for the AMA placeholder on an
+              unlicensed deployment. CodeDescriptor says what that means, and
+              no longer points at a Settings → Billing licence control that
+              never existed: the licence is the deployment's, not the org's
+              (audit R21). Client walkthrough [04:44]. */}
+          {cpt.cptDescription ? (
+            <CodeDescriptor text={cpt.cptDescription} />
           ) : (
-            cpt.cptDescription ?? <span className="text-slate-400 italic">no descriptor</span>
+            <span className="text-slate-400 italic">no descriptor</span>
           )}
         </td>
         <td className="px-4 py-2">
@@ -476,7 +506,10 @@ function CptRows(props: {
           {cpt.attrs.length} attribute{cpt.attrs.length === 1 ? "" : "s"}
         </td>
         <td className="px-4 py-2 text-xs tabular text-slate-600">
-          {(maxConfidence * 100).toFixed(0)}%
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            <span className={CONFIDENCE_TONE[summary.tone]}>{summary.label}</span>
+            {weakest && <SourceKindBadge kind={weakest.sourceKind} />}
+          </span>
         </td>
       </tr>
 
@@ -524,13 +557,15 @@ function CptRows(props: {
                           <option value="unknown">Unknown</option>
                         </select>
                         <CoverageBadge status={status} size="sm" />
-                        <span className="text-xs tabular text-slate-500 ml-1">
-                          {(row.confidence * 100).toFixed(0)}%
+                        <span
+                          className={`text-xs tabular ml-1 ${CONFIDENCE_TONE[confidenceDisplay(row).tone]}`}
+                        >
+                          {confidenceDisplay(row).label}
                         </span>
                         {edit ? (
                           <span className="text-xs text-slate-500">· edited</span>
                         ) : (
-                          <SourceKindBadge kind={row.sourceKind} />
+                          !isPlaceholderRow(row) && <SourceKindBadge kind={row.sourceKind} />
                         )}
                       </div>
                     </div>
@@ -863,12 +898,12 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
  */
 function SourceKindBadge({ kind }: { kind: RulebookRowView["sourceKind"] }) {
   const meta: Record<RulebookRowView["sourceKind"], { label: string; cls: string; title: string }> = {
-    crawler: { label: "official doc", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200", title: "Extracted from a CMS / payer public policy URL (high confidence)" },
+    crawler: { label: "official doc", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200", title: "Extracted from a published CMS or payer policy document" },
     analyst: { label: "analyst", cls: "bg-amber-50 text-amber-800 ring-amber-200", title: "Confirmed via analyst payer call (medium confidence)" },
     ai: { label: "AI · review", cls: "bg-sky-50 text-sky-700 ring-sky-200", title: "AI-synthesized from a related document — pending analyst review" },
     org: { label: "your org", cls: "bg-indigo-50 text-indigo-700 ring-indigo-200", title: "Entered or uploaded by your organization" },
-    manual: { label: "analyst (manual)", cls: "bg-amber-50 text-amber-700 ring-amber-200", title: "Manually entered by an analyst" },
-    unknown: { label: "unsourced", cls: "bg-slate-100 text-slate-600 ring-slate-200", title: "No linked source — likely a placeholder; click to attest or edit" },
+    manual: { label: "manual entry", cls: "bg-amber-50 text-amber-700 ring-amber-200", title: "Entered without a linked document" },
+    unknown: { label: "no linked source", cls: "bg-slate-100 text-slate-600 ring-slate-200", title: "No payer rule is linked to this row; flag it for attestation or edit it" },
   };
   const m = meta[kind];
   return (
@@ -880,3 +915,12 @@ function SourceKindBadge({ kind }: { kind: RulebookRowView["sourceKind"] }) {
     </span>
   );
 }
+
+/** How each confidence reading is set, so "no rule on file" never reads as a score. */
+const CONFIDENCE_TONE: Record<ConfidenceTone, string> = {
+  strong: "text-slate-700",
+  weak: "text-amber-700",
+  expired: "text-red-700",
+  org: "text-indigo-700",
+  none: "text-slate-400 italic",
+};

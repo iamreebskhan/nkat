@@ -5,6 +5,7 @@ import { z } from "zod";
 import { ok, parseJson, parseSearchParams, handleServiceError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import {
+  attestationToday,
   createAttestation,
   listAttestations,
   sweepExpired,
@@ -30,7 +31,10 @@ export async function GET(req: NextRequest): Promise<Response> {
   // stayed "active" forever (the documented daily cron was never built).
   await sweepExpired({ orgId: session.orgId }).catch(() => undefined);
   const rows = await listAttestations({ orgId: session.orgId, ...params });
-  return ok({ rows, total: rows.length });
+  // The practice's day, which "due" and "overdue" are counted from. The page
+  // used the browser's clock in UTC, a day ahead of Ohio every evening.
+  const today = await attestationToday({ orgId: session.orgId });
+  return ok({ rows, total: rows.length, today });
 }
 
 export async function POST(req: NextRequest): Promise<Response> {

@@ -86,7 +86,12 @@ export default function IngestionSourcesPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { void load(); }, []);
+  // From a timer, so load()'s setLoading/setErr don't run synchronously in the
+  // effect body and cascade a second render.
+  useEffect(() => {
+    const t = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(t);
+  }, []);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();

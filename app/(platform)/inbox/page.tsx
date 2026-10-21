@@ -34,6 +34,18 @@ const KIND_COLORS: Record<InboxItem["kind"], string> = {
   attestation_expiring: "bg-orange-50 text-orange-800 ring-orange-600/30",
 };
 
+/**
+ * "YYYY-MM-DD HH:MM" in the viewer's own time zone. The API sends UTC ISO
+ * strings, and slicing one printed UTC: an 08:27 event in UTC+5 read 03:27.
+ * Items load after mount, so the server render never formats a time.
+ */
+function localStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 export default function InboxPage() {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,7 +70,7 @@ export default function InboxPage() {
       <header className="mb-6">
         <h1 className="font-display text-3xl tracking-tight">Inbox</h1>
         <p className="text-slate-600 mt-1">
-          Visits to document, attestations you've claimed, denials awaiting decision.
+          Visits to document, attestations you&rsquo;ve claimed, denials awaiting decision.
         </p>
       </header>
 
@@ -97,8 +109,8 @@ export default function InboxPage() {
                         <p className="text-xs text-slate-500 truncate">{it.subtitle}</p>
                       </div>
                     </div>
-                    <time className="text-xs text-slate-500 tabular shrink-0">
-                      {it.occurredAt.replace("T", " ").slice(0, 16)}
+                    <time dateTime={it.occurredAt} className="text-xs text-slate-500 tabular shrink-0">
+                      {localStamp(it.occurredAt)}
                     </time>
                   </Link>
                 </li>

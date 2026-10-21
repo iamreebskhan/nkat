@@ -16,6 +16,8 @@ export interface DenialRowLike {
   deniedAt: Date | string;
   /** The claim this denial is against — used to dedupe re-denials of the same claim. */
   superbillId: string | null;
+  /** The denied claim's date of service: the rate's shared axis (audit R29). */
+  claimDateOfService?: Date | string | null;
 }
 
 export interface SuperbillRowLike {
@@ -40,9 +42,11 @@ export interface DailyDataPoint {
 }
 
 /**
- * Denial-rate trend (denied $ ÷ billed $) per day across a date range.
- * Aligned to UTC midnight day boundaries so the same series renders
- * the same anywhere.
+ * Denial-rate trend: denied $ ÷ billed $ per DATE OF SERVICE across a date
+ * range. Both sides are keyed to the claim's service date (audit R29); keyed
+ * to the denial date, a denial never met its own claim and the series read 0%.
+ * Aligned to UTC midnight day boundaries so the same series renders the same
+ * anywhere.
  */
 export function denialRateTrend(args: {
   superbills: SuperbillRowLike[];
@@ -62,7 +66,7 @@ export function denialRateTrend(args: {
     billedByDay.set(k, (billedByDay.get(k) ?? 0) + sb.billedAmountCents);
   }
   for (const d of args.denials) {
-    const k = isoDay(d.deniedAt);
+    const k = isoDay(d.claimDateOfService ?? d.deniedAt);
     deniedByDay.set(k, (deniedByDay.get(k) ?? 0) + d.deniedAmountCents);
   }
 

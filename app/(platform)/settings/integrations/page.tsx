@@ -35,15 +35,20 @@ export default function IntegrationsPage() {
   }
 
   useEffect(() => {
-    refresh();
-    // Surface success / error from the OAuth round-trip via query params.
-    const p = new URLSearchParams(window.location.search);
-    if (p.get("google_connected")) {
-      window.history.replaceState({}, "", "/settings/integrations");
-    } else if (p.get("google_error")) {
-      setError(`Google returned: ${p.get("google_error")}`);
-      window.history.replaceState({}, "", "/settings/integrations");
-    }
+    // Run from a timer, as on the audit page, so no state is set synchronously
+    // in the effect body (refresh() and the google_error branch both set it).
+    const t = setTimeout(() => {
+      refresh();
+      // Surface success / error from the OAuth round-trip via query params.
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("google_connected")) {
+        window.history.replaceState({}, "", "/settings/integrations");
+      } else if (p.get("google_error")) {
+        setError(`Google returned: ${p.get("google_error")}`);
+        window.history.replaceState({}, "", "/settings/integrations");
+      }
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   async function disconnect() {

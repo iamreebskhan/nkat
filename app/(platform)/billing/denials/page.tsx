@@ -9,7 +9,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -19,35 +19,81 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { computeDenialMetrics, lookupCarc } from "@/lib/features/denials/denial-pure";
+import { Pager } from "@/components/ui/pager";
+import { lookupCarc, type DenialSummary } from "@/lib/features/denials/denial-pure";
 import {
   DENIAL_DECISIONS,
   type DenialDecision,
   type DenialView,
 } from "@/lib/features/denials/denial.types";
 
+const PAGE_SIZE = 50;
+
+const NO_METRICS: DenialSummary = {
+  total: 0,
+  totalDeniedCents: 0,
+  pendingDecisions: 0,
+  byCarc: [],
+  byPayerId: [],
+  payerNames: {},
+};
+
 export default function DenialsPage() {
   const [rows, setRows] = useState<DenialView[]>([]);
+  // Over EVERY denial matching the filter, computed on the server. These
+  // figures used to be computed here over the rows loaded, which was one page
+  // of 50, so past 50 the header, the KPIs and the by-payer table all
+  // described an arbitrary page (audit R34).
+  const [metrics, setMetrics] = useState<DenialSummary>(NO_METRICS);
   const [decision, setDecision] = useState<DenialDecision | "all">("pending");
+  const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // /billing's "where the denials came from" rows link here pre-filtered
+  // (audit R29): ?decision=all&payerId=…. The page used to ignore the URL and
+  // open on "pending", which for a refiled denial read 0 denials. Read once,
+  // from a timer rather than synchronously in the effect body, and hold the
+  // first fetch until it has been read.
+  const [payerId, setPayerId] = useState<string | null>(null);
+  const [urlRead, setUrlRead] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const q = new URLSearchParams(window.location.search);
+      const d = q.get("decision");
+      if (d === "all" || (d && (DENIAL_DECISIONS as readonly string[]).includes(d))) {
+        setDecision(d as DenialDecision | "all");
+      }
+      const p = q.get("payerId");
+      if (p && /^[0-9a-f-]{36}$/i.test(p)) setPayerId(p);
+      setUrlRead(true);
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
+    if (!urlRead) return;
     let abandoned = false;
     (async () => {
       setLoading(true);
       try {
-        const params = new URLSearchParams();
+        const params = new URLSearchParams({
+          limit: String(PAGE_SIZE),
+          offset: String(page * PAGE_SIZE),
+        });
         if (decision !== "all") params.set("decision", decision);
+        if (payerId) params.set("payerId", payerId);
         const r = await fetch(`/api/denials?${params.toString()}`);
         const data = await r.json();
         if (abandoned) return;
         if (!data.success) {
           setError(data.error ?? "Failed to load.");
           setRows([]);
+          setMetrics(NO_METRICS);
           return;
         }
+        setError(null);
         setRows(data.data.rows ?? []);
+        setMetrics(data.data.metrics ?? NO_METRICS);
       } catch {
         if (!abandoned) setError("Network error.");
       } finally {
@@ -57,48 +103,42 @@ export default function DenialsPage() {
     return () => {
       abandoned = true;
     };
-  }, [decision]);
+  }, [decision, page, payerId, urlRead]);
 
-  // payer id → name, so the by-payer table reads like a report and not a
-  // list of UUIDs.
-  const [payerNames, setPayerNames] = useState<Record<string, string>>({});
-  useEffect(() => {
-    fetch("/api/billing/payers")
-      .then((r) => r.json())
-      .then((d) => {
-        if (!d.success) return;
-        const map: Record<string, string> = {};
-        for (const p of d.data?.payers ?? []) map[p.id] = p.name;
-        setPayerNames(map);
-      })
-      .catch(() => undefined);
-  }, []);
-
-  const metrics = useMemo(
-    () =>
-      computeDenialMetrics(
-        rows.map((r) => ({
-          carcCode: r.carcCode,
-          payerId: r.payerId,
-          deniedAmountCents: r.deniedAmountCents,
-          decision: r.decision,
-        })),
-      ),
-    [rows],
-  );
+  // payer id → name, so the by-payer table and the filter caption read like a
+  // report and not a list of UUIDs. It comes with the figures, withdrawn
+  // payers included: /api/billing/payers lists active payers only (R17), so a
+  // withdrawn payer used to print as the first 8 characters of its UUID.
+  const payerNames = metrics.payerNames;
 
   return (
     <div className="px-8 py-8">
       <header className="flex items-end justify-between mb-6 gap-4">
         <div>
           <h1 className="font-display text-3xl tracking-tight">Denials</h1>
+          {/* Names the filter, so "0 denials" is never read as "no denials". */}
           <p className="text-slate-600 mt-1">
-            {metrics.total} denial{metrics.total === 1 ? "" : "s"} ·{" "}
+            {metrics.total} {decision === "all" ? "" : `${decision.replace("_", " ")} `}denial
+            {metrics.total === 1 ? "" : "s"}
+            {payerId ? ` for ${payerNames[payerId] ?? "this payer"}` : ""} ·{" "}
             <span className="tabular">
               ${(metrics.totalDeniedCents / 100).toFixed(2)}
             </span>{" "}
             denied
           </p>
+          {payerId && (
+            <button
+              type="button"
+              onClick={() => {
+                setPayerId(null);
+                setPage(0);
+                window.history.replaceState(null, "", "/billing/denials");
+              }}
+              className="mt-1 text-xs text-[var(--color-brand-700)] underline"
+            >
+              Show every payer
+            </button>
+          )}
         </div>
         <Link href="/billing/denials/log">
           <Button>Log denial</Button>
@@ -130,7 +170,9 @@ export default function DenialsPage() {
         <Card className="mb-6">
           <CardHeader>
             <CardTitle>Denials by payer</CardTitle>
-            <CardDescription>Where the denied money is concentrated.</CardDescription>
+            <CardDescription>
+              Where the denied money is concentrated, for the current filter.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <table className="w-full text-sm">
@@ -144,8 +186,8 @@ export default function DenialsPage() {
               <tbody className="divide-y divide-slate-100">
                 {metrics.byPayerId.slice(0, 8).map((p) => (
                   <tr key={p.payerId ?? "unknown"}>
-                    {/* DenialView carries no payer name; resolve it from the
-                        payer list rather than printing a raw UUID. */}
+                    {/* Named by the server from payer itself, withdrawn payers
+                        included (R17); the UUID prefix is a last resort. */}
                     <td className="py-2 text-slate-700">
                       {p.payerId
                         ? (payerNames[p.payerId] ?? p.payerId.slice(0, 8))
@@ -170,7 +212,10 @@ export default function DenialsPage() {
             <button
               key={d}
               type="button"
-              onClick={() => setDecision(d)}
+              onClick={() => {
+                setDecision(d);
+                setPage(0);
+              }}
               className={`px-3 py-1 rounded text-xs ${
                 decision === d
                   ? "bg-slate-900 text-white"
@@ -223,6 +268,12 @@ export default function DenialsPage() {
                       </td>
                       <td className="px-4 py-2 font-mono tabular text-slate-700">
                         {d.carcCode}
+                        {/* The payer's own code, posted from its 835 (audit R10). */}
+                        {d.source === "remittance" && (
+                          <span className="ml-1.5 inline-flex items-center rounded bg-blue-50 px-1.5 py-0.5 font-sans text-[11px] font-medium text-blue-800 ring-1 ring-inset ring-blue-600/20">
+                            From 835
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-2 text-slate-600 max-w-md truncate" title={carc.text}>
                         {d.denialReason ?? carc.text}
@@ -246,6 +297,15 @@ export default function DenialsPage() {
                 })}
               </tbody>
             </table>
+          )}
+          {metrics.total > PAGE_SIZE && (
+            <Pager
+              page={page}
+              pageSize={PAGE_SIZE}
+              total={metrics.total}
+              shown={rows.length}
+              onPage={setPage}
+            />
           )}
         </CardContent>
       </Card>

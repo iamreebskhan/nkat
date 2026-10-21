@@ -13,6 +13,27 @@
 # Every file here must be idempotent — deterministic ids plus
 # ON CONFLICT DO UPDATE — because the deploy re-applies a seed whenever
 # its contents change.
+#
+# CI READS THIS FILE TOO, and must. Both database-building jobs in
+# .github/workflows/ci.yml used to apply `db/seed/*.sql` in bash-glob order
+# instead. ASCII sorts '-' (0x2D) before '.' (0x2E), so
+# payer-rules-denial-attributes-2.sql ran BEFORE
+# payer-rules-denial-attributes.sql and CI validated a library with round 1
+# live on all 28 keys the two share — the inversion round 1's own header
+# records as a production incident. Glob order also ran the ingestion seeds
+# before payer-medicare.sql, leaving every Medicare ingestion source bound to
+# no payer. CI now walks this file in order and splices the fixtures below in
+# at the first payer-rules-* entry: 0016, 0017, 0018 and 0020 plus
+# ingestion-source-medicare-pdf.sql before the rule library (0018 writes
+# payer_rule keys the library also writes, and two live rules on one key make
+# fetchPayerRule's LIMIT 1 arbitrary), tenant-demo-palliative.sql after it (it
+# prices its demo superbills by reading payer_rule).
+#
+# So DO NOT append a non-rule seed after the rule library here — that is the
+# splice point. lib/__tests__/ci-seed-order-drift.spec.ts fails if you do, if a
+# seed beside this file is accounted for by neither list, or if a CI step goes
+# back to globbing. db/test/0003_rule_supersession.sql fails on the resulting
+# database if the order comes out wrong anyway.
 
 # --- reference data: codes, payers, lookup tables --------------------
 0001_states_product_lines.sql
@@ -81,6 +102,34 @@ payer-rules-round3-six-payers.sql
 #     Test accounts — never in production.
 # 0018_test_palliative_payer_rules.sql
 #     Fixture rules that would pollute the real library.
+# 0020_local_clinical_fixture.sql
+#     The clinical rows a developer needs locally: org 'Design Partner', the
+#     test admin 0017 creates, that user's org_admin permissions, two
+#     patients and four visits. Without them a freshly migrated database has
+#     no org, no patient and no visit, so the whole clinician path — open,
+#     document, sign, raise a superbill — is unreachable and went untested.
+#     It writes tenant tables, so the rule below keeps it out; and one of its
+#     visits is deliberately left with an EMPTY note, as the reproduction
+#     fixture for signing with no documentation. Neither that nor a patient
+#     called Grace Hopper belongs in a customer's database. Run it by hand
+#     against a local one.
+# tenant-demo-palliative.sql
+#     The demo tenant (audit R20): org 'Pallio Demo Palliative Care', eight
+#     @demo.pallio.io staff, fourteen patients and six weeks of their
+#     visits, notes, bills and denials. It writes tenant tables, which the
+#     rule below and deploy.sh's tenant-writer check keep out of every
+#     deploy, and a deploy re-applying it would reset a live demo. CI still
+#     runs it on every push. Hand-run it once on the VPS after the deploy
+#     that carries 0103 — 0101 retires the org this one replaces, but the
+#     seed also fills 0103's patient_contact, external_provider and
+#     patient_external_provider, and on 0100-0102 it fails part way through
+#     the file with 'relation "patient_contact" does not exist'. The seed is
+#     one transaction, so nothing is written — there are no half-seeded rows
+#     to clean up before the retry. Per docs/RUNBOOKS/demo-tenant.md:
+#       cd /opt/pallio/app
+#       read -rs -p 'demo password: ' DEMO_PW; echo
+#       sudo -u postgres psql pallio -X -v ON_ERROR_STOP=1 -v demo_password="$DEMO_PW" -f db/seed/tenant-demo-palliative.sql
+#       unset DEMO_PW
 #
 # The rule for adding to this manifest: if a seed writes to a tenant
 # table (org, app_user, subscription, patient, visit, superbill,
@@ -141,3 +190,10 @@ payer-rules-aetna-telehealth.sql
 # unknown, with no maxOccurrences/windowDays, because inventing a cap would
 # feed the denial scorer a fabricated prediction.
 payer-rules-aetna-frequency.sql
+
+# UnitedHealthcare Community Plan Ohio's per-visit charting standard as a
+# checkable element list (audit R19): vital signs, chief complaint, physical
+# assessment, diagnosis and treatment plan, plus the audio-video statement on
+# a telehealth visit. Global reference data; its source_document is seeded by
+# payer-rules-denial-attributes-2.sql above.
+payer-rules-documentation-elements.sql

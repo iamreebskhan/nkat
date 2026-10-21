@@ -21,6 +21,7 @@
 import bcrypt from "bcryptjs";
 
 import { prisma, withBreakglass, withOrgContext } from "@/lib/db";
+import { sessionRoleFor, type RoleTemplate } from "@/lib/features/team/team.types";
 
 export interface InvitePreview {
   orgId: string;
@@ -96,7 +97,11 @@ export interface RedeemInviteResult {
 
 export async function redeemInvite(
   input: RedeemInviteInput,
-): Promise<RedeemInviteResult | { error: "expired_or_invalid" } | { error: "needs_password" }> {
+): Promise<
+  | (RedeemInviteResult & { roleTemplate: RoleTemplate })
+  | { error: "expired_or_invalid" }
+  | { error: "needs_password" }
+> {
   // Pull invite + verify lifetime via breakglass (no org context yet).
   const invite = await withBreakglass(async (client) => {
     const rows = await client.$queryRaw<
@@ -106,9 +111,10 @@ export async function redeemInvite(
         email: string;
         expires_at: Date;
         redeemed_at: Date | null;
+        role_template: string | null;
       }[]
     >`
-      SELECT id, org_id, email, expires_at, redeemed_at
+      SELECT id, org_id, email, expires_at, redeemed_at, role_template
       FROM pending_invite WHERE token = ${input.token} LIMIT 1
     `;
     return rows[0] ?? null;
@@ -142,6 +148,11 @@ export async function redeemInvite(
     newUser = true;
   }
 
+  // The template the admin chose (audit R38). The membership used to be
+  // 'employee' whatever the invite said, and login mapped that to clinician,
+  // so an invited billing agent or analyst never got their own sidebar.
+  const roleTemplate = sessionRoleFor(invite.role_template, "employee");
+
   // Flip the invite + attach user_id to its permission rows.
   await withOrgContext(invite.org_id, async (tx) => {
     await tx.$executeRaw`
@@ -157,12 +168,14 @@ export async function redeemInvite(
     `;
     // Link the user to the org via org_member if not already there.
     await tx.$executeRaw`
-      INSERT INTO org_member (org_id, user_id, role, status, joined_at)
-      VALUES (${invite.org_id}::uuid, ${userId}::uuid, 'employee', 'active', now())
+      INSERT INTO org_member (org_id, user_id, role, role_template, status, joined_at)
+      VALUES (${invite.org_id}::uuid, ${userId}::uuid, 'employee', ${roleTemplate}, 'active', now())
       ON CONFLICT (org_id, user_id) DO UPDATE
-        SET status = 'active', joined_at = COALESCE(org_member.joined_at, now())
+        SET status = 'active',
+            role_template = EXCLUDED.role_template,
+            joined_at = COALESCE(org_member.joined_at, now())
     `;
   });
 
-  return { userId, orgId: invite.org_id, email: invite.email, newUser };
+  return { userId, orgId: invite.org_id, email: invite.email, newUser, roleTemplate };
 }

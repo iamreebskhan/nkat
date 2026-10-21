@@ -2,7 +2,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { ok, parseJson, requireUuidParam } from "@/lib/api";
+import { handleServiceError, ok, parseJson, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { resolveRequest } from "@/lib/features/attestations/attestation.service";
 
@@ -23,11 +23,20 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
   if (bad) return bad;
   const body = await parseJson(req, Body);
   if (body instanceof Response) return body;
-  await resolveRequest({
-    orgId: session.orgId,
-    id,
-    attestationId: body.attestationId,
-    note: body.note,
-  });
-  return ok({ id });
+  // resolveRequest refuses an attestation id this org cannot see, and says so
+  // with a NotFoundError. Every sibling route under app/api/attestations has
+  // carried this catch; without it here that refusal left the service as an
+  // uncaught throw and reached the analyst as an opaque 500, so the sentence
+  // the service writes for them was never the sentence they read.
+  try {
+    await resolveRequest({
+      orgId: session.orgId,
+      id,
+      attestationId: body.attestationId,
+      note: body.note,
+    });
+    return ok({ id });
+  } catch (err) {
+    return handleServiceError(err);
+  }
 }

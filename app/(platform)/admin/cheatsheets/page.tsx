@@ -41,7 +41,12 @@ export default function CheatsheetTemplatesPage() {
   }
 
   useEffect(() => {
-    refresh();
+    // Started from a timer rather than synchronously in the effect body, where
+    // refresh()'s setLoading(true) would cascade a second render.
+    const t = setTimeout(() => {
+      refresh();
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   /**

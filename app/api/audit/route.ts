@@ -9,6 +9,8 @@ import { listAuditLog } from "@/lib/features/audit/audit.service";
 const Query = z.object({
   userEmail: z.string().email().optional(),
   action: z.string().max(120).optional(),
+  /** One visit's trail (audit R24). */
+  visitId: z.string().uuid().transform((s) => s.toLowerCase()).optional(),
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   cursor: z.string().optional(),
@@ -24,6 +26,7 @@ export async function GET(req: NextRequest): Promise<Response> {
     orgId: session.orgId,
     userEmail: params.userEmail,
     action: params.action,
+    visitId: params.visitId,
     fromDate: params.fromDate ? new Date(`${params.fromDate}T00:00:00Z`) : undefined,
     toDate: params.toDate ? new Date(`${params.toDate}T23:59:59Z`) : undefined,
     cursor: params.cursor,

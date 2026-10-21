@@ -9,19 +9,29 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { localDateKey } from "@/lib/features/visits/visit-pure";
 import type { VisitView } from "@/lib/features/visits/visit.types";
 
 export default function PrintRoutePage() {
   // ?date=YYYY-MM-DD read client-side (below), defaulting to today. Avoiding
   // useSearchParams keeps this off a Suspense boundary that can stall on a cold
   // load — relevant here because the page is opened in a fresh tab to print.
-  const [date, setDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  //
+  // Null until the browser decides it. The server used to compute "today" as
+  // well, as a UTC date, and render it through toLocaleDateString in its own
+  // locale: the server's text never matched the browser's (a hydration error
+  // on every load), and after 8 pm in Ohio the default day was tomorrow.
+  const [date, setDate] = useState<string | null>(null);
   const [visits, setVisits] = useState<VisitView[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const d = new URLSearchParams(window.location.search).get("date");
-    if (d) setDate(d);
+    // From a timer, so the date isn't set synchronously in the effect body.
+    const t = setTimeout(() => {
+      const d = new URLSearchParams(window.location.search).get("date");
+      setDate(d || localDateKey(new Date()));
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   useEffect(() => {
@@ -36,7 +46,12 @@ export default function PrintRoutePage() {
   const dayVisits = useMemo(
     () =>
       visits
-        .filter((v) => (v.scheduledStart ?? v.startTime ?? "").slice(0, 10) === date)
+        // The visit's day where the nurse is, not its UTC day: a 9 pm visit
+        // is stored as the next morning in UTC.
+        .filter((v) => {
+          const at = v.scheduledStart ?? v.startTime;
+          return date !== null && at != null && localDateKey(new Date(at)) === date;
+        })
         .sort((a, b) => (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? "")),
     [visits, date],
   );
@@ -48,16 +63,19 @@ export default function PrintRoutePage() {
     }
   }, [loading, dayVisits.length]);
 
-  const pretty = new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+  const pretty =
+    date === null
+      ? null
+      : new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        });
 
   return (
     <div className="px-8 py-8 max-w-2xl mx-auto print:px-0">
-      <h1 className="text-2xl font-bold">Route sheet — {pretty}</h1>
+      <h1 className="text-2xl font-bold">Route sheet{pretty ? ` — ${pretty}` : ""}</h1>
       <p className="text-slate-500 text-sm mb-4">
         {dayVisits.length} visit{dayVisits.length === 1 ? "" : "s"}
       </p>

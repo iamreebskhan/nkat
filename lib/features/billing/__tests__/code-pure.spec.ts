@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   AMA_PLACEHOLDER,
   gateAmaDescriptors,
+  gateDescriptor,
+  isAmaPlaceholder,
   type CodeRowFromDb,
 } from "../code-pure";
 
@@ -62,5 +64,30 @@ describe("gateAmaDescriptors", () => {
       true,
     );
     expect(v2.expiration_date).toBe("2026-12-31");
+  });
+});
+
+describe("gateDescriptor (audit R21)", () => {
+  it("withholds CPT text when unlicensed", () => {
+    expect(gateDescriptor("CPT", "Home visit, est pt", false)).toBe(AMA_PLACEHOLDER);
+  });
+
+  it("passes CPT text under the licence", () => {
+    expect(gateDescriptor("CPT", "Home visit, est pt", true)).toBe("Home visit, est pt");
+  });
+
+  it("never withholds HCPCS Level II", () => {
+    expect(gateDescriptor("HCPCS2", "Prolonged home E/M", false)).toBe("Prolonged home E/M");
+  });
+
+  it("keeps a missing descriptor missing, not withheld", () => {
+    expect(gateDescriptor("CPT", null, false)).toBeNull();
+    expect(gateDescriptor(null, undefined, false)).toBeNull();
+  });
+
+  it("recognises its own placeholder and nothing else", () => {
+    expect(isAmaPlaceholder(AMA_PLACEHOLDER)).toBe(true);
+    expect(isAmaPlaceholder("AMA license required")).toBe(false);
+    expect(isAmaPlaceholder(null)).toBe(false);
   });
 });

@@ -7,6 +7,35 @@ API credit state (the AI-feature harness is the one exception, flagged below).
 
 Run from `/opt/pallio/app` after `git pull origin main`.
 
+## 0. Harness account
+
+Every script below that signs in as an org user (§2's gating half, §3, §3b,
+§4, §5, and `probe-live-account` in §6) does so as the **harness account**:
+`harness@pallio-smoke.test`, in an org of its own, **Pallio Harness**. The
+first API script run against a server signs it up; in the one-shot that is
+`verify-master-ui`. Every run after that logs in. The browser scripts (§3,
+§3b) only log in, so on a new server run an API script first.
+
+The password comes from the environment and nowhere else. Set it once per
+shell, pasted on its own: `read` takes the next pasted line as the password,
+so it must not share a paste with other commands.
+
+```bash
+read -rs -p 'harness password: ' TEST_PASSWORD; export TEST_PASSWORD; echo
+```
+
+The first signup fixes the password, so choose one that passes the signup
+password policy (12+ characters, and not the email, org or person's name),
+and keep it with the operator credentials.
+
+**The scripts refuse the demo tenant.** If `TEST_EMAIL` is
+`livedemo@pallio.io` or any `@demo.pallio.io` address, or `TEST_ORG` names a
+Pallio demo org, they exit 2 before sending a request. A pass writes a
+patient, visits, a superbill and a denial, and the audit trail of those can
+never be deleted, so none of it may land in a tenant a prospect is shown.
+`TEST_EMAIL` / `TEST_ORG` still select any other account, such as a second
+harness on `@pallio-smoke.test`.
+
 ## 1. Backend — every API route
 
 ```bash
@@ -29,7 +58,7 @@ read -rs -p 'operator password: ' OPERATOR_PASSWORD; export OPERATOR_PASSWORD; e
 export OPERATOR_EMAIL='hamda@theaura.agency'
 BASE_URL=https://app.pallio.io node scripts/verify-master-ui.mjs
 ```
-Part A: every `/api/admin/*` returns **403** to the demo (org_admin) user, and
+Part A: every `/api/admin/*` returns **403** to the harness (org_admin) user, and
 the operator pages don't render for them. Part B (with `OPERATOR_*`): the same
 endpoints return **200 + data** and the `/admin/*` pages render for the
 platform_admin. Proves the master UI is both **locked** and **functional**.
@@ -54,10 +83,11 @@ sudo -u postgres psql pallio -c \
 ```bash
 BASE_URL=https://app.pallio.io node scripts/e2e-live-walkthrough.mjs
 ```
-Drives a real browser through the user app as `livedemo@pallio.io`: login →
-patients → superbill → billing lookup → denials (decide/refile/outcome
-buttons) → rulebook → cheat sheets → messages → care plan → schedule →
-logout, with screenshots. Expected: **30/30**.
+Drives a real browser through the user app as the harness account (§0): login
+→ seed Ada, a visit, a superbill and a denial if the org has none → patients →
+superbill → billing lookup → denials (decide/refile/outcome buttons) →
+rulebook → cheat sheets → messages → care plan → schedule → logout, with
+screenshots. Expected: **31/31**.
 
 ## 3b. Exhaustive UI crawl — every page, every button, DnD, file upload
 
@@ -75,7 +105,7 @@ day → `PATCH /reschedule` must 200) and the **rulebook CSV file input**
 (real file chosen → `POST /api/rulebook/upload` → comparison renders).
 Expected: **0 hard failures**.
 
-## 4. Full CY2026 rule — extraction reads + comparison (demo seat)
+## 4. Full CY2026 rule — extraction reads + comparison (user seat)
 
 ```bash
 BASE_URL=https://app.pallio.io node scripts/verify-demo-user-medicare.mjs
@@ -131,6 +161,7 @@ gen, care plans. Expected: **24/24**. (Only these two depend on API credits;
 cd /opt/pallio/app && git pull origin main
 export BASE_URL=https://app.pallio.io
 export CRON_SECRET=$(grep -hE '^CRON_SECRET=' .env .env.local .env.production 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"'"'"'')
+: "${TEST_PASSWORD:?set it first, on its own: see §0 Harness account}" && \
 node scripts/probe-full-live.mjs        && \
 node scripts/verify-master-ui.mjs       && \
 node scripts/e2e-live-walkthrough.mjs   && \

@@ -21,7 +21,12 @@ export default function ResetPasswordPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    setToken(new URLSearchParams(window.location.search).get("token") ?? "");
+    // Set from a timer rather than synchronously in the effect body, which
+    // would cascade a second render. The null state above covers the gap.
+    const t = setTimeout(() => {
+      setToken(new URLSearchParams(window.location.search).get("token") ?? "");
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   async function submit(e: React.FormEvent) {

@@ -1,6 +1,8 @@
-import { requireDemoPassword } from "./lib/test-credentials.mjs";
+import { harnessAccount } from "./lib/test-credentials.mjs";
 /**
- * FULL-RULE live verification from the DEMO USER seat (livedemo@pallio.io).
+ * FULL-RULE live verification from the DEMO USER seat: an ordinary org user,
+ * not the operator. Since R36 that seat is the harness account
+ * (scripts/lib/test-credentials.mjs), never the demo tenant.
  *
  * Proves, against the live platform, that the complete CY2026 PFS final rule
  * (db/seed/payer-rules-cy2026-full-rule.sql — 563 rules from Federal Register
@@ -27,8 +29,7 @@ import { requireDemoPassword } from "./lib/test-credentials.mjs";
  *   BASE_URL=https://app.pallio.io node scripts/verify-demo-user-medicare.mjs
  */
 const BASE = process.env.BASE_URL || "https://app.pallio.io";
-const EMAIL = process.env.TEST_EMAIL || "livedemo@pallio.io";
-const PASSWORD = requireDemoPassword();
+const { email: EMAIL, password: PASSWORD, orgName: ORG_NAME, fullName } = harnessAccount();
 const DOS = new Date().toISOString().slice(0, 10);
 
 let cookie = "";
@@ -59,7 +60,7 @@ console.log(`\n████  DEMO USER × CY2026 FULL RULE → ${BASE}  ██�
 
 // ── login AS THE DEMO USER ────────────────────────────────────────────
 {
-  const su = await req("POST", "/api/auth/signup", { email: EMAIL, password: PASSWORD, fullName: "Live Tester", orgName: "Pallio Live Demo", baaAccepted: true });
+  const su = await req("POST", "/api/auth/signup", { email: EMAIL, password: PASSWORD, fullName, orgName: ORG_NAME, baaAccepted: true });
   if (su.s !== 201) ok("demo user login", (await req("POST", "/api/auth/login", { email: EMAIL, password: PASSWORD })).s === 200);
   else ok("demo user signup", true);
 }

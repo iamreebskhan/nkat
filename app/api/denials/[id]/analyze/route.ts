@@ -12,6 +12,7 @@ import { requireAuth } from "@/lib/auth";
 import { analyzeDenial } from "@/lib/ai/denial-analyst";
 import {
   getDenial,
+  getDenialRuleContext,
   recordAiAnalysis,
 } from "@/lib/features/denials/denial.service";
 
@@ -30,22 +31,25 @@ export async function POST(_req: NextRequest, ctx: Params): Promise<Response> {
   if (bad) return bad;
   const denial = await getDenial({ orgId: session.orgId, id });
   if (!denial) return fail("Denial not found.", { status: 404 });
+  // The rule the denial is judged against is the one in force on the bill's
+  // date of service, in the state of the patient's coverage. This passed the
+  // denial's own timestamp as the date of service and no state, and with no
+  // state the analyst answers from the CARC heuristic without ever looking a
+  // rule up.
+  const rule = await getDenialRuleContext({ orgId: session.orgId, id });
+  if (!rule) return fail("Denial not found.", { status: 404 });
 
-  // Resolve state from the superbill → patient → payer/state chain in
-  // a follow-up phase. For Phase 4 we'd need to fetch the payer's
-  // state coverage; the analyst is robust to a missing state (returns
-  // heuristic).
   const result = await analyzeDenial({
     cptCode: denial.cptCode,
     payerId: denial.payerId,
-    state: null,
+    state: rule.state,
     orgId: session.orgId,
     carcCode: denial.carcCode,
     rarcCode: denial.rarcCode,
     denialReason: denial.denialReason,
     deniedAmountCents: denial.deniedAmountCents,
     icd10Codes: denial.icd10Codes,
-    dateOfService: new Date(denial.deniedAt),
+    dateOfService: rule.dateOfService,
   });
 
   await recordAiAnalysis({

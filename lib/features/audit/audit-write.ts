@@ -48,10 +48,48 @@ export type AuditAction =
   | "visit_document"
   | "visit_sign"
   | "visit_reschedule"
+  /**
+   * A visit's type corrected before sign-off, which moves the CPT band it is
+   * coded on (a first visit booked as established bills 99347-99350 instead of
+   * 99341-99345). Payload is the from/to coding bands — a closed set — and
+   * whether the codes saved under the old band were cleared; never the org's
+   * own type names or labels, which are free text.
+   */
+  | "visit_type_change"
+  /**
+   * Vitals recorded on a visit. Separate from visit_document because vitals
+   * are the one part of the note that is also a longitudinal clinical record:
+   * a weight the trend is drawn from, changed after the fact, is a different
+   * question from a paragraph edited before signing. Payload carries the
+   * field names touched, never the readings.
+   */
+  | "visit_vitals_record"
+  /**
+   * Note sections copied forward from a previous signed visit. Audited because
+   * carried-forward text is the thing a payer looks for when it suspects a
+   * cloned note — "which sections were brought forward, from which visit, and
+   * by whom" has to be answerable years later.
+   */
+  | "visit_note_carry_forward"
+  // An org changing its own note template. Worth an audit entry because it
+  // changes what "a complete note" means for every visit signed afterwards.
+  | "note_template_edit"
+  // A clinician NPI or credential changed (audit R40, R25). It changes who
+  // every later claim names as rendering provider, and its rate.
+  | "clinician_profile_update"
+  // What a member may do changed (audit R38): permission names, never PHI.
+  | "team_permissions_update"
+  // A correction signed onto an attested note (audit R15): ids and length only.
+  | "visit_addendum"
   | "superbill_create"
   | "superbill_status_change"
   | "superbill_code_override"
   | "denial_decision"
+  // What finally happened to a denied claim (audit R24): outcome and amount only.
+  | "denial_outcome"
+  // A payer's 835 uploaded and posted (audit R10). Counts only: no claim id,
+  // and nothing from the file's patient segment.
+  | "remittance_post"
   | "rulebook_finalize"
   /**
    * Org configuration: visit types, visit services, branding. Added after a
@@ -60,18 +98,52 @@ export type AuditAction =
    * settings decide what a clinician can even select when scheduling, so
    * "who turned this off" is a real question with no answer before this.
    */
-  | "settings_update";
+  | "settings_update"
+  /**
+   * A payer added to, edited on, or withdrawn from the global roster (audit
+   * R17). Platform-admin only, and it changes what every org bills against:
+   * which plans intake can pick, and in which states. Payer data is reference
+   * data, not PHI, so the payload names the payer and its states beside the
+   * field names.
+   */
+  | "payer_roster_change"
+  /**
+   * A family member or caregiver added to, edited on, or removed from a chart
+   * (audit R30). Who holds healthcare POA decides who may consent for the
+   * patient, so "who recorded the nephew as POA, and when" must be answerable.
+   * Contact id and field names only — never a name or phone number.
+   */
+  | "patient_contact_change"
+  /**
+   * An outside provider linked to or unlinked from a patient (audit R30): the
+   * PCP, referrer and specialists the note header prints. Link id, provider
+   * id and role only.
+   */
+  | "patient_provider_change"
+  /**
+   * The org's roster of outside providers changed (audit R30). One roster row
+   * feeds every chart that links it, so a changed fax number reaches them all.
+   * Provider id and field names only.
+   */
+  | "external_provider_change";
 
 export type AuditTargetType =
   | "patient"
   | "visit"
   | "superbill"
   | "denial"
+  // An uploaded 835 (audit R10): the remittance_file row.
+  | "remittance"
   | "rulebook"
   | "session"
   | "visit_type"
   | "visit_service"
-  | "branding";
+  | "branding"
+  | "note_template"
+  | "user"
+  | "payer"
+  // The org's roster of outside providers (audit R30).
+  | "external_provider";
 
 export interface AuditEntry {
   orgId: string;

@@ -78,19 +78,21 @@ export interface RulebookRowView {
    */
   sourceCreatedBy: string | null;
   /**
-   * Server-derived provenance bucket. One of:
-   *   - 'crawler'  — payer_rule from CMS / payer URL ingestion
-   *   - 'analyst'  — analyst-attested call
+   * Server-derived provenance bucket (rulebook-pure sourceKindFor). One of:
+   *   - 'crawler'  — extracted from a published CMS or payer document, or
+   *                  crawled ('extract:*', 'crawler:*', 'cms')
+   *   - 'analyst'  — analyst-attested call, or an analyst-email created_by
    *   - 'ai'       — AI-synthesized + auto-persisted (low confidence)
    *   - 'org'      — Path B upload or inline org override
-   *   - 'manual'   — payer_rule with an analyst-email created_by
-   *                  (legacy / explicit analyst entry)
-   *   - 'unknown'  — origin='source' with no linked payer_rule (rare;
-   *                  shouldn't happen post-regenerate)
+   *   - 'manual'   — entered without a linked document
+   *   - 'unknown'  — origin='source' with no linked payer_rule (the
+   *                  placeholder generation emits for a gap)
    */
   sourceKind: "crawler" | "analyst" | "ai" | "org" | "manual" | "unknown";
   lastEditedByUserId: string | null;
   lastEditedAt: string | null;
+  /** When an analyst attestation stops answering lookups; null = never. */
+  expiresAt: string | null;
 }
 
 export interface RulebookView {
