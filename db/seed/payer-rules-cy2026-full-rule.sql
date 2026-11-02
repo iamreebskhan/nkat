@@ -23,7 +23,7 @@
 --   migration 0053 applied (same-day supersede, ships with normal deploy)
 -- Apply:
 --   sudo -u postgres psql pallio -f db/seed/payer-rules-cy2026-full-rule.sql
--- Idempotent: re-running replaces this seed's own rows.
+-- Idempotent: re-running rewrites this seed's own rows in place (step 5).
 -- ============================================================================
 
 BEGIN;
@@ -44,8 +44,15 @@ SELECT
   '{"ingest":"full-rule-seed","fr_doc":"2025-19787","pages":"49266-50481"}'::jsonb
 ON CONFLICT (id) DO UPDATE SET retrieved_at = now(), content_hash = EXCLUDED.content_hash;
 
--- 2. Idempotency: drop this seed's own prior rows (clean re-run).
-DELETE FROM payer_rule WHERE source_doc_id = 'b0000000-0000-4000-8000-000000002026'::uuid;
+-- 2. Idempotency, without deleting. A re-run used to drop this seed's own
+--    rows and insert them again. On a live database other tables point at
+--    them: a practice's rulebook row copied from one
+--    (org_rulebook_row.source_payer_rule_id), an alert, a dispute, a
+--    remittance's expected rule. The 2 Nov 2026 deploy stopped right here on
+--    that rulebook foreign key. So a rule keeps its id: step 5 rewrites the
+--    row already on a key, inserts a key that is new, and expires a key this
+--    version no longer has, never deleting it (retire-cms-short-docs.sql
+--    expires for the same reason).
 
 -- 3. The extracted rules.
 CREATE TEMP TABLE _cy2026_rules (
@@ -663,33 +670,77 @@ UPDATE payer_rule pr
    AND pr.effective_date > DATE '2026-01-01'
    AND pr.expiration_date IS NOT NULL;
 
--- 5. Insert: one row per rule per state.
+-- 5. One row per rule per state, each keeping its id (step 2).
+--
+--    'medicare_ffs', not 'commercial'. These rules come from the CY2026
+--    Medicare Physician Fee Schedule Final Rule and belong to Traditional
+--    Medicare (Part B), a medicare_mac payer. Filed as 'commercial' they
+--    were invisible to getAllowedCodesForPayer, which matches product_line
+--    EXACTLY and now defaults from payer_type — so the super-bill picker
+--    showed a Medicare biller a code set drawn from the wrong product
+--    line. Measured before changing: 0 (state, code, attribute) keys carry
+--    both product lines, so re-filing cannot create a second live rule on
+--    a key and break fetchPayerRule's LIMIT 1.
+--
+--    _cy2026_target is what this version says; _cy2026_keep is the row
+--    already on each key, the oldest if a key somehow holds two.
+CREATE TEMP TABLE _cy2026_target ON COMMIT DROP AS
+SELECT
+  (SELECT id FROM payer WHERE name ILIKE '%medicare%'
+    ORDER BY (payer_type = 'medicare_mac') DESC, created_at ASC LIMIT 1) AS payer_id,
+  s.state, r.code, r.attribute, r.value_json::jsonb AS value, r.coverage_status, r.source_quote
+FROM _cy2026_rules r
+CROSS JOIN (VALUES ('OH'),('NC'),('SC')) AS s(state);
+
+CREATE TEMP TABLE _cy2026_keep ON COMMIT DROP AS
+SELECT DISTINCT ON (pr.state, pr.code, pr.attribute) pr.id, pr.state, pr.code, pr.attribute
+  FROM payer_rule pr
+ WHERE pr.source_doc_id = 'b0000000-0000-4000-8000-000000002026'::uuid
+ ORDER BY pr.state, pr.code, pr.attribute, pr.created_at, pr.id;
+
+-- 5a. The row already on a key takes this version's content. Its end date is
+--     cleared here and set again by step 5d where a later rule takes over.
+UPDATE payer_rule pr
+   SET payer_id = t.payer_id, product_line = 'medicare_ffs',
+       value = t.value, coverage_status = t.coverage_status, confidence = 0.95,
+       effective_date = DATE '2026-01-01', expiration_date = NULL,
+       source_quote = t.source_quote, created_by = 'crawler:cms_pfs'
+  FROM _cy2026_keep k
+  JOIN _cy2026_target t ON (t.state, t.code, t.attribute) = (k.state, k.code, k.attribute)
+ WHERE pr.id = k.id;
+
+-- 5b. Every other row this seed wrote before is expired, never deleted. A
+--     second row on a key ends where it starts, so it never answers (the kept
+--     row covers its dates); a key this version dropped stops answering
+--     today. Before the insert below, so nothing it inserts is touched.
+UPDATE payer_rule pr
+   SET expiration_date = CASE
+         WHEN EXISTS (SELECT 1 FROM _cy2026_target t
+                       WHERE (t.state, t.code, t.attribute) = (pr.state, pr.code, pr.attribute))
+         THEN pr.effective_date
+         ELSE GREATEST(CURRENT_DATE, pr.effective_date)
+       END
+ WHERE pr.source_doc_id = 'b0000000-0000-4000-8000-000000002026'::uuid
+   AND pr.expiration_date IS NULL
+   AND pr.id NOT IN (SELECT k.id FROM _cy2026_keep k
+                       JOIN _cy2026_target t ON (t.state, t.code, t.attribute) = (k.state, k.code, k.attribute));
+
+-- 5c. A key with no row yet is inserted.
 INSERT INTO payer_rule (
   payer_id, state, product_line, code, attribute,
   value, coverage_status, confidence,
   effective_date, expiration_date,
   source_doc_id, source_quote, created_by
 )
-SELECT
-  (SELECT id FROM payer WHERE name ILIKE '%medicare%'
-    ORDER BY (payer_type = 'medicare_mac') DESC, created_at ASC LIMIT 1),
-  -- 'medicare_ffs', not 'commercial'. These rules come from the CY2026
-  -- Medicare Physician Fee Schedule Final Rule and belong to Traditional
-  -- Medicare (Part B), a medicare_mac payer. Filed as 'commercial' they
-  -- were invisible to getAllowedCodesForPayer, which matches product_line
-  -- EXACTLY and now defaults from payer_type — so the super-bill picker
-  -- showed a Medicare biller a code set drawn from the wrong product
-  -- line. Measured before changing: 0 (state, code, attribute) keys carry
-  -- both product lines, so re-filing cannot create a second live rule on
-  -- a key and break fetchPayerRule's LIMIT 1.
-  s.state, 'medicare_ffs', r.code, r.attribute,
-  r.value_json::jsonb, r.coverage_status, 0.95,
-  DATE '2026-01-01', NULL,
-  'b0000000-0000-4000-8000-000000002026'::uuid, r.source_quote, 'crawler:cms_pfs'
-FROM _cy2026_rules r
-CROSS JOIN (VALUES ('OH'),('NC'),('SC')) AS s(state);
+SELECT t.payer_id, t.state, 'medicare_ffs', t.code, t.attribute,
+       t.value, t.coverage_status, 0.95,
+       DATE '2026-01-01', NULL,
+       'b0000000-0000-4000-8000-000000002026'::uuid, t.source_quote, 'crawler:cms_pfs'
+  FROM _cy2026_target t
+ WHERE NOT EXISTS (SELECT 1 FROM _cy2026_keep k
+                    WHERE (k.state, k.code, k.attribute) = (t.state, t.code, t.attribute));
 
--- 5b. Where a later rule is live on the same key, this one answers only up
+-- 5d. Where a later rule is live on the same key, this one answers only up
 --     to it: the July RVU26C row takes over on 2026-07-01, and this row
 --     keeps January to June. Without the close both would be live with no
 --     end date, which db/test/0003_rule_supersession.sql refuses and which
