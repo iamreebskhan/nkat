@@ -11,6 +11,7 @@
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { writeAudit } from "@/lib/features/audit/audit-write";
+import { ReviewWarningsError, hardStopMessage, loadReviewChecks } from "@/lib/features/billing/claim-checks.service";
 import { gateDescriptor } from "@/lib/features/billing/code-pure";
 import {
   normalizeUnits,
@@ -35,9 +36,11 @@ import {
   priceCodes,
   type DraftSuperbill,
   type PayerRate,
+  type PracticeFee,
   type ProviderTier,
   type SuperbillPricing,
 } from "./superbill-pure";
+import { furtherPaymentTotal, statusLabel } from "./superbill-queue";
 
 export const SUPERBILL_STATUSES = [
   "draft",
@@ -155,6 +158,26 @@ async function readPayerRates(
 }
 
 /**
+ * The practice's own fees in force on the date of service (0118, Mark Q4
+ * default). None until the practice enters its fee schedule; the claim then
+ * bills at the payer's rate, as it always did.
+ */
+export async function readPracticeFees(
+  tx: Tx,
+  a: { orgId: string; codes: string[]; dos: string },
+): Promise<PracticeFee[]> {
+  if (a.codes.length === 0) return [];
+  const rows = await tx.$queryRaw<{ code: string; fee_cents: number }[]>`
+    SELECT code, fee_cents FROM practice_fee
+     WHERE org_id = ${a.orgId}::uuid
+       AND code = ANY(${a.codes}::text[])
+       AND effective_from <= ${a.dos}::date
+       AND (effective_to IS NULL OR effective_to > ${a.dos}::date)
+  `;
+  return rows.map((r) => ({ code: r.code, feeCents: Number(r.fee_cents) }));
+}
+
+/**
  * Reprice a saved bill from its current codes, units, payer, coverage state
  * and place of service (audit R33). Editing 99349 to 99350 used to keep
  * 99349's price. The tier is the one the bill was priced at; bills from before
@@ -164,7 +187,7 @@ async function repriceSuperbill(
   tx: Tx,
   orgId: string,
   id: string,
-): Promise<{ before: number; after: number; pricing: SuperbillPricing } | null> {
+): Promise<{ before: number; after: number; expected: number | null; pricing: SuperbillPricing } | null> {
   const rows = await tx.$queryRaw<
     {
       payer_id: string | null;
@@ -204,20 +227,23 @@ async function repriceSuperbill(
     c.payer_id && c.coverage_state
       ? await readPayerRates(tx, { payerId: c.payer_id, state: c.coverage_state, codes, dos: c.dos })
       : [];
+  const fees = await readPracticeFees(tx, { orgId, codes, dos: c.dos });
   const priced = priceCodes(codes, tier, rates, {
     facility: c.facility === "facility",
     units: c.units ?? {},
+    fees,
   });
   const pricing: SuperbillPricing = { tier, lines: priced.lines };
   await tx.$executeRaw`
     UPDATE superbill
        SET billed_amount_cents = ${priced.totalCents},
+           expected_amount_cents = ${priced.expectedCents},
            pricing = ${JSON.stringify(pricing)}::jsonb,
            updated_at = now()
      WHERE id = ${id}::uuid
        AND org_id = ${orgId}::uuid
   `;
-  return { before: Number(c.billed), after: priced.totalCents, pricing };
+  return { before: Number(c.billed), after: priced.totalCents, expected: priced.expectedCents, pricing };
 }
 
 /**
@@ -306,6 +332,8 @@ export async function buildDraftFromVisit(args: {
             dos,
           })
         : [];
+    // The practice's own fees (0118): billed at them where it has them.
+    const practiceFees = await readPracticeFees(tx, { orgId: args.orgId, codes, dos });
 
     return buildSuperbill({
       visit: {
@@ -349,6 +377,7 @@ export async function buildDraftFromVisit(args: {
       placeOfServiceCode: r.place_of_service_code,
       posFacility: r.pos_facility === "facility",
       payerRates,
+      practiceFees,
     });
   });
 }
@@ -453,7 +482,7 @@ export async function persistDraft(args: {
         member_id_snapshot, member_id_snapshot_enc, date_of_service,
         cpt_codes, cpt_units, icd10_codes, modifiers,
         provider_npi, provider_name, billing_npi, place_of_service_code,
-        billed_amount_cents, status, predicted_risk, pricing
+        billed_amount_cents, expected_amount_cents, status, predicted_risk, pricing
       ) VALUES (
         ${orgId}::uuid, ${draft.visitId}::uuid, ${draft.patientId}::uuid,
         ${draft.payerId ?? null}::uuid,
@@ -464,7 +493,7 @@ export async function persistDraft(args: {
         ${draft.icd10Codes}::text[], ${draft.modifiers}::text[],
         ${draft.providerNpi}, ${draft.providerName}, ${draft.billingNpi || null},
         ${draft.placeOfServiceCode},
-        ${draft.billedAmountCents}, 'draft',
+        ${draft.billedAmountCents}, ${draft.expectedAmountCents ?? null}, 'draft',
         ${predictedRisk ? JSON.stringify(predictedRisk) : null}::jsonb,
         ${JSON.stringify(draft.pricing)}::jsonb
       )
@@ -535,6 +564,13 @@ export interface SuperbillView {
   billingNpi: string;
   placeOfServiceCode: string;
   billedAmountCents: number;
+  /**
+   * What the payer's rates come to for the claim's lines (0118): equal to
+   * billed until the practice bills its own fees. null on bills priced before.
+   */
+  expectedAmountCents: number | null;
+  /** Sent to billing: when the claim was last exported (0118); null if never. */
+  lastExportedAt: string | null;
   paidAmountCents: number | null;
   /**
    * Where paidAmountCents came from (audit R10): 'recorded' when typed in
@@ -576,6 +612,10 @@ interface SuperbillRow {
   billing_npi: string | null;
   place_of_service_code: string;
   billed_amount_cents: number;
+  /** Absent from reads that do not select it, and NULL before 0118. */
+  expected_amount_cents?: number | bigint | null;
+  /** The claim's last export to billing (0118); absent from reads that do not join it. */
+  last_exported_at?: Date | null;
   paid_amount_cents: number | null;
   /** NULL while unpaid, and absent on reads before 0102. */
   paid_source?: "recorded" | "remittance" | null;
@@ -606,6 +646,8 @@ function rowToView(r: SuperbillRow): SuperbillView {
     billingNpi: r.billing_npi ?? "",
     placeOfServiceCode: r.place_of_service_code,
     billedAmountCents: Number(r.billed_amount_cents),
+    expectedAmountCents: r.expected_amount_cents == null ? null : Number(r.expected_amount_cents),
+    lastExportedAt: r.last_exported_at ? r.last_exported_at.toISOString() : null,
     paidAmountCents: r.paid_amount_cents ? Number(r.paid_amount_cents) : null,
     paidSource: r.paid_source ?? null,
     claimRef: claimRefFor(r.id),
@@ -626,8 +668,12 @@ export async function getSuperbillByVisit(args: {
 }): Promise<SuperbillView | null> {
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<SuperbillRow[]>`
-      SELECT * FROM superbill
-       WHERE visit_id = ${args.visitId}::uuid AND org_id = ${args.orgId}::uuid
+      SELECT s.*,
+             (SELECT max(b.created_at) FROM claim_export_item i
+                JOIN claim_export_batch b ON b.id = i.batch_id AND b.org_id = i.org_id
+               WHERE i.superbill_id = s.id AND i.org_id = s.org_id) AS last_exported_at
+        FROM superbill s
+       WHERE s.visit_id = ${args.visitId}::uuid AND s.org_id = ${args.orgId}::uuid
        LIMIT 1
     `;
     return rows[0] ? rowToView(rows[0]) : null;
@@ -663,7 +709,11 @@ export async function listSuperbills(args: {
   const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0;
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<(SuperbillRow & { patient_name: string | null })[]>`
-      SELECT s.*, TRIM(p.first_name || ' ' || p.last_name) AS patient_name
+      SELECT s.*, TRIM(p.first_name || ' ' || p.last_name) AS patient_name,
+             -- Sent to billing (0118): the claim's last export.
+             (SELECT max(b.created_at) FROM claim_export_item i
+                JOIN claim_export_batch b ON b.id = i.batch_id AND b.org_id = i.org_id
+               WHERE i.superbill_id = s.id AND i.org_id = s.org_id) AS last_exported_at
         FROM superbill s
         JOIN patient p ON p.id = s.patient_id AND p.org_id = s.org_id
        WHERE s.org_id = ${args.orgId}::uuid
@@ -733,6 +783,8 @@ export interface UpdateSuperbillResult {
   updated: boolean;
   /** Set when the edit repriced the bill: its codes, units or place of service changed. */
   billedAmountCents?: number;
+  /** With it, what the payer's rates come to (0118); null when a line has none. */
+  expectedAmountCents?: number | null;
   pricing?: SuperbillPricing;
   /** Set when the edit sent a reviewed bill back to draft (audit R26). */
   status?: SuperbillStatus;
@@ -769,6 +821,13 @@ export async function updateSuperbill(args: {
     modifiers?: string[];
     /** Where the visit took place (audit R23), corrected on the bill. */
     placeOfServiceCode?: string;
+    /**
+     * Take the plan and member ID from the chart as they are now (0120). A
+     * bill keeps the coverage it was drafted with, so a member ID corrected
+     * on the chart after a clearinghouse rejected the claim for it never
+     * reached the claim, and the resent claim was rejected again.
+     */
+    refreshInsurance?: boolean;
   };
   overrides?: Array<{ code: string; reason: string }>;
 }): Promise<UpdateSuperbillResult> {
@@ -789,6 +848,7 @@ export async function updateSuperbill(args: {
         `Superbill is ${exists[0].status}; only draft, ready-to-submit or denied claims can be edited.`,
       );
     }
+    await assertNotSending(tx, args.orgId, args.id);
     const statusBefore = exists[0].status;
 
     let touched = false;
@@ -847,11 +907,45 @@ export async function updateSuperbill(args: {
       touched = true;
     }
 
+    // The chart's coverage as it is now (0120). Only when it differs from the
+    // bill's: a refresh that changes nothing is not an edit, and must not send
+    // a reviewed claim back to draft.
+    let insuranceChanged: string[] = [];
+    if (args.patch.refreshInsurance) {
+      const cur = await tx.$queryRaw<
+        { payer_id: string | null; member_id_snapshot: string | null; chart_payer: string | null; chart_member: string | null }[]
+      >`
+        SELECT s.payer_id, s.member_id_snapshot, p.primary_payer_id AS chart_payer, p.primary_member_id AS chart_member
+          FROM superbill s JOIN patient p ON p.id = s.patient_id AND p.org_id = s.org_id
+         WHERE s.id = ${args.id}::uuid AND s.org_id = ${args.orgId}::uuid
+      `;
+      const c = cur[0];
+      if (!c?.chart_payer || !c.chart_member?.trim()) {
+        throw new ValidationError("The chart has no primary insurance and member ID to take. Add them under the patient's Insurance first.");
+      }
+      insuranceChanged = [
+        c.payer_id !== c.chart_payer ? "plan" : null,
+        (c.member_id_snapshot ?? "") !== c.chart_member ? "member ID" : null,
+      ].filter((x): x is string => x !== null);
+      if (insuranceChanged.length > 0) {
+        const phi = await applyPhiKeyIfConfigured(tx);
+        await tx.$executeRaw`
+          UPDATE superbill SET
+            payer_id = ${c.chart_payer}::uuid,
+            member_id_snapshot = ${c.chart_member},
+            member_id_snapshot_enc = CASE WHEN ${phi} THEN encrypt_phi(${c.chart_member}) ELSE NULL END,
+            updated_at = now()
+          WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+        `;
+        touched = true;
+      }
+    }
+
     // Reprice when what the price depends on changed (audit R33): the codes,
-    // their units (0106), or the place of service, since a facility is priced
-    // at its own rate.
+    // their units (0106), the place of service, since a facility is priced at
+    // its own rate, or the plan, whose rates are the price (0120).
     const repriced =
-      args.patch.cptCodes || args.patch.cptUnits || args.patch.placeOfServiceCode
+      args.patch.cptCodes || args.patch.cptUnits || args.patch.placeOfServiceCode || insuranceChanged.includes("plan")
         ? await repriceSuperbill(tx, args.orgId, args.id)
         : null;
 
@@ -901,6 +995,7 @@ export async function updateSuperbill(args: {
         args.patch.icd10Codes ? "ICD-10 codes" : null,
         args.patch.modifiers ? "modifiers" : null,
         args.patch.placeOfServiceCode ? "place of service" : null,
+        insuranceChanged.length > 0 ? `insurance from the chart (${insuranceChanged.join(", ")})` : null,
       ].filter(Boolean);
       await tx.$executeRaw`
         INSERT INTO superbill_activity (
@@ -923,6 +1018,8 @@ export async function updateSuperbill(args: {
             icd10Codes: args.patch.icd10Codes,
             modifiers: args.patch.modifiers,
             placeOfServiceCode: args.patch.placeOfServiceCode,
+            // Which parts of the coverage were taken from the chart; never the ID itself.
+            ...(insuranceChanged.length > 0 ? { insuranceRefreshed: insuranceChanged } : {}),
             overrides: args.overrides ?? [],
             // The price before and after, when the edit repriced the bill.
             billedAmountCents: repriced ? { before: repriced.before, after: repriced.after } : undefined,
@@ -933,7 +1030,9 @@ export async function updateSuperbill(args: {
 
     return {
       updated: touched,
-      ...(repriced ? { billedAmountCents: repriced.after, pricing: repriced.pricing } : {}),
+      ...(repriced
+        ? { billedAmountCents: repriced.after, expectedAmountCents: repriced.expected, pricing: repriced.pricing }
+        : {}),
       ...(sentBack ? { status: "draft" as const } : {}),
       ...(unitsWritten ? { cptUnits: unitsWritten } : {}),
     };
@@ -1016,17 +1115,29 @@ export async function correctDateOfService(args: {
   orgId: string;
   id: string;
   userId: string;
-}): Promise<{ from: string; to: string; billedAmountCents: number; status: SuperbillStatus }> {
+}): Promise<{
+  from: string;
+  to: string;
+  billedAmountCents: number;
+  expectedAmountCents: number | null;
+  status: SuperbillStatus;
+}> {
   const result = await withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<
-      { status: SuperbillStatus; dos: string; day: string | null; billed: bigint | number }[]
+      {
+        status: SuperbillStatus;
+        dos: string;
+        day: string | null;
+        billed: bigint | number;
+        expected: bigint | number | null;
+      }[]
     >`
       SELECT s.status, to_char(s.date_of_service, 'YYYY-MM-DD') AS dos,
              -- The day buildDraftFromVisit dates a new bill by: the visit's
              -- start, else its booked start, where the practice is.
              to_char((COALESCE(v.start_time, v.scheduled_start) AT TIME ZONE o.timezone)::date,
                      'YYYY-MM-DD') AS day,
-             s.billed_amount_cents AS billed
+             s.billed_amount_cents AS billed, s.expected_amount_cents AS expected
         FROM superbill s
         JOIN org o ON o.id = s.org_id
         LEFT JOIN visit v ON v.id = s.visit_id AND v.org_id = s.org_id
@@ -1090,6 +1201,7 @@ export async function correctDateOfService(args: {
       from: r.dos,
       to: r.day,
       billedAmountCents: repriced ? repriced.after : Number(r.billed),
+      expectedAmountCents: repriced ? repriced.expected : r.expected == null ? null : Number(r.expected),
       status: sentBack ? ("draft" as const) : r.status,
     };
   });
@@ -1108,7 +1220,11 @@ export const STATUS_TRANSITIONS: Record<SuperbillStatus, SuperbillStatus[]> = {
   // submitted), because deciding to refile is its own review.
   draft: ["ready_to_submit", "voided"],
   ready_to_submit: ["submitted", "draft", "voided"],
-  submitted: ["paid", "partially_paid", "denied", "voided"],
+  // submitted → ready_to_submit is a clearinghouse's or payer front end's
+  // rejection only (0120): the claim never reached adjudication, so it is not
+  // a denial, and it goes back to be corrected and sent again. markStatusTx
+  // refuses it from anything but a rejection read from their file.
+  submitted: ["paid", "partially_paid", "denied", "voided", "ready_to_submit"],
   partially_paid: ["paid", "denied", "voided"],
   denied: ["submitted", "voided"], // refiled claims go out again
   paid: [],
@@ -1116,18 +1232,37 @@ export const STATUS_TRANSITIONS: Record<SuperbillStatus, SuperbillStatus[]> = {
 };
 
 /**
- * Where a status move came from when no person typed it (audit R10): a payer's
- * 835, uploaded on Remittances. It is carried onto the trail, the audit row and
+ * Where a status move came from when no person typed it.
+ *
+ * remittance (audit R10): a payer's 835, uploaded on Remittances or read from
+ * a clearinghouse. It is carried onto the trail, the audit row and
  * superbill.paid_source, and the payer documentation gate (R19) records a gap
  * rather than stopping the move: that gate stops a claim going out, and the
  * payer has already processed this one.
+ *
+ * clearinghouse (0120): Pallio sent the claim's 837P file (sent), a 999 or
+ * 277CA confirmed a claim recorded elsewhere (accepted), or one rejected it
+ * before the payer processed it (rejected — the one way back from submitted
+ * to ready to submit). Every check a person's submission gets ran before the
+ * file was built; the move itself records what the file and its answers
+ * did, and names the file.
  */
-export interface StatusSource {
-  kind: "remittance";
-  remittanceFileId: string;
-  /** TRN02, the payer's check or EFT trace, cited on the claim history. */
-  traceNumber: string | null;
-}
+export type StatusSource =
+  | {
+      kind: "remittance";
+      remittanceFileId: string;
+      /** TRN02, the payer's check or EFT trace, cited on the claim history. */
+      traceNumber: string | null;
+    }
+  | {
+      kind: "clearinghouse";
+      event: "sent" | "accepted" | "rejected";
+      submissionId: string;
+      vendorName: string;
+      filename: string;
+      /** The 999 error or 277CA status, in a sentence, for an acceptance or a rejection. */
+      detail?: string;
+    };
 
 /**
  * Human-readable line for the activity trail.
@@ -1149,7 +1284,20 @@ function statusSummary(
 ): string {
   const amount =
     paidAmountCents !== undefined ? ` — $${(paidAmountCents / 100).toFixed(2)}` : "";
-  if (source) {
+  // Pallio sent this one (0120), so the trail says what it sent and where.
+  if (source?.kind === "clearinghouse") {
+    const detail = source.detail ? ` — ${source.detail}` : "";
+    if (to === "submitted" && source.event === "sent") {
+      return from === "denied"
+        ? `Resubmitted after correction: sent to ${source.vendorName} in ${source.filename}`
+        : `Sent to ${source.vendorName} in ${source.filename}`;
+    }
+    if (to === "submitted") return `Submission confirmed: ${source.vendorName} acknowledged the claim (${source.filename})${detail}`;
+    if (to === "ready_to_submit") {
+      return `Returned for correction: rejected before the payer processed it (${source.vendorName}, ${source.filename})${detail}`;
+    }
+  }
+  if (source?.kind === "remittance") {
     const trn = source.traceNumber ? ` ${source.traceNumber}` : "";
     if (to === "submitted") return `Submission confirmed by payer remittance${trn}`;
     if (to === "paid") return `Paid${amount}, per payer remittance${trn}`;
@@ -1197,12 +1345,38 @@ export interface MarkStatusArgs {
   paidInFull?: boolean;
   /** Set when a payer's 835 drives the move (audit R10). See StatusSource. */
   source?: StatusSource;
+  /**
+   * Mark the claim ready although its review checks warn (0118, Mark Q5
+   * default): an NCCI pair, an MUE, a $0 line, a code not covered. The reason
+   * is kept on the claim history.
+   */
+  reviewOverride?: { reason: string };
 }
 
 export async function markStatus(
   args: MarkStatusArgs,
 ): Promise<{ from: SuperbillStatus; to: SuperbillStatus }> {
   return withOrgContext(args.orgId, (tx) => markStatusTx(tx, args));
+}
+
+/**
+ * Refuse a change to a claim whose 837P file is being uploaded right now
+ * (0120): the file was built from the claim as it stood, and an edit or a
+ * status move landing mid-upload would leave Pallio and the clearinghouse
+ * holding two different claims. An upload that died without finishing stops
+ * counting after ten minutes, so a crashed send never locks a claim for good.
+ */
+export async function assertNotSending(tx: Tx, orgId: string, superbillId: string): Promise<void> {
+  const sending = await tx.$queryRaw<{ ok: number }[]>`
+    SELECT 1 AS ok FROM claim_submission_item i
+      JOIN claim_submission s ON s.id = i.submission_id
+     WHERE i.org_id = ${orgId}::uuid AND i.superbill_id = ${superbillId}::uuid
+       AND i.send_state = 'sending' AND s.created_at > now() - interval '10 minutes'
+     LIMIT 1
+  `;
+  if (sending[0]) {
+    throw new ValidationError("This claim is being sent to the clearinghouse right now. Wait a moment, then reload the page.");
+  }
 }
 
 /**
@@ -1228,6 +1402,32 @@ export async function markStatusTx(
   if (!from) throw new NotFoundError("Superbill not found.");
   if (!STATUS_TRANSITIONS[from].includes(args.to)) {
     throw new ValidationError(`Illegal superbill transition ${from} → ${args.to}.`);
+  }
+  // Back for correction only on a clearinghouse's or payer's rejection, read
+  // from their own file (0120). A person who heard of a problem records a
+  // denial, which keeps the claim's history honest about who said what.
+  if (from === "submitted" && args.to === "ready_to_submit" && !(args.source?.kind === "clearinghouse" && args.source.event === "rejected")) {
+    throw new ValidationError(
+      "A submitted claim comes back for correction only when the clearinghouse or the payer rejects it in a file Pallio reads. Record a denial instead.",
+    );
+  }
+  // A claim on its way to the clearinghouse stays as it is until the upload
+  // finishes (0120): the file carries the claim as it was a moment ago.
+  if (!args.source) await assertNotSending(tx, args.orgId, args.id);
+  // The review (0118, Level-1 doc:71, Mark Q5 default). A claim with no member
+  // ID, diagnosis or CPT code is refused both the review and submission; any
+  // other finding (an NCCI pair, an MUE, a $0 line, a code the payer does not
+  // cover) asks for a reason when the claim is marked ready, and the claim
+  // history keeps it. A payer's 835 is the payer's own word and is not held.
+  let reviewed: { warnings: string[]; reason: string } | null = null;
+  if ((args.to === "ready_to_submit" || args.to === "submitted") && !args.source) {
+    const checks = await loadReviewChecks(tx, { orgId: args.orgId, superbillId: args.id });
+    if (checks.hardStops.length > 0) throw new ValidationError(hardStopMessage(checks.hardStops));
+    if (args.to === "ready_to_submit" && checks.warnings.length > 0) {
+      const reason = args.reviewOverride?.reason.trim();
+      if (!reason) throw new ReviewWarningsError(checks.warnings);
+      reviewed = { warnings: checks.warnings.map((w) => `${w.kind}:${w.code}`), reason };
+    }
   }
   // A claim naming no rendering provider is rejected by every payer, so it
   // must not leave here marked as submitted (audit R40). Recording the
@@ -1330,12 +1530,16 @@ export async function markStatusTx(
   if (args.to === "submitted") {
     const docs = await loadDocumentationGaps(tx, { superbillId: args.id });
     const gap = documentationGap(docs.results, docs.payerName);
-    if (gap && args.source) {
+    const reason = args.documentationOverride?.reason.trim();
+    // A reason given is recorded as the override it is; a move from a file
+    // with none (an 835, or a clearinghouse confirming a claim sent
+    // elsewhere) records the gap; a person with none is stopped.
+    if (gap && reason) {
+      overridden = { missing: gap.missing.map((m) => m.element), reason };
+    } else if (gap && args.source) {
       remittanceGap = gap.missing.map((m) => m.element);
     } else if (gap) {
-      const reason = args.documentationOverride?.reason.trim();
-      if (!reason) throw new DocumentationIncompleteError(gap);
-      overridden = { missing: gap.missing.map((m) => m.element), reason };
+      throw new DocumentationIncompleteError(gap);
     }
   }
 
@@ -1363,9 +1567,22 @@ export async function markStatusTx(
         status = ${args.to},
         paid_at = now(),
         paid_amount_cents = ${args.paidAmountCents ?? null},
-        paid_source = ${args.source ? "remittance" : "recorded"},
+        paid_source = ${args.source?.kind === "remittance" ? "remittance" : "recorded"},
         updated_at = now()
       WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+    `;
+  } else if (from === "submitted" && args.to === "ready_to_submit") {
+    // Rejected before adjudication (0120): the claim is not with the payer,
+    // so neither is the visit billed — the mirror of the move to submitted.
+    await tx.$executeRaw`
+      UPDATE superbill SET status = 'ready_to_submit', updated_at = now()
+      WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+    `;
+    await tx.$executeRaw`
+      UPDATE visit SET status = 'pending_billing', updated_at = now()
+      WHERE id = (SELECT visit_id FROM superbill WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid)
+        AND org_id = ${args.orgId}::uuid
+        AND status = 'billed'
     `;
   } else {
     await tx.$executeRaw`
@@ -1412,9 +1629,12 @@ export async function markStatusTx(
     }
   }
 
-  const fromRemittance = args.source
-    ? { source: "remittance", remittanceFileId: args.source.remittanceFileId }
-    : {};
+  const fromRemittance =
+    args.source?.kind === "remittance"
+      ? { source: "remittance", remittanceFileId: args.source.remittanceFileId }
+      : args.source?.kind === "clearinghouse"
+        ? { source: "clearinghouse", submissionId: args.source.submissionId, event: args.source.event }
+        : {};
 
   // Append to the trail inside the same transaction — a status change that
   // isn't recorded would leave an unexplained gap in an appeal.
@@ -1436,6 +1656,9 @@ export async function markStatusTx(
           ? ` — over a documentation gap (${overridden.missing.map(elementLabel).join(", ")}): ${overridden.reason}`
           : "") +
         (remittanceGap ? ` — with a documentation gap (${remittanceGap.map(elementLabel).join(", ")})` : "") +
+        (reviewed
+          ? ` — over ${reviewed.warnings.length} review warning${reviewed.warnings.length === 1 ? "" : "s"}: ${reviewed.reason}`
+          : "") +
         // Says on the claim's own history that the figure is above the claim,
         // so a payment larger than the bill is never read as an ordinary one.
         (overpayment
@@ -1447,6 +1670,7 @@ export async function markStatusTx(
         ...(overridden ? { documentationOverride: overridden } : {}),
         ...(remittanceGap ? { documentationGap: remittanceGap } : {}),
         ...(overpayment ? { overpayment } : {}),
+        ...(reviewed ? { reviewOverride: reviewed } : {}),
         ...fromRemittance,
       })}::jsonb,
       clock_timestamp()
@@ -1483,10 +1707,125 @@ export async function markStatusTx(
       // payment above the bill "· more than billed"
       // (app/(platform)/billing/superbills/page.tsx), say so too.
       ...(overpayment ? { overpayment } : {}),
+      // What the review went over, as kind:code (0118); the reason is free
+      // text and stays on the claim history.
+      ...(reviewed ? { reviewOverride: reviewed.warnings } : {}),
       ...fromRemittance,
     },
   });
   return { from, to: args.to };
+}
+
+export interface FurtherPaymentArgs {
+  orgId: string;
+  id: string;
+  /** This payment alone, not the new total. */
+  amountCents: number;
+  actorUserId: string;
+  /** The payer will pay no more: the claim closes as paid at the new total. */
+  last?: boolean;
+  /** As for markStatus: the biller has seen that the total passes the bill. */
+  overpaymentAcknowledged?: boolean;
+}
+
+/**
+ * Another payment on a partially paid claim (defect D9; Level-1 doc:74). The
+ * only move from there was "Record paid in full", which writes the billed
+ * amount over what was recorded, so a second part-payment had nowhere to go.
+ *
+ * Pallio keeps one paid figure per claim, the running total that /billing's
+ * Collected and Outstanding read; the claim history keeps a line per payment.
+ * Reaching the bill closes the claim as paid. So does the payer's last payment
+ * on a claim that closes for less, the rest being a contractual adjustment or
+ * the patient's, which otherwise left it open with a balance nobody owes.
+ *
+ * Typed by a person, so paid_source becomes 'recorded' even over an 835's
+ * figure: a total with a typed part in it is no longer the payer's word alone.
+ */
+export async function recordFurtherPayment(
+  args: FurtherPaymentArgs,
+): Promise<{ status: SuperbillStatus; paidAmountCents: number }> {
+  return withOrgContext(args.orgId, async (tx) => {
+    // FOR UPDATE, as markStatusTx: two payments recorded at once must both count.
+    const rows = await tx.$queryRaw<
+      { status: SuperbillStatus; paid_amount_cents: bigint | number | null; billed_amount_cents: bigint | number | null; visit_id: string | null }[]
+    >`
+      SELECT status, paid_amount_cents, billed_amount_cents, visit_id FROM superbill
+       WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+       LIMIT 1 FOR UPDATE
+    `;
+    const bill = rows[0];
+    if (!bill) throw new NotFoundError("Superbill not found.");
+    if (bill.status !== "partially_paid") {
+      throw new ValidationError(`Another payment goes on a partially paid claim; this one is ${statusLabel(bill.status)}. Reload the queue.`);
+    }
+    await assertNotSending(tx, args.orgId, args.id);
+
+    const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+    const paid = Number(bill.paid_amount_cents ?? 0);
+    const billed = Number(bill.billed_amount_cents ?? 0);
+    const { totalCents, above, covers } = furtherPaymentTotal({ paidCents: paid, billedCents: billed, amountCents: args.amountCents });
+    // The claim is the bound, as for a first payment (see markStatusTx).
+    if (above && !args.overpaymentAcknowledged) {
+      throw new ValidationError(
+        `That makes ${dollars(totalCents)} paid on a claim billed ${dollars(billed)}. Amounts are recorded in dollars and cents, so $50.00 is 50.00, not 5000. If the payer really did pay more than the claim billed, confirm it as an overpayment.`,
+      );
+    }
+    const to: SuperbillStatus = covers || args.last ? "paid" : "partially_paid";
+    const overpayment = above ? { billedAmountCents: billed } : null;
+
+    await tx.$executeRaw`
+      UPDATE superbill SET
+        status = ${to},
+        paid_at = now(),
+        paid_amount_cents = ${totalCents},
+        paid_source = 'recorded',
+        updated_at = now()
+      WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+    `;
+
+    const ofBill = billed > 0 ? ` of the ${dollars(billed)} billed` : "";
+    const summary = overpayment
+      ? `Recorded another payment — ${dollars(args.amountCents)}, making ${dollars(totalCents)} — more than the ${dollars(billed)} billed, confirmed as an overpayment`
+      : covers
+        ? `Recorded another payment — ${dollars(args.amountCents)}, making ${dollars(totalCents)}: paid in full`
+        : args.last
+          ? `Recorded the last payment — ${dollars(args.amountCents)}, closed as paid at ${dollars(totalCents)}${ofBill}`
+          : `Recorded another payment — ${dollars(args.amountCents)}, making ${dollars(totalCents)}${ofBill}`;
+    await tx.$executeRaw`
+      INSERT INTO superbill_activity (
+        org_id, superbill_id, actor_user_id, kind, from_status, to_status, summary, detail, at
+      ) VALUES (
+        ${args.orgId}::uuid, ${args.id}::uuid, ${args.actorUserId}::uuid, 'status_change',
+        ${bill.status}, ${to}, ${summary},
+        ${JSON.stringify({
+          paymentCents: args.amountCents,
+          paidAmountCents: totalCents,
+          ...(args.last ? { lastPayment: true } : {}),
+          ...(overpayment ? { overpayment } : {}),
+        })}::jsonb,
+        clock_timestamp()
+      )
+    `;
+    await writeAudit(tx, {
+      orgId: args.orgId,
+      userId: args.actorUserId,
+      action: "superbill_status_change",
+      targetType: "superbill",
+      targetId: args.id,
+      payload: {
+        from: bill.status,
+        to,
+        visitId: bill.visit_id,
+        paidAmountCents: totalCents,
+        paymentCents: args.amountCents,
+        ...(args.last ? { lastPayment: true } : {}),
+        // Same shape as markStatusTx: /audit reads its billedAmountCents.
+        ...(overpayment ? { overpayment } : {}),
+      },
+    });
+    return { status: to, paidAmountCents: totalCents };
+  });
 }
 
 export interface SuperbillActivityView {

@@ -27,6 +27,7 @@ Every item below must be GREEN before flipping DNS to prod.
 # 32+ char random strings — generate once, store in 1Password/Vault.
 JWT_SECRET=$(openssl rand -hex 32)
 PALLIO_PHI_KEY=$(openssl rand -hex 32)
+PALLIO_TOKEN_KEY=$(openssl rand -hex 32)   # clearinghouse + calendar credentials; never rotate without re-saving them
 CRON_SECRET=$(openssl rand -hex 24)
 BACKUP_GPG_RECIPIENT=...   # GPG keyring ID; not auto-generated
 ```
@@ -66,7 +67,9 @@ STRIPE_PRICE_ENT=price_...
 
 # pgcrypto + cron
 PALLIO_PHI_KEY=<from §2>
+PALLIO_TOKEN_KEY=<from §2>
 CRON_SECRET=<from §2>
+# Never in production: CLEARINGHOUSE_ALLOW_PRIVATE_HOSTS (dev stand-in only; ignored there anyway).
 
 # Backup
 BACKUP_BUCKET=pallio-prod-backups
@@ -117,6 +120,7 @@ pm2 start ecosystem.config.cjs --env production
 | Job | Command | Schedule |
 |---|---|---|
 | Payer-rule alert digest | `curl -X POST -H "x-cron-secret: $CRON_SECRET" https://app.pallio.io/api/cron/payer-rule-alerts` | `0 13 * * *` (08:00 ET) |
+| Clearinghouse responses (999, 277CA, 835 over SFTP) | `curl -X POST -H "x-cron-secret: $CRON_SECRET" https://app.pallio.io/api/cron/clearinghouse-poll` | `*/15 * * * *` |
 | Logical backup | `bash scripts/nightly-backup.sh` (on the VPS) | `0 4 * * *` |
 
 Vercel: declare in `vercel.json` `crons` field.

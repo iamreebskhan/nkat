@@ -15,10 +15,27 @@ import {
   daysUntilExpiry,
   shouldRemindToday,
 } from "@/lib/features/attestations/attestation-pure";
+import { alertText } from "@/lib/features/care-coordination/care-coordination.types";
+import { listCaseload } from "@/lib/features/care-coordination/caseload.service";
+import {
+  DISCIPLINE_LABEL,
+  ESCALATION_MEASURE_INFO,
+  MONITORING_HOW_LABEL,
+  type Discipline,
+  type EscalationMeasure,
+} from "@/lib/features/care-plans/care-plan.types";
 import { addDaysIso, orgToday } from "@/lib/features/org/org-date";
 import { readOrgTimeZone } from "@/lib/features/org/org-time-zone";
 
-export type InboxItemKind = "visit" | "attestation_request" | "denial" | "attestation_expiring";
+export type InboxItemKind =
+  | "visit"
+  | "attestation_request"
+  | "denial"
+  | "attestation_expiring"
+  // Care between visits (0116): my tasks, alerts I was told of, follow-ups my caseload's plans ask for.
+  | "task"
+  | "alert"
+  | "follow_up";
 
 export interface InboxItem {
   key: string;
@@ -36,9 +53,13 @@ export async function listInbox(args: {
   canSeeDenials: boolean;
   /** True if the user has knowledge.attest — controls expiry reminders. */
   canAttest?: boolean;
+  /** True if the user has patients.view — controls the caseload's follow-ups. */
+  canSeePatients?: boolean;
   limit?: number;
 }): Promise<InboxItem[]> {
   const limit = Math.min(100, args.limit ?? 50);
+  // Follow-ups the care plans of my caseload ask for, and plan reviews due (doc:51).
+  const caseload = args.canSeePatients ? await listCaseload({ orgId: args.orgId, userId: args.userId }) : null;
 
   return withOrgContext(args.orgId, async (tx) => {
     // Every statement here names the org as well as relying on RLS, so on a
@@ -146,7 +167,95 @@ export async function listInbox(args: {
       `;
     }
 
+    // Tasks assigned to me, and escalation alerts I was told of (0116).
+    const tasks = await tx.$queryRaw<
+      {
+        id: string; title: string; discipline: Discipline; due_on: string | null; overdue: boolean; created_at: Date;
+        patient_id: string | null; patient_name: string | null;
+      }[]
+    >`
+      SELECT t.id, t.title, t.discipline, to_char(t.due_on, 'YYYY-MM-DD') AS due_on,
+             COALESCE(t.due_on < (now() AT TIME ZONE o.timezone)::date, false) AS overdue, t.created_at,
+             t.patient_id, TRIM(p.first_name || ' ' || p.last_name) AS patient_name
+        FROM care_task t
+        JOIN org o ON o.id = t.org_id
+        LEFT JOIN patient p ON p.id = t.patient_id AND p.org_id = t.org_id
+       WHERE t.org_id = ${args.orgId}::uuid AND t.assignee_user_id = ${args.userId}::uuid AND t.status = 'open'
+       ORDER BY t.due_on NULLS LAST, t.created_at
+       LIMIT ${limit}
+    `;
+    const alerts = await tx.$queryRaw<
+      {
+        id: string; patient_id: string; patient_name: string; measure: EscalationMeasure; value: string | null;
+        threshold: string | null; raised_at: Date;
+      }[]
+    >`
+      SELECT a.id, a.patient_id, TRIM(p.first_name || ' ' || p.last_name) AS patient_name, a.measure,
+             a.value::text AS value, a.threshold::text AS threshold, a.raised_at
+        FROM escalation_alert a
+        JOIN patient p ON p.id = a.patient_id AND p.org_id = a.org_id
+       WHERE a.org_id = ${args.orgId}::uuid AND a.notified_user_id = ${args.userId}::uuid AND a.status = 'open'
+       ORDER BY a.raised_at DESC
+       LIMIT ${limit}
+    `;
+
     const out: InboxItem[] = [];
+
+    for (const a of alerts) {
+      out.push({
+        key: `alert:${a.id}`,
+        kind: "alert",
+        title: `Escalation — ${a.patient_name}`,
+        subtitle: alertText(
+          { measure: a.measure, value: a.value === null ? null : Number(a.value), threshold: a.threshold === null ? null : Number(a.threshold) },
+          ESCALATION_MEASURE_INFO,
+        ),
+        href: `/patients/${a.patient_id}`,
+        occurredAt: a.raised_at.toISOString(),
+      });
+    }
+
+    for (const t of tasks) {
+      out.push({
+        key: `task:${t.id}`,
+        kind: "task",
+        title: t.title,
+        subtitle: [
+          t.patient_name ?? "No patient",
+          DISCIPLINE_LABEL[t.discipline],
+          t.due_on && `due ${t.due_on}${t.overdue ? " (overdue)" : ""}`,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        href: t.patient_id ? `/patients/${t.patient_id}?tab=tasks` : "/tasks",
+        occurredAt: t.created_at.toISOString(),
+      });
+    }
+
+    // Due today or before, as reminders: they sort with today's items.
+    const dueAt = new Date().toISOString();
+    for (const r of caseload?.rows ?? []) {
+      for (const d of r.due) {
+        out.push({
+          key: `follow:${r.patientId}:${d.item}`,
+          kind: "follow_up",
+          title: `Follow-up ${d.overdue ? "overdue" : "due"} — ${r.name}`,
+          subtitle: `${d.item}, ${MONITORING_HOW_LABEL[d.how]} · due ${d.dueOn}`,
+          href: `/patients/${r.patientId}?tab=calls`,
+          occurredAt: dueAt,
+        });
+      }
+      if (r.reviewDue) {
+        out.push({
+          key: `review:${r.patientId}`,
+          kind: "follow_up",
+          title: `Care plan review due — ${r.name}`,
+          subtitle: `Review set for ${r.reviewOn}`,
+          href: `/patients/${r.patientId}/care-plan`,
+          occurredAt: dueAt,
+        });
+      }
+    }
 
     for (const v of visits) {
       const patientName = `${v.first_name ?? ""} ${v.last_name ?? ""}`.trim() || "Patient";

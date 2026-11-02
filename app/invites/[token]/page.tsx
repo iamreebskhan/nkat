@@ -10,6 +10,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { PasswordInput } from "@/components/forms/password-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -92,7 +93,8 @@ export default function AcceptInvitePage() {
       </h1>
       <p className="text-sm text-slate-600 mt-1 mb-5">
         {preview.invitedByEmail ? `${preview.invitedByEmail} invited` : "You've been invited"}
-        {" "}as a <strong>{preview.roleTemplate.replace("_", " ")}</strong>.
+        {" "}as {/^[aeiou]/.test(preview.roleTemplate) ? "an" : "a"}{" "}
+        <strong>{preview.roleTemplate.replace("_", " ")}</strong>.
         You&rsquo;ll have {preview.permissions.length} permission
         {preview.permissions.length === 1 ? "" : "s"} on day one.
       </p>
@@ -120,9 +122,8 @@ export default function AcceptInvitePage() {
             <span className="block text-xs font-medium text-slate-700 mb-1">
               Password (min 12 chars)
             </span>
-            <input
+            <PasswordInput
               required
-              type="password"
               minLength={12}
               value={password}
               onChange={(e) => setPassword(e.target.value)}

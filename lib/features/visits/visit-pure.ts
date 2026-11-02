@@ -175,3 +175,17 @@ export function visitTypeHistoryWarning(
   if (codingBasis === "new_patient_home" && hint.lastVisitAt !== null) return "looks_established";
   return null;
 }
+
+/**
+ * The prior visit's date as the hint lines print it, "Oct 21, 2026": the
+ * practice's day (lastVisitDay, 0107) when the hint carries it. A calendar day
+ * is formatted at UTC so no zone moves it; only a hint without one falls back
+ * to the instant in the viewer's zone, which is what every hint used to do.
+ */
+export function hintDayLabel(hint: Pick<VisitTypeHint, "lastVisitAt" | "lastVisitDay">): string {
+  const opts = { month: "short", day: "numeric", year: "numeric" } as const;
+  if (hint.lastVisitDay) {
+    return new Date(`${hint.lastVisitDay}T00:00:00Z`).toLocaleDateString("en-US", { ...opts, timeZone: "UTC" });
+  }
+  return hint.lastVisitAt ? new Date(hint.lastVisitAt).toLocaleDateString("en-US", opts) : "";
+}

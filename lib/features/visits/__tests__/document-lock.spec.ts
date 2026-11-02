@@ -63,7 +63,7 @@ function fakeTx() {
     // as the member guard below. Bindings are (org_id, patient_id); the
     // patient is one of ORG's.
     if (sql.includes("FROM patient")) {
-      return Promise.resolve(values[0] === ORG ? [{ ok: 1 }] : []);
+      return Promise.resolve(values[0] === ORG ? [{ status: "active" }] : []);
     }
     // scheduleVisit's active-org-member guard. Answered explicitly: the
     // catch-all below returns 1, not a row array, which would have read as

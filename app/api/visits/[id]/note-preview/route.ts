@@ -40,8 +40,9 @@ export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
   // Holding a permission from the list above is a way into the route; it is not
   // a claim on this particular visit. Without this, a clinician — .own only —
   // was refused another clinician's visit by /api/visits/[id] and handed the
-  // same visit's whole note here.
-  const denied = await requireVisitAccess({ session, visitId: id });
+  // same visit's whole note here. A read, so the patient's clinical care team
+  // may as well (Level-1 doc:49).
+  const denied = await requireVisitAccess({ session, visitId: id, access: "read" });
   if (denied) return denied;
 
   try {

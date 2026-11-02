@@ -48,6 +48,9 @@ const VitalsSchema = z.object({
     .nullable()
     .optional(),
   painScore: n(0, 10),
+  // Shortness of breath and nausea, 0-10 like pain (0113, Mark Q11b).
+  dyspneaScore: n(0, 10),
+  nauseaScore: n(0, 10),
   notes: z.string().max(2000).nullable().optional(),
 });
 

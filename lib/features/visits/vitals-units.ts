@@ -110,6 +110,9 @@ export const VITALS_FIELDS: VitalsFieldSpec[] = [
     toStored: identity, fromStored: identity, min: 0, max: 100,
   },
   { key: "painScore", label: "Pain", unit: "/10", toStored: identity, fromStored: identity, min: 0, max: 10 },
+  // The other two symptoms the Level-1 workflow scores (doc:81-82, 0113).
+  { key: "dyspneaScore", label: "Shortness of breath", unit: "/10", toStored: identity, fromStored: identity, min: 0, max: 10 },
+  { key: "nauseaScore", label: "Nausea", unit: "/10", toStored: identity, fromStored: identity, min: 0, max: 10 },
 ];
 
 /** Format a stored metric value for display, or "—" when it was never taken. */

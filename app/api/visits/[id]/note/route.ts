@@ -48,8 +48,8 @@ export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
 
   // READ_ANY says who may use this route at all. Whose visit this is, is a
   // separate question, and only visits.view.all answers it "anyone's" —
-  // see visit-access.ts.
-  const denied = await requireVisitAccess({ session, visitId: id });
+  // see visit-access.ts. A read: the patient's clinical care team may too.
+  const denied = await requireVisitAccess({ session, visitId: id, access: "read" });
   if (denied) return denied;
 
   try {

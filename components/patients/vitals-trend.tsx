@@ -50,13 +50,35 @@ interface TrendRow {
   spo2Percent: number | null;
   ppsPercent: number | null;
   painScore: number | null;
+  dyspneaScore: number | null;
+  nauseaScore: number | null;
   notes: string | null;
 }
 
 /** The columns worth a table cell, in the order a clinician scans them. */
-const COLUMNS = ["weightKg", "ppsPercent", "painScore", "bpSystolic", "heartRate", "respRate", "temperatureC", "spo2Percent"];
+const COLUMNS = [
+  "weightKg", "ppsPercent", "painScore", "dyspneaScore", "nauseaScore",
+  "bpSystolic", "heartRate", "respRate", "temperatureC", "spo2Percent",
+];
+
+/** The three symptoms the Level-1 workflow scores (doc:80-83, 0113). */
+const SYMPTOMS = ["painScore", "dyspneaScore", "nauseaScore"] as const;
 
 const spec = (key: string): VitalsFieldSpec => VITALS_FIELDS.find((f) => f.key === key)!;
+
+/**
+ * Each symptom now, and where it stood at the oldest score on the page:
+ * the change over time doc:83 asks for, from the readings themselves.
+ */
+function symptomChanges(rows: TrendRow[]): { key: string; now: number; from: number | null }[] {
+  return SYMPTOMS.flatMap((key) => {
+    const scored = rows.filter((r) => r[key] !== null);
+    if (scored.length === 0) return [];
+    const now = scored[0]![key]!;
+    const first = scored[scored.length - 1]!;
+    return [{ key, now, from: scored.length > 1 ? first[key]! : null }];
+  });
+}
 
 export function VitalsTrend({ patientId }: { patientId: string }) {
   const [rows, setRows] = useState<TrendRow[] | null>(null);
@@ -161,6 +183,22 @@ export function VitalsTrend({ patientId }: { patientId: string }) {
                     PPS <strong className="text-slate-900 tabular">{latest.ppsPercent}%</strong>
                   </span>
                 )}
+              </div>
+            )}
+            {symptomChanges(rows).length > 0 && (
+              <div className="mb-4 flex flex-wrap items-baseline gap-x-6 gap-y-1" aria-label="Symptom scores">
+                {symptomChanges(rows).map((s) => (
+                  <span key={s.key} className="text-sm text-slate-600">
+                    {spec(s.key).label}{" "}
+                    <strong className="text-slate-900 tabular">{s.now}/10</strong>
+                    {s.from !== null && s.from !== s.now && (
+                      <span className={`tabular ${s.now > s.from ? "text-amber-800" : "text-emerald-800"}`}>
+                        {" "}
+                        (from {s.from})
+                      </span>
+                    )}
+                  </span>
+                ))}
               </div>
             )}
 

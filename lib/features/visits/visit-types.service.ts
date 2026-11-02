@@ -26,7 +26,12 @@ import { z } from "zod";
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { changedFieldNames, writeAudit } from "@/lib/features/audit/audit-write";
-import { SELECTABLE_CODING_BASES, VISIT_TYPES, type VisitType } from "./visit.types";
+import {
+  CARE_MANAGEMENT_VISIT_TYPE,
+  SELECTABLE_CODING_BASES,
+  VISIT_TYPES,
+  type VisitType,
+} from "./visit.types";
 
 export const CreateVisitTypeSchema = z.object({
   label: z.string().trim().min(2).max(64),
@@ -96,7 +101,8 @@ function toView(r: Row): VisitTypeView {
 function isBuiltInSlug(slug: string): boolean {
   return (
     (VISIT_TYPES as readonly string[]).includes(slug) ||
-    DEFAULT_VISIT_TYPES.some((t) => t.slug === slug)
+    DEFAULT_VISIT_TYPES.some((t) => t.slug === slug) ||
+    slug === CARE_MANAGEMENT_VISIT_TYPE
   );
 }
 
@@ -121,13 +127,16 @@ export async function listVisitTypes(args: {
     // The org is named as well as enforced by RLS, for the types and for the
     // visits counted against them: slugs repeat across orgs, so a count on
     // the slug alone added other orgs' visits on a connection that bypasses
-    // RLS. Every selected column is grouped; usage_count stays bigint.
+    // RLS. Every selected column is grouped; usage_count stays bigint. The
+    // PCM/CCM month type is the charge's own (0117): never offered, even to
+    // reactivate.
     const rows = await tx.$queryRaw<Row[]>`
       SELECT t.id, t.slug, t.label, t.coding_basis, t.is_telehealth, t.active, t.sort_order,
              COUNT(v.id)::bigint AS usage_count
       FROM org_visit_type t
       LEFT JOIN visit v ON v.org_id = t.org_id AND v.visit_type = t.slug
       WHERE t.org_id = ${args.orgId}::uuid
+        AND t.slug <> ${CARE_MANAGEMENT_VISIT_TYPE}
         AND (${args.includeInactive ?? false}::boolean OR t.active)
       GROUP BY t.id, t.slug, t.label, t.coding_basis, t.is_telehealth, t.active, t.sort_order
       ORDER BY t.sort_order, t.label
@@ -198,6 +207,7 @@ export async function updateVisitType(args: {
       const remaining = await tx.$queryRaw<{ n: bigint }[]>`
         SELECT COUNT(*)::bigint AS n FROM org_visit_type
          WHERE org_id = ${args.orgId}::uuid AND active AND id <> ${args.id}::uuid
+           AND slug <> ${CARE_MANAGEMENT_VISIT_TYPE}
       `;
       if (Number(remaining[0]?.n ?? 0) === 0) {
         throw new ValidationError("Keep at least one active visit type.");
@@ -212,8 +222,10 @@ export async function updateVisitType(args: {
         updated_at = now()
       WHERE id = ${args.id}::uuid
         AND org_id = ${args.orgId}::uuid
+        AND slug <> ${CARE_MANAGEMENT_VISIT_TYPE}
     `;
-    // Another org's type is not found, in the same words as a missing one.
+    // Another org's type is not found, in the same words as a missing one; so
+    // is the PCM/CCM month type, which no one edits (0117).
     if (n === 0) throw new NotFoundError("Visit type not found.");
     // active is called out by name: switching one off removes it from the
     // scheduling dropdown for everybody, and that is the change worth being

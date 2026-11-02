@@ -332,6 +332,7 @@ export async function listMembers(args: {
         permissions: string[];
         npi: string | null;
         credential: string | null;
+        taxonomy_code: string | null;
       }[]
     >`
       SELECT
@@ -346,9 +347,10 @@ export async function listMembers(args: {
             FILTER (WHERE up.permission IS NOT NULL),
           '{}'
         )::text[] AS permissions,
-        -- The clinician's billing identity (audit R40, R25).
+        -- The clinician's billing identity (audit R40, R25; taxonomy 0118).
         cp.npi,
-        cp.credential
+        cp.credential,
+        cp.taxonomy_code
       FROM org_member om
       JOIN app_user u ON u.id = om.user_id
       -- org_id twice, for two different jobs, and neither is redundant with
@@ -371,7 +373,7 @@ export async function listMembers(args: {
       -- today. It is a backstop: if that predicate is ever lost, a two-org
       -- member still comes back as one row per org instead of one row
       -- carrying both orgs' grants.
-      GROUP BY om.org_id, om.user_id, u.email, u.full_name, cp.npi, cp.credential
+      GROUP BY om.org_id, om.user_id, u.email, u.full_name, cp.npi, cp.credential, cp.taxonomy_code
       ORDER BY u.email
     `;
     return rows.map((r) => ({
@@ -381,6 +383,7 @@ export async function listMembers(args: {
       permissions: r.permissions,
       npi: r.npi,
       credential: r.credential,
+      taxonomyCode: r.taxonomy_code ?? null,
     }));
   });
 }

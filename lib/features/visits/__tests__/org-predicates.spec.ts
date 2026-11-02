@@ -129,6 +129,7 @@ function visit(id: string, org_id: string, over: Partial<SqlRow> = {}): SqlRow {
     is_telehealth: false,
     telehealth_modality: null,
     telehealth_consent_documented: false,
+    series_id: null,
     document_text: null,
     note_template_id: null,
     cpt_codes_assigned: [],
@@ -202,10 +203,10 @@ function load(): FakeDb {
       ],
     },
     patient: {
-      columns: ["id", "org_id", "first_name", "last_name", "city"],
+      columns: ["id", "org_id", "first_name", "last_name", "city", "status"],
       rows: [
-        { id: OTHER_PATIENT, org_id: OTHER_ORG, first_name: "Other", last_name: "Tenant", city: "Elsewhere" },
-        { id: PATIENT, org_id: ORG, first_name: "Test", last_name: "Patient", city: "Tampa" },
+        { id: OTHER_PATIENT, org_id: OTHER_ORG, first_name: "Other", last_name: "Tenant", city: "Elsewhere", status: "active" },
+        { id: PATIENT, org_id: ORG, first_name: "Test", last_name: "Patient", city: "Tampa", status: "active" },
       ],
     },
     app_user: {
@@ -553,7 +554,9 @@ describe("transitionVisit", () => {
     });
     expect(rowOf("visit", MINE).status).toBe("cancelled");
     expect(audits()).toHaveLength(1);
-    expect(audits()[0]).toMatchObject({ org_id: ORG, action: "visit_document", target_id: MINE });
+    // Its own action: logged as visit_document, a cancellation read in the
+    // audit log as documentation.
+    expect(audits()[0]).toMatchObject({ org_id: ORG, action: "visit_cancel", target_id: MINE });
     expect(JSON.parse(String(audits()[0]!.payload))).toEqual({ from: "scheduled", to: "cancelled" });
   });
 });

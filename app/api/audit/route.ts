@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { ok, parseSearchParams } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
-import { listAuditLog } from "@/lib/features/audit/audit.service";
+import { AUDIT_CURSOR, listAuditLog } from "@/lib/features/audit/audit.service";
 
 const Query = z.object({
   userEmail: z.string().email().optional(),
@@ -13,7 +13,9 @@ const Query = z.object({
   visitId: z.string().uuid().transform((s) => s.toLowerCase()).optional(),
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  cursor: z.string().optional(),
+  // Only a cursor this endpoint handed out; anything else was cast to a
+  // timestamp inside the query and answered with a 500.
+  cursor: z.string().regex(AUDIT_CURSOR).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 

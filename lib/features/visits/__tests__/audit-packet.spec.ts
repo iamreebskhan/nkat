@@ -144,6 +144,43 @@ const run = (over: Record<string, unknown> = {}): PacketFinding[] =>
 
 const find = (fs: PacketFinding[], label: string) => fs.find((f) => f.label === label);
 
+describe("reconcile — a PCM/CCM month (0117)", () => {
+  const NP = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const t = (serviceOn: string, minutes: number, kind: "qhp" | "clinical_staff" = "clinical_staff") => ({
+    serviceOn, minutes, kind, performedBy: kind === "qhp" ? NP : "lpn", performedByName: "x", activity: "care_plan" as const,
+    fromCall: false, note: null,
+  });
+  const month = (entries: ReturnType<typeof t>[], codes: string[], units: Record<string, number> = {}) =>
+    run({
+      visit: { ...base.visit, cpt_codes_assigned: codes, cpt_units: units, clinician_user_id: NP, coding_basis: "care_management" },
+      superbill: { ...base.superbill, cpt_codes: codes, cpt_units: units },
+      sections: [],
+      careManagement: {
+        program: "ccm", month: "2026-10", basis: "staff", enrolledOn: "2026-10-01", consentOn: "2026-09-30",
+        consentMethod: "verbal", entries,
+      },
+    });
+
+  it("checks the codes against the time log, and the consent, instead of a note", () => {
+    const f = month([t("2026-10-02", 25), t("2026-10-15", 20)], ["99490", "99439"]);
+    expect(find(f, "Time log")).toMatchObject({ severity: "match" });
+    expect(find(f, "Time log")!.detail).toContain("45 minutes");
+    expect(find(f, "Consent")).toMatchObject({ severity: "match", detail: "Verbal consent on 2026-09-30; enrolled in CCM on 2026-10-01." });
+    // Nothing note-shaped is reported about a month with no note.
+    expect(find(f, "Note content")).toBeUndefined();
+    expect(find(f, "No time recorded")).toBeUndefined();
+  });
+
+  it("CONTROL: flags add-on units the time does not reach, and a base code it does not reach", () => {
+    const over = month([t("2026-10-02", 25), t("2026-10-15", 10)], ["99490", "99439"], { "99439": 2 });
+    expect(find(over, "Time log")).toMatchObject({ severity: "mismatch" });
+    expect(find(over, "Time log")!.detail).toContain("support at most 99490");
+    const short = month([t("2026-10-02", 15)], ["99490"]);
+    expect(find(short, "Time log")).toMatchObject({ severity: "mismatch" });
+    expect(find(short, "Time log")!.detail).toContain("15 minutes");
+  });
+});
+
 describe("reconcile", () => {
   it("reports agreement when the note and the bill carry the same codes", () => {
     const f = find(run(), "Procedure codes agree");
@@ -348,6 +385,15 @@ describe("reconcile", () => {
   it("flags a visit with no time recorded", () => {
     const f = run({ visit: { ...base.visit, total_minutes: null } });
     expect(find(f, "No time recorded")?.severity).toBe("attention");
+  });
+
+  it("does not ask a Not billed visit to defend a time-based code it does not have", () => {
+    const f = run({
+      visit: { ...base.visit, total_minutes: null, coding_basis: "non_billable" },
+      superbill: null,
+    });
+    expect(find(f, "No time recorded")).toBeUndefined();
+    expect(find(f, "Not billed")?.severity).toBe("match");
   });
 
   it("reports ACP minutes separately when present", () => {

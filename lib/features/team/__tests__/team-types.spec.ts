@@ -32,6 +32,29 @@ describe("sessionRoleFor", () => {
   });
 });
 
+describe("the intake coordinator (Level-1 audit, 27 Oct)", () => {
+  it("is a template a member can be invited with and sign in as", () => {
+    expect(sessionRoleFor("intake_coordinator", "employee")).toBe("intake_coordinator");
+    expect(
+      InviteSchema.safeParse({
+        email: "intake@local.test",
+        roleTemplate: "intake_coordinator",
+        permissions: ROLE_DEFAULT_PERMISSIONS.intake_coordinator,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("opens charts and books for every clinician — and reads no clinical note", () => {
+    const p = ROLE_DEFAULT_PERMISSIONS.intake_coordinator;
+    for (const want of ["patients.create", "patients.edit", "schedule.create", "schedule.manage.all", "billing.lookup.view"]) {
+      expect(p).toContain(want);
+    }
+    for (const never of ["visits.view.all", "visits.view.own", "visits.edit", "visits.submit", "careplans.view"]) {
+      expect(p).not.toContain(never);
+    }
+  });
+});
+
 describe("role defaults", () => {
   it("lets a read-only member read the audit log", () => {
     expect(ROLE_DEFAULT_PERMISSIONS.read_only).toContain("audit.view");

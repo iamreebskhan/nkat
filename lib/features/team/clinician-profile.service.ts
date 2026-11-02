@@ -30,8 +30,20 @@ export async function saveClinicianProfile(args: {
   actorUserId?: string;
   npi: string | null;
   credential: ClinicianCredential | null;
+  /**
+   * The rendering provider's taxonomy (0118). Left out: kept as it is; null:
+   * cleared. Callers from before it send none and change nothing.
+   */
+  taxonomyCode?: string | null;
 }): Promise<ClinicianProfile> {
   const npi = args.npi && args.npi.trim() !== "" ? args.npi.trim() : null;
+  const taxonomy =
+    args.taxonomyCode === undefined ? undefined : args.taxonomyCode?.trim().toUpperCase() || null;
+  if (taxonomy && !/^[0-9]{3}[0-9A-Z]{6}X$/.test(taxonomy)) {
+    throw new ValidationError(
+      `A taxonomy code is 10 characters ending in X, as registered on NPPES (e.g. 363LF0000X); "${taxonomy}" is not.`,
+    );
+  }
   if (npi && !/^\d{10}$/.test(npi)) {
     throw new ValidationError(`An NPI is exactly 10 digits; "${npi}" is not.`);
   }
@@ -80,12 +92,14 @@ export async function saveClinicianProfile(args: {
     const priorNpi = prior[0]?.npi ?? null;
 
     await tx.$executeRaw`
-      INSERT INTO clinician_profile (org_id, user_id, npi, credential, updated_at, updated_by_user_id)
-      VALUES (${args.orgId}::uuid, ${args.userId}::uuid, ${npi}, ${args.credential},
+      INSERT INTO clinician_profile (org_id, user_id, npi, credential, taxonomy_code, updated_at, updated_by_user_id)
+      VALUES (${args.orgId}::uuid, ${args.userId}::uuid, ${npi}, ${args.credential}, ${taxonomy ?? null},
               now(), ${args.actorUserId ?? null}::uuid)
       ON CONFLICT (org_id, user_id) DO UPDATE
         SET npi = EXCLUDED.npi,
             credential = EXCLUDED.credential,
+            taxonomy_code = CASE WHEN ${taxonomy !== undefined} THEN EXCLUDED.taxonomy_code
+                                 ELSE clinician_profile.taxonomy_code END,
             updated_at = now(),
             updated_by_user_id = EXCLUDED.updated_by_user_id
     `;
@@ -139,7 +153,7 @@ export async function saveClinicianProfile(args: {
       action: "clinician_profile_update",
       targetType: "user",
       targetId: args.userId,
-      payload: { fields: ["npi", "credential"], openBillsUpdated },
+      payload: { fields: ["npi", "credential", ...(taxonomy !== undefined ? ["taxonomy"] : [])], openBillsUpdated },
     });
 
     return { userId: args.userId, npi, credential: args.credential, openBillsUpdated };

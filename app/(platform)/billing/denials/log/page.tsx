@@ -30,9 +30,14 @@ export default function LogDenialPage() {
   const [rarcCode, setRarcCode] = useState("");
   const [denialReason, setDenialReason] = useState("");
   const [deniedAmount, setDeniedAmount] = useState("");
-  const [deniedAt, setDeniedAt] = useState(
-    new Date().toISOString().slice(0, 16),
-  );
+  // A datetime-local input holds the viewer's local clock, and submit reads it
+  // back as local (new Date(deniedAt)). Defaulting it from toISOString() put
+  // the UTC clock in a local field: logged from Ohio at 10:00, the denial was
+  // stamped 14:00 local, four hours ahead.
+  const [deniedAt, setDeniedAt] = useState(() => {
+    const now = new Date();
+    return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

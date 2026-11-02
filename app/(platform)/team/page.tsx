@@ -47,6 +47,8 @@ interface MemberRow {
   npi: string | null;
   /** Licensure — sets the rate this person's claims are priced at. */
   credential: string | null;
+  /** The rendering provider's taxonomy code (0118). */
+  taxonomyCode?: string | null;
 }
 
 type Tab = "members" | "invites" | "new";
@@ -56,6 +58,9 @@ export default function TeamPage() {
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [invites, setInvites] = useState<InviteRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Held here and not in the form: creating an invite leaves the form for the
+  // invites tab, which would take the only copy of the link with it.
+  const [undelivered, setUndelivered] = useState<UndeliveredInvite | null>(null);
 
   const [reloadKey, setReloadKey] = useState(0);
   function reload() {
@@ -125,11 +130,21 @@ export default function TeamPage() {
 
       {loading && <p className="text-sm text-slate-500">Loading…</p>}
 
+      {undelivered && <UndeliveredNotice invite={undelivered} />}
+
       {!loading && tab === "members" && (
         <MembersTable rows={members} onChange={reload} />
       )}
       {!loading && tab === "invites" && <InvitesTable rows={invites} />}
-      {!loading && tab === "new" && <InviteForm onCreated={() => { setTab("invites"); void reload(); }} />}
+      {!loading && tab === "new" && (
+        <InviteForm
+          onCreated={(missed) => {
+            setUndelivered(missed);
+            setTab("invites");
+            void reload();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -141,6 +156,7 @@ function MembersTable({ rows, onChange }: { rows: MemberRow[]; onChange: () => v
   // rendering provider, and the rate they are priced at.
   const [npi, setNpi] = useState("");
   const [credential, setCredential] = useState("");
+  const [taxonomy, setTaxonomy] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -150,6 +166,7 @@ function MembersTable({ rows, onChange }: { rows: MemberRow[]; onChange: () => v
     setPerms(r.permissions);
     setNpi(r.npi ?? "");
     setCredential(r.credential ?? "");
+    setTaxonomy(r.taxonomyCode ?? "");
     setError(null);
     setNotice(null);
   }
@@ -163,7 +180,11 @@ function MembersTable({ rows, onChange }: { rows: MemberRow[]; onChange: () => v
       const pr = await fetch(`/api/team/members/${userId}/profile`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ npi: npi.trim() || null, credential: credential || null }),
+        body: JSON.stringify({
+          npi: npi.trim() || null,
+          credential: credential || null,
+          taxonomyCode: taxonomy.trim() || null,
+        }),
       });
       const pd = await pr.json();
       if (!pd.success) {
@@ -326,6 +347,17 @@ function MembersTable({ rows, onChange }: { rows: MemberRow[]; onChange: () => v
                     className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono tabular"
                   />
                 </label>
+                <label className="block">
+                  <span className="block text-xs font-medium text-slate-700 mb-1">
+                    Taxonomy <span className="font-normal text-slate-500">(optional)</span>
+                  </span>
+                  <input
+                    value={taxonomy}
+                    onChange={(e) => setTaxonomy(e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 10))}
+                    placeholder="e.g. 363LF0000X"
+                    className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono"
+                  />
+                </label>
               </div>
               {npiLooksWrong && (
                 <p className="text-xs text-red-700 mt-1">
@@ -393,13 +425,33 @@ function InvitesTable({ rows }: { rows: InviteRow[] }) {
   );
 }
 
-function InviteForm({ onCreated }: { onCreated: () => void }) {
+/** An invite whose email did not go out, and the link that still works. */
+interface UndeliveredInvite {
+  email: string;
+  url: string;
+}
+
+function UndeliveredNotice({ invite }: { invite: UndeliveredInvite }) {
+  return (
+    <div
+      role="status"
+      className="text-sm text-amber-900 bg-amber-50 ring-1 ring-inset ring-amber-600/20 px-3 py-2 rounded space-y-1 mb-4"
+    >
+      <p className="font-medium">Invite created, but no email was sent to {invite.email}.</p>
+      <p className="text-xs">
+        Outbound email is not configured on this deployment. The invite is valid — send this link directly:
+      </p>
+      <code className="block text-[11px] font-mono break-all bg-white/70 rounded px-2 py-1">{invite.url}</code>
+    </div>
+  );
+}
+
+function InviteForm({ onCreated }: { onCreated: (missed: UndeliveredInvite | null) => void }) {
   const [email, setEmail] = useState("");
   const [roleTemplate, setRoleTemplate] = useState<RoleTemplate>("clinician");
   const [perms, setPerms] = useState<string[]>(ROLE_DEFAULT_PERMISSIONS.clinician);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [undelivered, setUndelivered] = useState<{ email: string; url: string } | null>(null);
 
   function changeRole(r: RoleTemplate) {
     setRoleTemplate(r);
@@ -426,12 +478,9 @@ function InviteForm({ onCreated }: { onCreated: () => void }) {
     // still works — the colleague just never hears about it. Say so, and hand
     // over the link rather than leaving the admin to discover the silence a
     // week later.
-    if (data.data?.emailDelivered === false && data.data?.acceptUrl) {
-      setUndelivered({ email, url: data.data.acceptUrl });
-    } else {
-      setUndelivered(null);
-    }
-    onCreated();
+    onCreated(
+      data.data?.emailDelivered === false && data.data?.acceptUrl ? { email, url: data.data.acceptUrl } : null,
+    );
   }
 
   return (
@@ -480,20 +529,6 @@ function InviteForm({ onCreated }: { onCreated: () => void }) {
           {error && (
             <div role="alert" className="text-sm text-red-700 bg-red-50 px-3 py-2 rounded">
               {error}
-            </div>
-          )}
-          {undelivered && (
-            <div className="text-sm text-amber-900 bg-amber-50 ring-1 ring-inset ring-amber-600/20 px-3 py-2 rounded space-y-1">
-              <p className="font-medium">
-                Invite created, but no email was sent to {undelivered.email}.
-              </p>
-              <p className="text-xs">
-                Outbound email is not configured on this deployment. The invite is
-                valid — send this link directly:
-              </p>
-              <code className="block text-[11px] font-mono break-all bg-white/70 rounded px-2 py-1">
-                {undelivered.url}
-              </code>
             </div>
           )}
           <div className="flex justify-end">

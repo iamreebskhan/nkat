@@ -102,6 +102,8 @@ let denials: Denial[];
 let throwFor: { prefix: string; err: Error } | null;
 /** The bill's latest refile, as the stale-file check reads it. */
 let lastRefile: Date | null;
+/** Whether the claim's CLP07 is the number the payer gave the bill's clearinghouse refile (0120). */
+let refileAnswered: boolean;
 /** What the documentation gate reads (audit R19); null = no row. */
 let docFacts: Record<string, unknown> | null;
 let docReqs: { code: string; required_chart_elements: string[] }[];
@@ -378,7 +380,9 @@ function fakeTx() {
       return Promise.resolve(bills.filter((b) => b.id >= lo! && b.id <= hi!).map((b) => ({ ...b })));
     }
     if (sql.includes("member_id_snapshot = ")) return Promise.resolve([]);
-    // The stale-file check's refile lookup, and the documentation gate's reads.
+    // The stale-file check: whether the payer's claim number names the
+    // clearinghouse refile, then the refile's date; and the documentation gate's reads.
+    if (sql.includes("FROM claim_submission_item")) return Promise.resolve([{ answers: refileAnswered }]);
     if (sql.includes("kind = 'resubmitted'")) return Promise.resolve([{ at: lastRefile }]);
     if (sql.includes("FROM superbill sb")) return Promise.resolve(docFacts ? [docFacts] : []);
     if (sql.includes("FROM documentation_requirement")) return Promise.resolve(docReqs);
@@ -539,6 +543,7 @@ beforeEach(() => {
   denials = [];
   throwFor = null;
   lastRefile = null;
+  refileAnswered = false;
   docFacts = null;
   docReqs = [];
   calls = [];
@@ -620,6 +625,19 @@ describe("ingestRemittance — posting a payment", () => {
   it("writes the payer's word on the trail, citing the trace number", async () => {
     await upload(PAY);
     expect(trail()).toContain("Paid — $98.50, per payer remittance LOCAL-PAY-1");
+  });
+
+  it("records the line's adjustments by group: contractual (CO), the patient's share (PR), the rest (0118)", async () => {
+    await upload(PAY.replace("CAS*CO*45*15.51~", "CAS*CO*45*10.51~CAS*PR*1*3.00~CAS*OA*23*2.00~"));
+    const line = eraRows().find((c) => c.values.includes(SB))!;
+    expect(line.sql).toContain("contractual_amount, patient_responsibility_amount, other_adjustment_amount");
+    // In the statement's own order: total adjusted, then CO, PR, OA+PI.
+    const at = line.values.indexOf("15.51");
+    expect(line.values.slice(at, at + 4)).toEqual(["15.51", "10.51", "3.00", "2.00"]);
+    // CONTROL: the claim with no CAS at all records zero in each.
+    const other = eraRows().find((c) => c.values.includes("NOPE00000001"))!;
+    const o = other.values.indexOf("0.00");
+    expect(other.values.slice(o, o + 4)).toEqual(["0.00", "0.00", "0.00", "0.00"]);
   });
 
   it("steps a denied bill through submitted; the documentation gate (R19) reads the claim but does not block", async () => {
@@ -950,10 +968,38 @@ describe("ingestRemittance — a file older than the bill's latest refile", () =
   it("reads the refile from the denials and from the claim's trail", async () => {
     lastRefile = new Date("2026-09-15T03:41:34Z");
     await upload(DENY);
-    const q = find("kind = 'resubmitted'")[0]!;
+    const q = find("kind = 'resubmitted'").find((c) => !c.sql.includes("claim_submission_item"))!;
     expect(q.sql).toContain("GREATEST");
     expect(q.sql).toContain("max(d.refiled_at)");
     expect(q.values).toEqual([SB, SB]);
+  });
+
+  it("posts one dated on the refile day when its CLP07 is the number the payer gave the clearinghouse refile", async () => {
+    lastRefile = new Date("2026-09-14T15:00:00Z");
+    refileAnswered = true;
+    const r = await upload(PAY);
+    expect(find("paid_at = now()")).toHaveLength(1);
+    expect(r.counts).toMatchObject({ paid: 1, needsReview: 0 });
+    // Asked about this bill, this claim's own number and this file.
+    const q = find("FROM claim_submission_item")[0]!;
+    expect(q.values).toContain(SB);
+    expect(q.values).toContain("PCN-LOCAL-2");
+    expect(q.values).toContain(FILE);
+  });
+
+  it("CONTROL — the same file is held when the payer's number does not name the refile", async () => {
+    lastRefile = new Date("2026-09-14T15:00:00Z");
+    const r = await upload(PAY);
+    expect(find("paid_at = now()")).toHaveLength(0);
+    expect(r.needsReview[0]!.note).toMatch(/on or before this claim was refiled/);
+  });
+
+  it("asks nothing of the clearinghouse for a claim with no CLP07, and the date decides", async () => {
+    lastRefile = new Date("2026-09-15T03:41:34Z");
+    refileAnswered = true;
+    const r = await upload(DENY.replace("*MC*PCN-LOCAL-1", "*MC"));
+    expect(find("FROM claim_submission_item")).toHaveLength(0);
+    expect(r.counts.needsReview).toBe(1);
   });
 
   it("holds a payment dated before the refile too: the corrected claim is still with the payer", async () => {

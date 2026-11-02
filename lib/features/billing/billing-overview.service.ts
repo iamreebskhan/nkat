@@ -51,7 +51,13 @@ export interface BillingByNurse {
   submitted: number;
   paid: number;
   denied: number;
+  /**
+   * Revenue per provider (Level-1 doc:106): what this clinician's visits
+   * billed and what has been collected on them, drafts and voided bills
+   * excluded as in the totals.
+   */
   billedCents: number;
+  paidCents: number;
 }
 
 /**
@@ -211,6 +217,7 @@ export async function getBillingOverview(args: {
         paid: bigint;
         denied: bigint;
         billed_cents: bigint | null;
+        paid_cents: bigint | null;
       }[]
     >`
       SELECT v.clinician_user_id,
@@ -220,7 +227,9 @@ export async function getBillingOverview(args: {
              COUNT(*) FILTER (WHERE s.status = 'paid')   AS paid,
              COUNT(*) FILTER (WHERE s.status = 'denied') AS denied,
              COALESCE(SUM(s.billed_amount_cents)
-                      FILTER (WHERE s.status NOT IN ('draft', 'voided')), 0) AS billed_cents
+                      FILTER (WHERE s.status NOT IN ('draft', 'voided')), 0) AS billed_cents,
+             COALESCE(SUM(s.paid_amount_cents)
+                      FILTER (WHERE s.status NOT IN ('draft', 'voided')), 0) AS paid_cents
       FROM superbill s
       JOIN visit v ON v.id = s.visit_id AND v.org_id = s.org_id
       LEFT JOIN app_user u ON u.id = v.clinician_user_id
@@ -374,6 +383,7 @@ export async function getBillingOverview(args: {
         paid: n(r.paid),
         denied: n(r.denied),
         billedCents: n(r.billed_cents),
+        paidCents: n(r.paid_cents),
       })),
     };
   });

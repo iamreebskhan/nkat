@@ -65,7 +65,8 @@ const NO_PHYSICAL_CONTACT = ["advance_care_planning", "telehealth"];
  * patient's present illness to write — the illness is over. Requiring any of
  * those would make the encounter unsignable.
  */
-const BEREAVEMENT = "bereavement_follow_up";
+export const BEREAVEMENT_VISIT_TYPE = "bereavement_follow_up";
+const BEREAVEMENT = BEREAVEMENT_VISIT_TYPE;
 
 /**
  * The required set is the four Mark named, plus Assessment and Plan.

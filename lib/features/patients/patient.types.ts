@@ -6,6 +6,8 @@
 import { z } from "zod";
 
 import { CONTACT_RELATIONSHIPS, NpiSchema, PhoneSchema } from "./contacts.types";
+import { EthnicitySchema, PreferredLanguageSchema, RaceSchema } from "./uscdi";
+import { normalizeIcd10 } from "@/lib/features/billing/icd10-format";
 import type { PayerType } from "@/lib/features/billing/payer-types";
 import type { ProlongedServiceCode } from "@/lib/features/billing/prolonged-code";
 
@@ -29,7 +31,19 @@ const StateAbbr = z
   .length(2)
   .regex(/^[A-Z]{2}$/, "Use the 2-letter USPS abbreviation");
 
-const Icd10 = z.string().regex(/^[A-Z]\d{2}(\.\d{1,4})?$/i, "Invalid ICD-10");
+/**
+ * The primary diagnosis, in the shape both diagnosis pickers accept and stored
+ * dotted, as they store it (normalizeIcd10). /^[A-Z]\d{2}(\.\d{1,4})?$/i
+ * refused real codes such as C7A.1 and S72.001A and an undotted "I509", and
+ * kept a lowercase code as typed, which then matched nothing the visit's
+ * diagnosis search returns.
+ */
+const Icd10 = z
+  .string()
+  .refine((s) => normalizeIcd10(s) !== null, "Not an ICD-10-CM code — for example C34.90")
+  .transform((s) => normalizeIcd10(s) as string);
+/** The same rule, for a referral's diagnosis (lib/features/referrals). */
+export const Icd10Schema = Icd10;
 
 const NameSchema = z
   .string()
@@ -54,6 +68,10 @@ export const DemographicsSchema = z.object({
     .regex(/^\d{5}(-\d{4})?$/, "ZIP: 5 digits, optional -4")
     .optional(),
   phone: PhoneSchema.optional(),
+  /** USCDI (0128): each may be declined, which is an answer. */
+  raceCodes: RaceSchema.optional(),
+  ethnicity: EthnicitySchema.optional(),
+  preferredLanguage: PreferredLanguageSchema.optional(),
   /**
    * The intake wizard's emergency contact. Create-only: createPatient files it
    * as a patient_contact row (audit R30), and from then on it is edited on the
@@ -87,6 +105,13 @@ export const InsuranceSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
+  /**
+   * Secondary coverage (Mark Q11g default, 0109): captured even though Pallio
+   * may never bill it, because the billing software needs it on the claim.
+   */
+  secondaryPayerId: z.string().uuid().optional(),
+  secondaryMemberId: z.string().min(1).max(120).optional(),
+  secondaryGroupNumber: z.string().max(100).optional(),
 });
 export type Insurance = z.infer<typeof InsuranceSchema>;
 
@@ -107,6 +132,12 @@ export const ClinicalSchema = z.object({
 export type Clinical = z.infer<typeof ClinicalSchema>;
 export const PATIENT_ACUITIES = ["low", "medium", "high", "critical"] as const;
 export type PatientAcuity = (typeof PATIENT_ACUITIES)[number];
+export const PATIENT_ACUITY_LABEL: Record<PatientAcuity, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  critical: "Critical",
+};
 
 /** Step 4 — consents (boolean acknowledgments + signature strings). */
 export const ConsentsSchema = z.object({
@@ -131,6 +162,7 @@ export const CareTeamSchema = z.object({
   primaryNpUserId: z.string().uuid().optional(),
   rnUserId: z.string().uuid().optional(),
   socialWorkerUserId: z.string().uuid().optional(),
+  chaplainUserId: z.string().uuid().optional(),
   billingAgentUserId: z.string().uuid().optional(),
 });
 export type CareTeam = z.infer<typeof CareTeamSchema>;
@@ -144,6 +176,7 @@ export const UpdateCareTeamSchema = z.object({
   primaryNpUserId: z.string().uuid().nullable().optional(),
   rnUserId: z.string().uuid().nullable().optional(),
   socialWorkerUserId: z.string().uuid().nullable().optional(),
+  chaplainUserId: z.string().uuid().nullable().optional(),
   billingAgentUserId: z.string().uuid().nullable().optional(),
 });
 export type UpdateCareTeam = z.infer<typeof UpdateCareTeamSchema>;
@@ -162,6 +195,11 @@ export const CreatePatientSchema = z.object({
   clinical: ClinicalSchema,
   consents: ConsentsSchema,
   careTeam: CareTeamSchema,
+  /**
+   * The referral this intake admits (Level-1 doc:25, 0111). The patient is
+   * created and the referral marked admitted in one transaction, or neither.
+   */
+  referralId: z.string().uuid().optional(),
 });
 export type CreatePatient = z.infer<typeof CreatePatientSchema>;
 
@@ -172,6 +210,10 @@ export interface PatientView {
   lastName: string;
   dateOfBirth: string;
   sexAssignedAtBirth: SexAtBirth | null;
+  /** USCDI (0128). Empty or null: never asked. Resolved on detail reads. */
+  raceCodes: string[];
+  ethnicity: string | null;
+  preferredLanguage: string | null;
   addressLine1: string | null;
   city: string | null;
   state: string | null;
@@ -201,6 +243,26 @@ export interface PatientView {
   insuranceState: string | null;
   primaryDiagnosisIcd10: string | null;
   acuity: PatientAcuity | null;
+  /**
+   * Detail reads only (getPatient); list reads leave these undefined. They are
+   * what the chart's edit forms start from, and the referral reason, which
+   * intake stored and nothing showed again (audit 27 Oct, doc:22).
+   */
+  addressLine2?: string | null;
+  primaryGroupNumber?: string | null;
+  insuranceEffectiveDate?: string | null;
+  insuranceTerminationDate?: string | null;
+  palliativeReferralReason?: string | null;
+  secondaryPayerId?: string | null;
+  secondaryPayerName?: string | null;
+  secondaryMemberId?: string | null;
+  secondaryGroupNumber?: string | null;
+  /** Intake consents (0109): when each was recorded, ISO; null = not recorded. */
+  hipaaAcknowledgedAt?: string | null;
+  goalsOfCareConsentAt?: string | null;
+  consentSignedBy?: string | null;
+  /** The referral this patient was admitted from (0111); detail read only. */
+  referral?: { id: string; receivedOn: string; sourceName: string | null } | null;
   /** Most recent completed/started visit (ISO date) — caseload column. */
   lastVisitDate: string | null;
   /** Next upcoming scheduled visit (ISO date) — caseload column. */
@@ -210,6 +272,7 @@ export interface PatientView {
     primaryNp: CareTeamMemberView;
     rn: CareTeamMemberView;
     socialWorker: CareTeamMemberView;
+    chaplain: CareTeamMemberView;
     billingAgent: CareTeamMemberView;
   };
   /**
@@ -256,18 +319,71 @@ export function intakeTelehealthConsentFor(
  * sends them fail with a 422 naming the key. Stripping them silently would
  * repeat the drop this replaced, where the demographics branch discarded all
  * but name and DOB while its audit row said demographics had changed.
+ *
+ * TRI-STATE for every optional field: absent = keep, null = clear, a value =
+ * set. The chart had no edit screen, and the update wrote COALESCE(new, old),
+ * so a wrong phone number or group number could be replaced but never removed.
+ * Name and date of birth stay required: they can be corrected, not cleared.
  */
+const nullable = <T extends z.ZodTypeAny>(s: T) => s.nullable();
 export const UpdatePatientSchema = z.object({
-  demographics: DemographicsSchema.omit({
-    emergencyContactName: true,
-    emergencyContactPhone: true,
-    emergencyContactRelationship: true,
-  })
+  demographics: z
+    .object({
+      firstName: NameSchema,
+      lastName: NameSchema,
+      dateOfBirth: DemographicsSchema.shape.dateOfBirth,
+      sexAssignedAtBirth: nullable(z.enum(SEX_AT_BIRTH)),
+      addressLine1: nullable(z.string().max(200)),
+      addressLine2: nullable(z.string().max(200)),
+      city: nullable(z.string().max(100)),
+      state: nullable(StateAbbr),
+      zip: nullable(z.string().regex(/^\d{5}(-\d{4})?$/, "ZIP: 5 digits, optional -4")),
+      phone: nullable(PhoneSchema),
+      // An empty list clears race, as null clears the others.
+      raceCodes: RaceSchema,
+      ethnicity: nullable(EthnicitySchema),
+      preferredLanguage: nullable(PreferredLanguageSchema),
+    })
     .partial()
     .strict()
     .optional(),
-  insurance: InsuranceSchema.partial().optional(),
-  clinical: ClinicalSchema.omit({ referringPhysicianNpi: true, referringPhysicianName: true })
+  insurance: z
+    .object({
+      // The primary payer can be changed but not removed from here: a patient
+      // whose plan ended is a coverage change, not a blank.
+      primaryPayerId: z.string().uuid(),
+      primaryMemberId: nullable(z.string().min(1).max(120)),
+      primaryGroupNumber: nullable(z.string().max(100)),
+      insuranceState: InsuranceSchema.shape.insuranceState.unwrap(),
+      insuranceEffectiveDate: nullable(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
+      insuranceTerminationDate: nullable(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
+      secondaryPayerId: nullable(z.string().uuid()),
+      secondaryMemberId: nullable(z.string().min(1).max(120)),
+      secondaryGroupNumber: nullable(z.string().max(100)),
+    })
+    .partial()
+    .strict()
+    .optional(),
+  clinical: z
+    .object({
+      primaryDiagnosisIcd10: nullable(Icd10),
+      palliativeReferralReason: nullable(z.string().max(2000)),
+      acuity: ClinicalSchema.shape.acuity.unwrap(),
+    })
+    .partial()
+    .strict()
+    .optional(),
+  /**
+   * Consents recorded or withdrawn after intake (0109). true stamps now, unless
+   * one is already recorded; false clears it. signedBy is the signature line.
+   */
+  consents: z
+    .object({
+      hipaaAcknowledged: z.boolean(),
+      goalsOfCareConsent: z.boolean(),
+      telehealthConsent: z.boolean(),
+      signedBy: nullable(z.string().trim().max(150)),
+    })
     .partial()
     .strict()
     .optional(),

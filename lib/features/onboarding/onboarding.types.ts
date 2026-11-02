@@ -47,6 +47,14 @@ export interface OnboardingStatusView {
   orgType: OrgType | null;
   customDomain: string | null;
   notes: string | null;
+  /** The NPI saved by step 1, so revisiting the step does not blank it. */
+  npi: string | null;
+  /**
+   * The org's name as sign-up set it (org.name). Read by GET /api/onboarding
+   * only. Step 1 asks the admin to "confirm your name" and showed an empty
+   * field, because the name lives on org, not on this row.
+   */
+  orgName?: string | null;
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;

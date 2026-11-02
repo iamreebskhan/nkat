@@ -20,6 +20,10 @@ import { z } from "zod";
  * follow-up or a caregiver-only visit is documented and signed, and never
  * billed. Before it existed such a visit could only be entered as an alias of
  * a billable band, so it coded an E/M at sign-off.
+ *
+ * `care_management` is the band of the visit a month's PCM/CCM charge is
+ * carried on (0117). Its codes come from the month's time log, never from the
+ * suggester, and no visit is ever booked or documented on it.
  */
 export const VISIT_TYPES = [
   "new_patient_home",
@@ -27,8 +31,15 @@ export const VISIT_TYPES = [
   "advance_care_planning",
   "inpatient_consult",
   "non_billable",
+  "care_management",
 ] as const;
 export type VisitType = (typeof VISIT_TYPES)[number];
+
+/**
+ * The org visit type a month's PCM/CCM charge is raised on (0117). Reserved:
+ * created inactive by the charge itself, never listed, edited or scheduled.
+ */
+export const CARE_MANAGEMENT_VISIT_TYPE = "pcm_ccm_month";
 
 /**
  * The bands a visit type can be created with or moved to (audit R18).
@@ -80,6 +91,43 @@ export const ScheduleVisitSchema = z.object({
 });
 export type ScheduleVisit = z.infer<typeof ScheduleVisitSchema>;
 
+export const SERIES_MAX_VISITS = 52;
+export const SERIES_UNITS = ["week", "month"] as const;
+export type SeriesUnit = (typeof SERIES_UNITS)[number];
+
+const LocalMinute = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Pick a date and a time.");
+const SeriesDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date.");
+
+/**
+ * A repeating visit (0126): every N weeks or months, to a day or for a number of
+ * visits. The time is on the practice's clock, so it stays 10:00 across a clock
+ * change. skipDays are days the person chose to leave out.
+ */
+export const ScheduleSeriesSchema = z
+  .object({
+    patientId: z.string().uuid(),
+    clinicianUserId: z.string().uuid(),
+    visitType: z.string().trim().min(2).max(64),
+    startLocal: LocalMinute,
+    isTelehealth: z.boolean(),
+    telehealthModality: z.enum(TELEHEALTH_MODALITIES).optional(),
+    every: z.number().int().min(1).max(12),
+    unit: z.enum(SERIES_UNITS),
+    count: z.number().int().min(2).max(SERIES_MAX_VISITS).optional(),
+    until: SeriesDay.optional(),
+    skipDays: z.array(SeriesDay).max(SERIES_MAX_VISITS).optional(),
+    confirmDoubleBook: z.boolean().optional(),
+  })
+  .refine((s) => (s.count === undefined) !== (s.until === undefined), { message: "End it on a date, or after a number of visits.", path: ["count"] });
+export type ScheduleSeries = z.infer<typeof ScheduleSeriesSchema>;
+
+/** This visit and the later ones of its series (0126). */
+export const SeriesActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("cancel") }),
+  z.object({ action: z.literal("move"), startLocal: LocalMinute, confirmDoubleBook: z.boolean().optional() }),
+]);
+export type SeriesAction = z.infer<typeof SeriesActionSchema>;
+
 /**
  * How far back an earlier visit makes a patient established: a new patient has
  * not received a professional service from this physician or NPP, or another of
@@ -106,6 +154,12 @@ export type ChangeVisitType = z.infer<typeof ChangeVisitTypeSchema>;
 export interface VisitTypeHint {
   /** The latest earlier visit in the window (start, else scheduled start); null when none. */
   lastVisitAt: string | null;
+  /**
+   * That visit's day where the practice is ('YYYY-MM-DD', 0107) — the date to
+   * show. The screens formatted lastVisitAt in the viewer's zone, so an 8:30 pm
+   * Ohio visit on the 21st read "Oct 22" from Karachi.
+   */
+  lastVisitDay?: string | null;
   lastVisitStatus: VisitStatus | null;
   /** NEW_PATIENT_LOOKBACK_YEARS before the date asked about. */
   windowStart: string;
@@ -158,6 +212,8 @@ export interface VisitView {
   id: string;
   patientId: string;
   clinicianUserId: string;
+  /** The repeating series it was booked in (0126), if any. */
+  seriesId: string | null;
   /** The org's own slug (org_visit_type.slug), not necessarily a VisitType. */
   visitType: string;
   /** Human label for that slug — what the UI shows. */
@@ -183,6 +239,13 @@ export interface VisitView {
    * neither is set.
    */
   serviceDay: string | null;
+  /**
+   * The same instant as the practice reads it, to the minute and with the
+   * zone: 'YYYY-MM-DD HH:MM EDT'. For lists that show when a visit is. /visits
+   * printed the ISO string sliced to 16 characters, which is UTC: an 8:30 pm
+   * Ohio visit on the 21st read "2026-10-22 00:30". Null when serviceDay is.
+   */
+  serviceAt: string | null;
   totalMinutes: number | null;
   acpMinutes: number;
   prolongedMinutes: number;

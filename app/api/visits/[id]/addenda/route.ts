@@ -35,9 +35,9 @@ export async function GET(_req: NextRequest, ctx: Params): Promise<Response> {
   const { id } = await ctx.params;
   const bad = requireUuidParam(id);
   if (bad) return bad;
-  // An addendum quotes the note it corrects, so the same ownership rule that
-  // guards the note guards the list of them (visit-access.ts).
-  const denied = await requireVisitAccess({ session, visitId: id });
+  // An addendum quotes the note it corrects, so the same rule that guards
+  // reading the note guards the list of them (visit-access.ts).
+  const denied = await requireVisitAccess({ session, visitId: id, access: "read" });
   if (denied) return denied;
   try {
     return ok({ addenda: await listVisitAddenda({ orgId: session.orgId, visitId: id }) });

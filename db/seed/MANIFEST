@@ -56,6 +56,10 @@
 # invisible to the super-bill picker and the denial scorer.
 0019_palliative_codes_missing.sql
 payer-medicare.sql
+# The full ICD-10-CM code set, generated from CMS's order file by
+# scripts/build-icd10-seed.mjs. After 0007/0009/0010: it retires their
+# hand-picked rows in favour of this release's. Regenerate each October.
+icd10cm-2027.sql
 
 # --- ingestion sources: what the crawler watches ---------------------
 ingestion-sources-cms.sql

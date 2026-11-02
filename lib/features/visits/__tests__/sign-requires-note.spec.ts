@@ -388,6 +388,9 @@ function fakeTx() {
   const run = (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join("¶");
     calls.push({ sql, values });
+    // Sign-off freezes the patient's care plan (doc:59). These patients have
+    // none, so nothing is frozen; care-plan-freeze.spec.ts covers one that does.
+    if (sql.includes("INSERT INTO care_plan_version")) return Promise.resolve([]);
     if (sql.includes("FROM visit") && sql.includes("SELECT")) {
       const visitRows = currentStatus
         ? [{
@@ -948,6 +951,72 @@ describe("transitionVisit → documented: who attested it (audit R32)", () => {
     currentStatus = "documented";
     await transitionVisit({ orgId: ORG, id: VISIT, to: "pending_billing" });
     expect(signUpdate()).toBeUndefined();
+  });
+
+  // doc:59 — the follow-up visit updates the care plan, and its sign-off
+  // freezes the plan as it stood (care-plan-freeze.spec.ts has the statement).
+  it("freezes the patient's care plan in the sign-off's own transaction, after the visit is signed", async () => {
+    currentNote = NOTE;
+    await transitionVisit({ orgId: ORG, id: VISIT, to: "documented", signedByUserId: USER });
+    const sign = calls.findIndex((c) => c.sql.includes("signer_credential = "));
+    const freeze = calls.findIndex((c) => c.sql.includes("INSERT INTO care_plan_version"));
+    expect(sign).toBeGreaterThanOrEqual(0);
+    expect(freeze).toBeGreaterThan(sign);
+    expect(calls[freeze]!.values).toEqual(expect.arrayContaining([VISIT, ORG, USER]));
+    // These patients have no plan: the audit says nothing was frozen.
+    expect(vi.mocked(writeAudit).mock.calls.at(-1)![1].payload).toMatchObject({ carePlanVersion: null });
+  });
+
+  it("CONTROL: freezes nothing on any later transition", async () => {
+    currentStatus = "documented";
+    await transitionVisit({ orgId: ORG, id: VISIT, to: "pending_billing" });
+    expect(calls.some((c) => c.sql.includes("care_plan_version"))).toBe(false);
+  });
+});
+
+describe("transitionVisit → documented: the between-visit clinician signs no billed visit (Mark 11f)", () => {
+  const NOTE =
+    '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Seen at home."}]}]}';
+  const signUpdate = () => calls.find((c) => c.sql.includes("signer_credential = "));
+  const sign = () => transitionVisit({ orgId: ORG, id: VISIT, to: "documented", signedByUserId: USER });
+
+  it("refuses an LPN's or an RN's signature on a billed visit, naming the credential, and writes nothing", async () => {
+    currentNote = NOTE;
+    const audits = vi.mocked(writeAudit).mock.calls.length;
+    for (const cred of ["LPN", "RN"]) {
+      currentCred = cred;
+      await expect(sign()).rejects.toThrow(
+        new RegExp(`credential on the Team page is ${cred}\\. A billed visit is signed by a practitioner`),
+      );
+    }
+    expect(signUpdate()).toBeUndefined();
+    expect(vi.mocked(writeAudit).mock.calls.length).toBe(audits);
+  });
+
+  it("lets them sign a visit type that is not billed, under their own credential", async () => {
+    currentNote = NOTE;
+    currentBasis = "non_billable";
+    currentCred = "LPN";
+    await sign();
+    expect(signUpdate()!.values).toContain("LPN");
+  });
+
+  it("CONTROL: a practitioner, and a credential never recorded, sign a billed visit as before", async () => {
+    currentNote = NOTE;
+    for (const cred of ["NP", "MD", null]) {
+      calls = [];
+      currentCred = cred;
+      await sign();
+      expect(signUpdate(), String(cred)).toBeDefined();
+    }
+  });
+
+  it("CONTROL: never stops a signed visit moving on to billing, whoever moves it", async () => {
+    currentStatus = "documented";
+    currentCred = "LPN";
+    await expect(
+      transitionVisit({ orgId: ORG, id: VISIT, to: "pending_billing", signedByUserId: USER }),
+    ).resolves.toMatchObject({ to: "pending_billing" });
   });
 });
 

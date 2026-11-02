@@ -17,7 +17,14 @@ const ORG = "11111111-1111-4111-8111-111111111111";
 const PAYER_A = "a0000000-0000-4000-8000-000000000305";
 const PAYER_B = "a0000000-0000-4000-8000-000000000301";
 
-let summaryRows: { carc_code: string; payer_id: string | null; denied_amount_cents: bigint; decision: string }[];
+let summaryRows: {
+  carc_code: string;
+  payer_id: string | null;
+  denied_amount_cents: bigint;
+  decision: string;
+  outcome?: string | null;
+  outcome_amount_cents?: bigint | null;
+}[];
 let calls: { sql: string; values: unknown[] }[] = [];
 /** The global payer catalog, withdrawn payers included. */
 let payerTable: { id: string; name: string; active: boolean }[];
@@ -65,8 +72,28 @@ describe("summarizeDenials", () => {
 
   it("ranks payers by dollars denied, not by count", async () => {
     const m = await summarizeDenials({ orgId: ORG });
-    expect(m.byPayerId[0]).toEqual({ payerId: PAYER_B, count: 30, deniedCents: 1_500_000 });
-    expect(m.byPayerId[1]).toEqual({ payerId: PAYER_A, count: 90, deniedCents: 900_000 });
+    expect(m.byPayerId[0]).toEqual({
+      payerId: PAYER_B, count: 30, deniedCents: 1_500_000, recoveredCents: 0, outstandingCents: 1_500_000,
+    });
+    expect(m.byPayerId[1]).toEqual({
+      payerId: PAYER_A, count: 90, deniedCents: 900_000, recoveredCents: 0, outstandingCents: 900_000,
+    });
+  });
+
+  it("reads each denial's outcome, so recovered money is not counted as lost", async () => {
+    // Live test 2026-10-22: two denials on one refiled claim, $148.34 paid in
+    // full and $20.00 of $24.97 recovered, still showed $173.31 of impact.
+    summaryRows = [
+      { carc_code: "16", payer_id: PAYER_A, denied_amount_cents: BigInt(14_834), decision: "refile",
+        outcome: "paid", outcome_amount_cents: BigInt(14_834) },
+      { carc_code: "16", payer_id: PAYER_A, denied_amount_cents: BigInt(2_497), decision: "refile",
+        outcome: "partially_paid", outcome_amount_cents: BigInt(2_000) },
+    ] as typeof summaryRows;
+    const m = await summarizeDenials({ orgId: ORG });
+    expect(calls[0]!.sql).toContain("outcome_amount_cents");
+    expect(m.totalDeniedCents).toBe(17_331);
+    expect(m.totalRecoveredCents).toBe(16_834);
+    expect(m.byPayerId[0]).toMatchObject({ payerId: PAYER_A, recoveredCents: 16_834, outstandingCents: 497 });
   });
 
   it("reads with no LIMIT and applies the same filters as the list", async () => {
@@ -127,6 +154,8 @@ describe("summarizeDenials — payer names (R17)", () => {
     const m = await summarizeDenials({ orgId: ORG });
     expect(calls.some((c) => c.sql.includes("FROM payer WHERE"))).toBe(false);
     expect(m.payerNames).toEqual({});
-    expect(m.byPayerId).toEqual([{ payerId: null, count: 1, deniedCents: 100 }]);
+    expect(m.byPayerId).toEqual([
+      { payerId: null, count: 1, deniedCents: 100, recoveredCents: 0, outstandingCents: 100 },
+    ]);
   });
 });

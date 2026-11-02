@@ -9,6 +9,8 @@ import { type NextRequest } from "next/server";
 
 import { ok, fail, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+import { getBillingProvider } from "@/lib/features/billing/billing-provider.service";
+import { remittanceSummaryForBill } from "@/lib/features/remittances/remittance-summary.service";
 import {
   buildDraftFromVisit,
   getSuperbillByVisit,
@@ -53,7 +55,17 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
       context: "superbill",
       request: req,
     });
-    return ok({ existing, draft: null });
+    // What the payer's 835 said of it, and what a claim still needs from the
+    // billing provider (0118).
+    try {
+      const [remittance, billing] = await Promise.all([
+        remittanceSummaryForBill({ orgId: session.orgId, superbillId: existing.id }),
+        getBillingProvider(session.orgId),
+      ]);
+      return ok({ existing, draft: null, remittance, billingProviderMissing: billing.missing });
+    } catch (err) {
+      return handleServiceError(err);
+    }
   }
 
   // No row yet — return a fresh in-memory draft so the FE can render it

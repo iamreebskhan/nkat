@@ -17,9 +17,15 @@ vi.mock("@/lib/db", () => ({ prisma: {}, withOrgContext: vi.fn() }));
 vi.mock("@/lib/features/audit/audit-write", () => ({
   writeAudit: vi.fn().mockResolvedValue(undefined),
 }));
+// The escalation check has its own spec (escalation.spec.ts); here, only what
+// saveVitals hands it.
+vi.mock("@/lib/features/care-coordination/escalation.service", () => ({
+  raiseForReadings: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { withOrgContext } from "@/lib/db";
 import { writeAudit } from "@/lib/features/audit/audit-write";
+import { raiseForReadings } from "@/lib/features/care-coordination/escalation.service";
 
 import { DEFAULT_NOTE_SECTIONS } from "../note-template";
 import {
@@ -60,6 +66,8 @@ let db: {
   vitalsRow: Record<string, unknown> | null;
   filledSectionCount: number;
   prevVisit: { id: string; dos: Date | null; label: string | null } | null;
+  /** org.timezone, for the carry-forward source's practice day. */
+  orgTimezone?: string | null;
   prevSections: { section_key: string; label: string }[];
   sourceVisitValid: boolean;
   trendRows: Record<string, unknown>[];
@@ -105,6 +113,9 @@ function fakeTx() {
       return Promise.resolve(db.visit ? [{ status: db.visit.status }] : []);
     }
     if (sql.includes("FROM visit cur")) return Promise.resolve(db.prevVisit ? [db.prevVisit] : []);
+    if (sql.includes("SELECT timezone FROM org")) {
+      return Promise.resolve(db.orgTimezone ? [{ timezone: db.orgTimezone }] : []);
+    }
     if (sql.includes("JOIN note_template_section t")) return Promise.resolve(db.prevSections);
     if (sql.includes("AND patient_id =")) {
       return Promise.resolve(db.sourceVisitValid ? [{ id: PREV }] : []);
@@ -646,6 +657,37 @@ describe("saveVitals", () => {
       /not found/i,
     );
   });
+
+  it("records shortness of breath and nausea beside pain, and corrects them in place (0113)", async () => {
+    await saveVitals({ orgId: ORG, visitId: VISIT, vitals: { painScore: 6, dyspneaScore: 7, nauseaScore: 0 } });
+    const ins = find("INSERT INTO visit_vitals")!;
+    expect(ins.sql).toContain("dyspnea_score, nausea_score");
+    expect(ins.sql).toContain("dyspnea_score = EXCLUDED.dyspnea_score, nausea_score = EXCLUDED.nausea_score");
+    // A nausea score of 0 is an observation, written as 0, not dropped.
+    const at = ins.values.indexOf(6);
+    expect(ins.values.slice(at, at + 3)).toEqual([6, 7, 0]);
+  });
+
+  it("hands the readings as saved to the escalation check, in the same transaction (0116)", async () => {
+    vi.mocked(raiseForReadings).mockClear();
+    await saveVitals({ orgId: ORG, visitId: VISIT, vitals: { painScore: 8, spo2Percent: 88 }, userId: USER });
+    expect(raiseForReadings).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(raiseForReadings).mock.calls[0]![1]).toEqual({
+      orgId: ORG,
+      userId: USER,
+      patientId: PATIENT,
+      source: { kind: "vitals", visitId: VISIT },
+      // A reading not sent is no reading: null, as the row now holds it.
+      readings: { pain: 8, dyspnea: null, nausea: null, pps: null, spo2: 88 },
+    });
+  });
+
+  it("CONTROL: a signed visit's refusal reaches no escalation check", async () => {
+    vi.mocked(raiseForReadings).mockClear();
+    db.visit = { status: "documented", patient_id: PATIENT };
+    await expect(saveVitals({ orgId: ORG, visitId: VISIT, vitals: { painScore: 9 } })).rejects.toThrow(/signed/);
+    expect(raiseForReadings).not.toHaveBeenCalled();
+  });
 });
 
 describe("getCarryForwardSource", () => {
@@ -692,6 +734,16 @@ describe("getCarryForwardSource", () => {
     db.prevVisit = { id: PREV, dos: new Date("2026-09-01T14:00:00Z"), label: null };
     const s = await getCarryForwardSource({ orgId: ORG, visitId: VISIT });
     expect(s!.visitDate).toBe("2026-09-01T14:00:00.000Z");
+  });
+
+  it("dates the source by the practice's day, not UTC's (0107)", async () => {
+    // 8:30 pm in Ohio on 21 Oct is 00:30 UTC on the 22nd. The note bar printed
+    // the instant in the viewer's zone, so it read 22/10.
+    db.prevVisit = { id: PREV, dos: new Date("2026-10-22T00:30:00Z"), label: null };
+    db.orgTimezone = "America/New_York";
+    const s = await getCarryForwardSource({ orgId: ORG, visitId: VISIT });
+    expect(s!.visitDay).toBe("2026-10-21");
+    expect(find("SELECT timezone FROM org")!.values).toContain(ORG);
   });
 });
 
@@ -980,5 +1032,10 @@ describe("hasAnyMeasurement", () => {
     expect(hasAnyMeasurement({ ...EMPTY_VITALS, painScore: 0 })).toBe(true);
     expect(hasAnyMeasurement({ ...EMPTY_VITALS, notes: "Declined weight." })).toBe(false);
     expect(hasAnyMeasurement(EMPTY_VITALS)).toBe(false);
+  });
+
+  it("counts a shortness-of-breath or nausea score alone as vitals taken, as the sign guard does (0113)", () => {
+    expect(hasAnyMeasurement({ ...EMPTY_VITALS, dyspneaScore: 0 })).toBe(true);
+    expect(hasAnyMeasurement({ ...EMPTY_VITALS, nauseaScore: 5 })).toBe(true);
   });
 });

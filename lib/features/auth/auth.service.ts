@@ -28,6 +28,7 @@ import {
   sessionRoleFor,
 } from "@/lib/features/team/team.types";
 import { checkPassword } from "@/lib/features/auth/password-policy";
+import { mfaRequiredFor, readSessionPolicy } from "@/lib/features/auth/session-policy";
 import { DEFAULT_VISIT_SERVICES } from "@/lib/features/visits/visit-services.service";
 import { DEFAULT_VISIT_TYPES } from "@/lib/features/visits/visit-types.service";
 import type { Session } from "@/lib/auth";
@@ -43,6 +44,8 @@ export interface LoginInput {
 
 export interface LoginSuccess {
   session: Session;
+  /** Signed in with a second factor (0121): the session records it. */
+  mfa: boolean;
 }
 
 export type LoginResult =
@@ -50,7 +53,13 @@ export type LoginResult =
   | { error: "invalid_credentials" }
   | { error: "user_inactive" }
   | { error: "mfa_required" }
-  | { error: "mfa_bad_code" };
+  | { error: "mfa_bad_code" }
+  /**
+   * The password was right and the account must use a second factor it has
+   * not set up (0121): an admin or biller, or everyone under the org's policy.
+   * No session yet; the login form sets one up and signs in after.
+   */
+  | { error: "mfa_enrollment_required"; userId: string; orgId: string; email: string };
 
 export async function login(input: LoginInput): Promise<LoginResult> {
   const rows = await prisma.$queryRaw<
@@ -85,13 +94,45 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   >`
     SELECT mfa_enrolled_at FROM app_user WHERE id = ${user.id}::uuid LIMIT 1
   `;
-  if (mfaRows[0]?.mfa_enrolled_at) {
+  const enrolled = Boolean(mfaRows[0]?.mfa_enrolled_at);
+  if (enrolled) {
     if (!input.mfaCode) return { error: "mfa_required" };
     const { verifyMfaChallenge } = await import("./mfa.service");
     const okMfa = await verifyMfaChallenge({ userId: user.id, code: input.mfaCode });
     if (!okMfa) return { error: "mfa_bad_code" };
   }
 
+  const session = await sessionForUser(user);
+  if (!session) return { error: "user_inactive" };
+
+  // An account that has not enrolled is asked to, before any session exists,
+  // when its role (or the org's policy) requires a second factor (0121). Only
+  // after the password: it says nothing to someone guessing.
+  if (!enrolled) {
+    const policy = await readSessionPolicy(session.orgId);
+    if (mfaRequiredFor(session.role, session.permissions, policy.mfaPolicy)) {
+      return { error: "mfa_enrollment_required", userId: user.id, orgId: session.orgId, email: user.email };
+    }
+  }
+
+  await prisma.$executeRaw`
+    UPDATE app_user SET last_login_at = now() WHERE id = ${user.id}::uuid
+  `;
+
+  return { session, mfa: enrolled };
+}
+
+/**
+ * The session for an account whose identity is already proven: its first
+ * active seat in a live org, with the grants held in THAT org. Null when it
+ * has none. Shared by login() and by finishing a second-factor setup that
+ * login() asked for.
+ */
+export async function sessionForUser(user: {
+  id: string;
+  email: string;
+  is_platform_admin: boolean;
+}): Promise<Session | null> {
   // Login is pre-tenant: we don't know which org the user belongs to until
   // we look it up. Use breakglass to read across the org boundary — the
   // result is then used to set app.current_org_id for all subsequent calls.
@@ -111,7 +152,7 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   );
   const member = orgRows[0];
   if (!member || member.org_status !== "active") {
-    return { error: "user_inactive" };
+    return null;
   }
 
   const permissions = await withOrgContext(member.org_id, async (tx) => {
@@ -136,24 +177,31 @@ export async function login(input: LoginInput): Promise<LoginResult> {
     return r.map((x) => x.permission);
   });
 
-  await prisma.$executeRaw`
-    UPDATE app_user SET last_login_at = now() WHERE id = ${user.id}::uuid
-  `;
-
   return {
-    session: {
-      userId: user.id,
-      orgId: member.org_id,
-      // is_platform_admin trumps the org-member role mapping so the
-      // operator (Mark) can hit /api/admin/* + /admin/* without
-      // belonging to any specific org's role.
-      role: user.is_platform_admin
-        ? "platform_admin"
-        : sessionRoleFor(member.role_template, member.role),
-      permissions,
-      email: user.email,
-    },
+    userId: user.id,
+    orgId: member.org_id,
+    // is_platform_admin trumps the org-member role mapping so the
+    // operator (Mark) can hit /api/admin/* + /admin/* without
+    // belonging to any specific org's role.
+    role: user.is_platform_admin
+      ? "platform_admin"
+      : sessionRoleFor(member.role_template, member.role),
+    permissions,
+    email: user.email,
   };
+}
+
+/** The account a finished second-factor setup signs in, if it is still active. */
+export async function activeUserById(
+  userId: string,
+): Promise<{ id: string; email: string; is_platform_admin: boolean } | null> {
+  const rows = await prisma.$queryRaw<
+    { id: string; email: string; status: string; is_platform_admin: boolean }[]
+  >`
+    SELECT id, email, status, is_platform_admin FROM app_user WHERE id = ${userId}::uuid LIMIT 1
+  `;
+  const u = rows[0];
+  return u && u.status === "active" ? { id: u.id, email: u.email, is_platform_admin: u.is_platform_admin } : null;
 }
 
 

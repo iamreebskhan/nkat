@@ -41,40 +41,74 @@ beforeEach(() => {
   );
 });
 
-function payload(telehealthConsent: boolean): CreatePatient {
+function payload(
+  telehealthConsent: boolean,
+  others: { hipaaAcknowledged: boolean; goalsOfCareConsent: boolean } = { hipaaAcknowledged: true, goalsOfCareConsent: true },
+): CreatePatient {
   return {
     demographics: { firstName: "Ada", lastName: "Lovelace", dateOfBirth: "1942-03-08" },
     insurance: {},
     clinical: {},
-    consents: { hipaaAcknowledged: true, goalsOfCareConsent: true, telehealthConsent },
+    consents: { ...others, telehealthConsent },
     careTeam: {},
   };
 }
 
-/** The value bound to telehealth_consent_at: the only one cast ::timestamptz. */
-function consentValue(): unknown {
+/**
+ * The values bound to the three consent stamps, in the INSERT's order:
+ * telehealth_consent_at, hipaa_acknowledged_at, goals_of_care_consent_at —
+ * the only values cast ::timestamptz.
+ */
+function consentValues(): [unknown, unknown, unknown] {
   const insert = calls.find((c) => c.sql.includes("INSERT INTO patient"));
-  expect(insert?.sql).toContain("telehealth_consent_at");
+  expect(insert?.sql).toContain("telehealth_consent_at, hipaa_acknowledged_at, goals_of_care_consent_at");
   const parts = insert!.sql.split("¶");
-  expect(parts.filter((s) => s.startsWith("::timestamptz"))).toHaveLength(1);
-  const k = parts.findIndex((s, i) => i > 0 && s.startsWith("::timestamptz"));
   // parts[k] is the SQL after value k - 1.
-  return insert!.values[k - 1];
+  const at = parts.flatMap((s, k) => (k > 0 && s.startsWith("::timestamptz") ? [insert!.values[k - 1]] : []));
+  expect(at).toHaveLength(3);
+  return at as [unknown, unknown, unknown];
 }
+const consentValue = () => consentValues()[0];
+
+const stampedNow = (v: unknown, before: number) => {
+  expect(v).toBeInstanceOf(Date);
+  expect((v as Date).getTime()).toBeGreaterThanOrEqual(before);
+  expect((v as Date).getTime()).toBeLessThanOrEqual(Date.now());
+};
 
 describe("createPatient records intake telehealth consent", () => {
   it("stamps telehealth_consent_at with the intake time when the box is ticked", async () => {
     const before = Date.now();
     await createPatient({ orgId: ORG, createdByUserId: CREATOR, payload: payload(true) });
-    const v = consentValue();
-    expect(v).toBeInstanceOf(Date);
-    expect((v as Date).getTime()).toBeGreaterThanOrEqual(before);
-    expect((v as Date).getTime()).toBeLessThanOrEqual(Date.now());
+    stampedNow(consentValue(), before);
   });
 
   it("CONTROL: sends null when the box is left unticked", async () => {
     await createPatient({ orgId: ORG, createdByUserId: CREATOR, payload: payload(false) });
     expect(consentValue()).toBeNull();
+  });
+});
+
+// The wizard requires the HIPAA notice and the goals-of-care consent, and
+// createPatient threw both away: no record either was obtained (0109).
+describe("createPatient records the HIPAA and goals-of-care consents", () => {
+  it("stamps both with the intake time", async () => {
+    const before = Date.now();
+    await createPatient({ orgId: ORG, createdByUserId: CREATOR, payload: payload(false) });
+    const [, hipaa, goc] = consentValues();
+    stampedNow(hipaa, before);
+    stampedNow(goc, before);
+  });
+
+  it("CONTROL: an unticked box is not recorded", async () => {
+    await createPatient({
+      orgId: ORG,
+      createdByUserId: CREATOR,
+      payload: payload(false, { hipaaAcknowledged: false, goalsOfCareConsent: true }),
+    });
+    const [, hipaa, goc] = consentValues();
+    expect(hipaa).toBeNull();
+    expect(goc).toBeInstanceOf(Date);
   });
 });
 

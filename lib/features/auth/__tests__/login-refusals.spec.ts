@@ -36,6 +36,8 @@ const h = vi.hoisted(() => ({
   transaction: vi.fn(),
   compare: vi.fn(),
   verifyMfa: vi.fn(),
+  readPolicy: vi.fn(),
+  mfaRequired: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -52,6 +54,9 @@ vi.mock("@/lib/features/auth/password-policy", () => ({
 // login() reaches the verifier through a dynamic import("./mfa.service"), which
 // resolves to this same module, so the stub stands in for the real TOTP check.
 vi.mock("../mfa.service", () => ({ verifyMfaChallenge: h.verifyMfa }));
+// Who must set up a second factor (0121). Off for the refusals below, which are
+// about passwords, seats and grants; the "MFA required" block turns it on.
+vi.mock("../session-policy", () => ({ readSessionPolicy: h.readPolicy, mfaRequiredFor: h.mfaRequired }));
 
 import { withBreakglass, withOrgContext } from "@/lib/db";
 import { fakeTx, type FakeDb } from "@/lib/features/team/__tests__/sql-fake";
@@ -109,6 +114,8 @@ beforeEach(() => {
   mfaEnrolledAt = null;
   h.compare.mockResolvedValue(true);
   h.verifyMfa.mockResolvedValue(true);
+  h.readPolicy.mockResolvedValue({ idleMinutes: 15, mfaPolicy: "admins_and_billers" });
+  h.mfaRequired.mockReturnValue(false);
   h.executeRaw.mockResolvedValue(1);
   h.queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join("¶");
@@ -323,6 +330,45 @@ describe("login — the MFA gate", () => {
     // the org lookup's scoping is pinned above.
     const probe = calls.find((s) => s.includes("SELECT mfa_enrolled_at"))!;
     expect(probe).toContain("WHERE id = ");
+  });
+});
+
+describe("login — a second factor the role requires (0121)", () => {
+  const ENROLLED = new Date("2026-05-04T09:00:00Z");
+
+  it("asks a role that requires one to set it up, and builds no session", async () => {
+    h.mfaRequired.mockReturnValue(true);
+    const r = await signIn();
+    expect(r).toEqual({ error: "mfa_enrollment_required", userId: USER, orgId: ORG, email: "livedemo@pallio.io" });
+    // Read for the org being signed into, with the role and grants held there.
+    expect(h.readPolicy).toHaveBeenCalledWith(ORG);
+    expect(h.mfaRequired).toHaveBeenCalledWith("org_admin", ["patients.view"], "admins_and_billers");
+    // No session: last_login_at is not stamped either.
+    expect(h.executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL — the same role, enrolled, signs in with its code and the session records the factor", async () => {
+    h.mfaRequired.mockReturnValue(true);
+    mfaEnrolledAt = ENROLLED;
+    const r = await signIn("123456");
+    expect("session" in r).toBe(true);
+    if ("session" in r) expect(r.mfa).toBe(true);
+    // An enrolled account is never asked to enrol again.
+    expect(h.readPolicy).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL — a role that does not require one signs in without it", async () => {
+    h.mfaRequired.mockReturnValue(false);
+    const r = await signIn();
+    expect("session" in r).toBe(true);
+    if ("session" in r) expect(r.mfa).toBe(false);
+  });
+
+  it("asks only after the password is right: a wrong one is still just invalid", async () => {
+    h.mfaRequired.mockReturnValue(true);
+    h.compare.mockResolvedValue(false);
+    expect(await signIn()).toEqual({ error: "invalid_credentials" });
+    expect(h.readPolicy).not.toHaveBeenCalled();
   });
 });
 

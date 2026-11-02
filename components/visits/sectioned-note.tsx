@@ -21,6 +21,11 @@ import type { JSONContent } from "@tiptap/react";
 
 import { TipTapEditor } from "@/components/editor/tiptap-editor";
 import {
+  noteAllergyLines,
+  noteMedicationLines,
+  type ClinicalListsView,
+} from "@/lib/features/clinical/clinical-lists.types";
+import {
   VITALS_FIELDS,
   type VitalsFieldSpec,
 } from "@/lib/features/visits/vitals-units";
@@ -43,6 +48,8 @@ interface Section {
 interface CarrySource {
   visitId: string;
   visitDate: string | null;
+  /** The practice's day of that visit (0107). */
+  visitDay?: string | null;
   visitTypeLabel: string | null;
   sections: { sectionKey: string; label: string }[];
 }
@@ -58,6 +65,8 @@ interface Vitals {
   spo2Percent: number | null;
   ppsPercent: number | null;
   painScore: number | null;
+  dyspneaScore: number | null;
+  nauseaScore: number | null;
   notes: string | null;
   recordedAt: string | null;
 }
@@ -77,14 +86,30 @@ interface NoteView {
  */
 const FIELDS = VITALS_FIELDS as (VitalsFieldSpec & { key: keyof Vitals })[];
 
+/** The list sections the chart's own lists can fill (0114). */
+const CHART_LIST_SECTIONS = new Set(["medications", "allergies"]);
+
 export function SectionedNote({
   visitId,
+  patientId,
   readOnly,
+  signable = true,
   onSaved,
   registerFlush,
 }: {
   visitId: string;
+  /**
+   * The visit's patient: its chart's medication and allergy lists (0114) can
+   * fill the note's Medications and Allergies sections.
+   */
+  patientId?: string;
   readOnly?: boolean;
+  /**
+   * False on a visit that will never be signed — cancelled, or a no-show. Its
+   * note still takes text (why it did not happen), so it is not read-only,
+   * but "still needed to sign" would ask for sections it will never need.
+   */
+  signable?: boolean;
   /** Fires after any successful write so the parent can refresh sign-readiness. */
   onSaved?: () => void;
   /**
@@ -241,6 +266,38 @@ export function SectionedNote({
     registerFlush?.(flush);
   }, [registerFlush, flush]);
 
+  /**
+   * Write the chart's active medications or allergies (0114) into the note's
+   * section, for the NP to review rather than retype (doc:36). Asks before
+   * replacing what is already written here.
+   */
+  async function fillFromChart(sectionKey: string, label: string, isEmpty: boolean) {
+    if (!patientId || readOnly) return;
+    setError(null);
+    try {
+      const r = await fetch(`/api/patients/${patientId}/clinical-lists`);
+      const d = await r.json();
+      if (!d.success) {
+        setError(d.error ?? "Could not read the chart's lists.");
+        return;
+      }
+      const lists = d.data as ClinicalListsView;
+      const items = sectionKey === "medications" ? noteMedicationLines(lists) : noteAllergyLines(lists);
+      if (items.length === 0) {
+        setError(
+          sectionKey === "medications"
+            ? "No active medications are on the chart."
+            : "The chart has no allergies recorded, and no record of none.",
+        );
+        return;
+      }
+      if (!isEmpty && !window.confirm(`Replace what is written under ${label} with the chart's list?`)) return;
+      await saveSection(sectionKey, { items });
+    } catch {
+      setError("Network error reading the chart.");
+    }
+  }
+
   async function saveVitals(next: Vitals) {
     if (readOnly) return;
     setSavingKey("vitals");
@@ -256,6 +313,7 @@ export function SectionedNote({
           heartRate: next.heartRate, respRate: next.respRate,
           temperatureC: next.temperatureC, spo2Percent: next.spo2Percent,
           ppsPercent: next.ppsPercent, painScore: next.painScore,
+          dyspneaScore: next.dyspneaScore, nauseaScore: next.nauseaScore,
           notes: next.notes,
         }),
       });
@@ -293,7 +351,7 @@ export function SectionedNote({
         <p className="text-xs text-slate-500">
           {note.templateName} · v{note.templateVersion}
         </p>
-        {note.missingRequired.length > 0 && !readOnly && (
+        {note.missingRequired.length > 0 && !readOnly && signable && (
           <p className="text-xs text-amber-800">
             Still needed to sign:{" "}
             <strong>{note.missingRequired.map((m) => m.label).join(", ")}</strong>
@@ -311,7 +369,14 @@ export function SectionedNote({
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-200">
           <p className="text-xs text-slate-700">
             Last signed visit{carry.visitTypeLabel ? ` · ${carry.visitTypeLabel}` : ""}
-            {carry.visitDate ? ` · ${new Date(carry.visitDate).toLocaleDateString()}` : ""} has{" "}
+            {/* The practice's day (visitDay, 0107); the instant in the viewer's
+                zone only for a source read without one. */}
+            {carry.visitDay
+              ? ` · ${new Date(`${carry.visitDay}T00:00:00Z`).toLocaleDateString(undefined, { timeZone: "UTC" })}`
+              : carry.visitDate
+                ? ` · ${new Date(carry.visitDate).toLocaleDateString()}`
+                : ""}{" "}
+            has{" "}
             {carry.sections.length} completed section{carry.sections.length === 1 ? "" : "s"}.
           </p>
           <button
@@ -357,6 +422,16 @@ export function SectionedNote({
                 carried forward · revised
               </span>
             )}
+            {s.kind === "list" && CHART_LIST_SECTIONS.has(s.sectionKey) && patientId && !readOnly && (
+              <button
+                type="button"
+                onClick={() => void fillFromChart(s.sectionKey, s.label, s.isEmpty)}
+                disabled={savingKey === s.sectionKey}
+                className="ml-auto text-xs text-[var(--color-brand-700)] hover:underline disabled:opacity-50"
+              >
+                Fill from the chart
+              </button>
+            )}
           </div>
           {s.helpText && <p className="text-xs text-slate-500 mb-2">{s.helpText}</p>}
 
@@ -380,6 +455,10 @@ export function SectionedNote({
 
           {s.kind === "list" && (
             <textarea
+              // Remounts when the server's copy moves (a fill from the chart, a
+              // carry-forward), as the prose editor does; defaultValue alone is
+              // read once.
+              key={`${s.sectionKey}:${s.updatedAt ?? "new"}`}
               defaultValue={listToText(s.content)}
               readOnly={readOnly}
               rows={4}
@@ -444,7 +523,7 @@ function blankVitals(): Vitals {
   return {
     heightCm: null, weightKg: null, bpSystolic: null, bpDiastolic: null,
     heartRate: null, respRate: null, temperatureC: null, spo2Percent: null,
-    ppsPercent: null, painScore: null, notes: null, recordedAt: null,
+    ppsPercent: null, painScore: null, dyspneaScore: null, nauseaScore: null, notes: null, recordedAt: null,
   };
 }
 

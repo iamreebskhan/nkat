@@ -11,6 +11,8 @@ import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { writeAudit } from "@/lib/features/audit/audit-write";
 import { dateColumnIso } from "@/lib/features/org/org-date";
+import { admitReferralInTx } from "@/lib/features/referrals/referral.service";
+import { CARE_MANAGEMENT_VISIT_TYPE } from "@/lib/features/visits/visit.types";
 import { applyPhiKeyIfConfigured } from "@/lib/hipaa/pgp";
 
 import { insertContactRow } from "./contacts.service";
@@ -78,6 +80,7 @@ async function assertCareTeamMembers(
     careTeam?.primaryNpUserId,
     careTeam?.rnUserId,
     careTeam?.socialWorkerUserId,
+    careTeam?.chaplainUserId,
     careTeam?.billingAgentUserId,
   ].filter((v): v is string => typeof v === "string");
   if (ids.length === 0) return;
@@ -122,6 +125,14 @@ export async function createPatient(args: {
   // time, it pre-ticks the consent box on this patient's telehealth visits;
   // signing still requires each visit's own acknowledgment.
   const telehealthConsentAt = payload.consents.telehealthConsent ? new Date() : null;
+  // The other two boxes on that step were required and then discarded the same
+  // way, leaving no record that either was obtained (0109).
+  const hipaaAcknowledgedAt = payload.consents.hipaaAcknowledged ? new Date() : null;
+  const goalsOfCareConsentAt = payload.consents.goalsOfCareConsent ? new Date() : null;
+  const consentSignedBy = payload.consents.signedBy?.trim() || null;
+  if (i.secondaryPayerId && i.secondaryPayerId === i.primaryPayerId) {
+    throw new ValidationError("The secondary insurance is the same plan as the primary. Pick a different plan, or leave secondary empty.");
+  }
   // The intake emergency contact and referring physician are filed in
   // patient_contact and on the outside-provider roster (audit R30), not on the
   // patient row, whose four columns nothing read back.
@@ -158,9 +169,11 @@ export async function createPatient(args: {
         insurance_effective_date, insurance_termination_date,
         primary_diagnosis_icd10, palliative_referral_reason,
         acuity, acuity_updated_at, acuity_updated_by_user_id,
-        telehealth_consent_at,
-        primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
-        status, created_by_user_id
+        telehealth_consent_at, hipaa_acknowledged_at, goals_of_care_consent_at, consent_signed_by,
+        secondary_payer_id, secondary_member_id, secondary_member_id_enc, secondary_group_number,
+        primary_np_user_id, rn_user_id, social_worker_user_id, chaplain_user_id, billing_agent_user_id,
+        race_codes, ethnicity_code, preferred_language,
+        status, created_by_user_id, admitted_on
       ) VALUES (
         ${orgId}::uuid, ${d.firstName}, ${d.lastName}, ${d.dateOfBirth}::date,
         ${d.sexAssignedAtBirth ?? null},
@@ -175,15 +188,39 @@ export async function createPatient(args: {
         ${c.acuity ?? null},
         ${c.acuity ? new Date() : null},
         ${c.acuity ? createdByUserId : null}::uuid,
-        ${telehealthConsentAt}::timestamptz,
+        ${telehealthConsentAt}::timestamptz, ${hipaaAcknowledgedAt}::timestamptz,
+        ${goalsOfCareConsentAt}::timestamptz, ${consentSignedBy},
+        ${i.secondaryPayerId ?? null}::uuid, ${i.secondaryMemberId ?? null},
+        CASE WHEN ${phi} THEN encrypt_phi(${i.secondaryMemberId ?? null}) ELSE NULL END,
+        ${i.secondaryGroupNumber ?? null},
         ${ct?.primaryNpUserId ?? null}::uuid, ${ct?.rnUserId ?? null}::uuid,
-        ${ct?.socialWorkerUserId ?? null}::uuid, ${ct?.billingAgentUserId ?? null}::uuid,
-        'active', ${createdByUserId}::uuid
+        ${ct?.socialWorkerUserId ?? null}::uuid, ${ct?.chaplainUserId ?? null}::uuid, ${ct?.billingAgentUserId ?? null}::uuid,
+        ${d.raceCodes ?? []}::text[], ${d.ethnicity ?? null}, ${d.preferredLanguage ?? null},
+        'active', ${createdByUserId}::uuid,
+        -- The day care began, where the practice is (0115, Mark Q11l).
+        (now() AT TIME ZONE (SELECT o.timezone FROM org o WHERE o.id = ${orgId}::uuid))::date
       )
       RETURNING id
     `;
     if (!rows[0]) throw new Error("createPatient: insert returned no row.");
     const patientId = rows[0].id;
+    // The acuity given at intake starts the history (0115, Mark Q9): the
+    // triage's, when this is the referral's triage acuity carried over.
+    if (c.acuity) {
+      const triage = payload.referralId
+        ? await tx.$queryRaw<{ id: string; preliminary_acuity: string | null }[]>`
+            SELECT id, preliminary_acuity FROM referral_triage
+             WHERE referral_id = ${payload.referralId}::uuid AND org_id = ${orgId}::uuid
+             ORDER BY triaged_at DESC LIMIT 1
+          `
+        : [];
+      const fromTriage = triage[0]?.preliminary_acuity === c.acuity ? triage[0].id : null;
+      await tx.$executeRaw`
+        INSERT INTO patient_acuity_event (org_id, patient_id, acuity, source, referral_triage_id, recorded_by_user_id)
+        VALUES (${orgId}::uuid, ${patientId}::uuid, ${c.acuity}, ${fromTriage ? "triage" : "intake"},
+                ${fromTriage}::uuid, ${createdByUserId}::uuid)
+      `;
+    }
     // Same transaction as the chart: a patient is never created with its
     // emergency contact or referrer half-written.
     if (ecName) {
@@ -216,6 +253,16 @@ export async function createPatient(args: {
         roleLabel: null,
       });
     }
+    // Admitting a referral (0111): the referral names this patient from now
+    // on, or the whole intake rolls back.
+    if (payload.referralId) {
+      await admitReferralInTx(tx, {
+        orgId,
+        referralId: payload.referralId,
+        patientId,
+        userId: createdByUserId,
+      });
+    }
     // In the same transaction as the INSERT: a chart that exists without a
     // record of who created it is the gap this closes. Ids and flags only —
     // never the name, address or member id that were just written.
@@ -233,6 +280,7 @@ export async function createPatient(args: {
         acuity: c.acuity ?? null,
         hasEmergencyContact: Boolean(ecName),
         hasReferringPhysician: Boolean(refName || refNpi),
+        referralId: payload.referralId ?? null,
       },
     });
     return { id: patientId };
@@ -265,18 +313,43 @@ interface PatientRow {
   primary_np_user_id: string | null;
   rn_user_id: string | null;
   social_worker_user_id: string | null;
+  chaplain_user_id?: string | null;
   billing_agent_user_id: string | null;
   /** Assignee display names — only the detail read (getPatient) resolves these. */
   primary_np_name?: string | null;
   rn_name?: string | null;
   social_worker_name?: string | null;
+  chaplain_name?: string | null;
   billing_agent_name?: string | null;
+  /** USCDI (0128) — only the detail read selects these. */
+  race_codes?: string[] | null;
+  ethnicity_code?: string | null;
+  preferred_language?: string | null;
   /** Intake telehealth consent (audit R22) — only the detail read selects it. */
   telehealth_consent_at?: Date | null;
+  /** Detail read only (0109 and the chart's edit forms). */
+  address_line_2?: string | null;
+  primary_group_number?: string | null;
+  insurance_effective_date?: Date | null;
+  insurance_termination_date?: Date | null;
+  palliative_referral_reason?: string | null;
+  secondary_payer_id?: string | null;
+  secondary_payer_name?: string | null;
+  secondary_member_id?: string | null;
+  secondary_group_number?: string | null;
+  hipaa_acknowledged_at?: Date | null;
+  goals_of_care_consent_at?: Date | null;
+  consent_signed_by?: string | null;
+  referral_id?: string | null;
+  referral_received_on?: string | null;
+  referral_source_name?: string | null;
   status: PatientStatus;
   created_at: Date;
   updated_at: Date;
 }
+
+/** A DATE column as 'YYYY-MM-DD' (Prisma hands DATEs back at UTC midnight). */
+const dateOnly = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
 
 function rowToView(row: PatientRow): PatientView {
   return {
@@ -304,9 +377,36 @@ function rowToView(row: PatientRow): PatientView {
       primaryNp: { userId: row.primary_np_user_id, name: row.primary_np_name ?? null },
       rn: { userId: row.rn_user_id, name: row.rn_name ?? null },
       socialWorker: { userId: row.social_worker_user_id, name: row.social_worker_name ?? null },
+      chaplain: { userId: row.chaplain_user_id ?? null, name: row.chaplain_name ?? null },
       billingAgent: { userId: row.billing_agent_user_id, name: row.billing_agent_name ?? null },
     },
     telehealthConsentAt: row.telehealth_consent_at ? row.telehealth_consent_at.toISOString() : null,
+    raceCodes: row.race_codes ?? [],
+    ethnicity: row.ethnicity_code ?? null,
+    preferredLanguage: row.preferred_language ?? null,
+    // Only a detail read selects these; a list read leaves them undefined.
+    ...(row.palliative_referral_reason !== undefined && {
+      addressLine2: row.address_line_2 ?? null,
+      primaryGroupNumber: row.primary_group_number ?? null,
+      insuranceEffectiveDate: dateOnly(row.insurance_effective_date),
+      insuranceTerminationDate: dateOnly(row.insurance_termination_date),
+      // '' is how the detail read marks "no reason" (it never selects NULL here).
+      palliativeReferralReason: row.palliative_referral_reason || null,
+      secondaryPayerId: row.secondary_payer_id ?? null,
+      secondaryPayerName: row.secondary_payer_name ?? null,
+      secondaryMemberId: row.secondary_member_id ?? null,
+      secondaryGroupNumber: row.secondary_group_number ?? null,
+      hipaaAcknowledgedAt: row.hipaa_acknowledged_at ? row.hipaa_acknowledged_at.toISOString() : null,
+      goalsOfCareConsentAt: row.goals_of_care_consent_at ? row.goals_of_care_consent_at.toISOString() : null,
+      consentSignedBy: row.consent_signed_by ?? null,
+      referral: row.referral_id
+        ? {
+            id: row.referral_id,
+            receivedOn: row.referral_received_on ?? "",
+            sourceName: row.referral_source_name ?? null,
+          }
+        : null,
+    }),
     status: row.status,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -333,18 +433,25 @@ export async function getPatient(args: {
              -- The last and next visits' days where the practice is (0107).
              -- These were instants and the screens sliced their UTC day, so an
              -- 8:30 pm Ohio visit on the 22nd read as the 23rd. Only this
-             -- org's visits: the visit's patient FK is id-only.
+             -- org's visits: the visit's patient FK is id-only. The last is one
+             -- that took place; the next one still to come, booked or started
+             -- ahead of its time. A cancelled or no-show visit is neither, and
+             -- a PCM/CCM month's charge (0117) is no visit at all. The caseload
+             -- reads them the same way.
              (SELECT (MAX(COALESCE(v.start_time, v.scheduled_start))
                         AT TIME ZONE (SELECT o.timezone FROM org o WHERE o.id = patient.org_id))::date
                 FROM visit v
                WHERE v.patient_id = patient.id AND v.org_id = patient.org_id
+                 AND v.status IN ('in_progress', 'documented', 'pending_billing', 'billed')
+                 AND v.visit_type <> ${CARE_MANAGEMENT_VISIT_TYPE}
                  AND COALESCE(v.start_time, v.scheduled_start) <= now()) AS last_visit_date,
              (SELECT (MIN(v.scheduled_start)
                         AT TIME ZONE (SELECT o.timezone FROM org o WHERE o.id = patient.org_id))::date
                 FROM visit v
                WHERE v.patient_id = patient.id AND v.org_id = patient.org_id
+                 AND v.status IN ('scheduled', 'in_progress')
                  AND v.scheduled_start > now()) AS next_visit_date,
-             primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
+             primary_np_user_id, rn_user_id, social_worker_user_id, chaplain_user_id, billing_agent_user_id,
              -- Seats survive offboarding (reassignment is a human decision),
              -- but the display must not pretend departed staff are current —
              -- flag any assignee whose org_member row is no longer active.
@@ -364,18 +471,47 @@ export async function getPatient(args: {
                                  AND om.user_id = sw.id AND om.status = 'active')
                     THEN COALESCE(sw.full_name, sw.email)
                   ELSE COALESCE(sw.full_name, sw.email) || ' (inactive)' END AS social_worker_name,
+             CASE WHEN ch.id IS NULL THEN NULL
+                  WHEN EXISTS (SELECT 1 FROM org_member om WHERE om.org_id = patient.org_id
+                                 AND om.user_id = ch.id AND om.status = 'active')
+                    THEN COALESCE(ch.full_name, ch.email)
+                  ELSE COALESCE(ch.full_name, ch.email) || ' (inactive)' END AS chaplain_name,
              CASE WHEN ba.id IS NULL THEN NULL
                   WHEN EXISTS (SELECT 1 FROM org_member om WHERE om.org_id = patient.org_id
                                  AND om.user_id = ba.id AND om.status = 'active')
                     THEN COALESCE(ba.full_name, ba.email)
                   ELSE COALESCE(ba.full_name, ba.email) || ' (inactive)' END AS billing_agent_name,
              patient.telehealth_consent_at,
+             patient.race_codes, patient.ethnicity_code, patient.preferred_language,
+             -- What the chart's edit forms start from, and the referral reason
+             -- intake stored and nothing showed again (audit 27 Oct, doc:22).
+             patient.address_line_2, patient.primary_group_number,
+             patient.insurance_effective_date, patient.insurance_termination_date,
+             COALESCE(patient.palliative_referral_reason, '') AS palliative_referral_reason,
+             patient.secondary_payer_id, sec.name AS secondary_payer_name,
+             patient.secondary_member_id, patient.secondary_group_number,
+             patient.hipaa_acknowledged_at, patient.goals_of_care_consent_at, patient.consent_signed_by,
+             ref.referral_id, ref.referral_received_on, ref.referral_source_name,
              patient.status, patient.created_at, patient.updated_at
       FROM patient
       LEFT JOIN payer pay ON pay.id = patient.primary_payer_id
+      LEFT JOIN payer sec ON sec.id = patient.secondary_payer_id
+      -- The referral this patient was admitted from (0111), if any. A lateral
+      -- subquery naming only these three: referral has its own first_name,
+      -- phone and the rest, which the unqualified columns above would collide
+      -- with.
+      LEFT JOIN LATERAL (
+        SELECT r.id AS referral_id,
+               to_char(r.received_on, 'YYYY-MM-DD') AS referral_received_on,
+               r.source_name AS referral_source_name
+          FROM referral r
+         WHERE r.patient_id = patient.id AND r.org_id = patient.org_id
+         LIMIT 1
+      ) ref ON true
       LEFT JOIN app_user np ON np.id = patient.primary_np_user_id
       LEFT JOIN app_user rn ON rn.id = patient.rn_user_id
       LEFT JOIN app_user sw ON sw.id = patient.social_worker_user_id
+      LEFT JOIN app_user ch ON ch.id = patient.chaplain_user_id
       LEFT JOIN app_user ba ON ba.id = patient.billing_agent_user_id
       -- The org is named as well as enforced by RLS, so another org's patient
       -- is not found by its id on a connection that bypasses RLS.
@@ -425,13 +561,16 @@ export async function listPatients(
                         AT TIME ZONE (SELECT o.timezone FROM org o WHERE o.id = patient.org_id))::date
                 FROM visit v
                WHERE v.patient_id = patient.id AND v.org_id = patient.org_id
+                 AND v.status IN ('in_progress', 'documented', 'pending_billing', 'billed')
+                 AND v.visit_type <> ${CARE_MANAGEMENT_VISIT_TYPE}
                  AND COALESCE(v.start_time, v.scheduled_start) <= now()) AS last_visit_date,
              (SELECT (MIN(v.scheduled_start)
                         AT TIME ZONE (SELECT o.timezone FROM org o WHERE o.id = patient.org_id))::date
                 FROM visit v
                WHERE v.patient_id = patient.id AND v.org_id = patient.org_id
+                 AND v.status IN ('scheduled', 'in_progress')
                  AND v.scheduled_start > now()) AS next_visit_date,
-             primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
+             primary_np_user_id, rn_user_id, social_worker_user_id, chaplain_user_id, billing_agent_user_id,
              status, created_at, updated_at
           FROM patient
           WHERE org_id = ${args.orgId}::uuid
@@ -456,13 +595,16 @@ export async function listPatients(
                         AT TIME ZONE (SELECT o.timezone FROM org o WHERE o.id = patient.org_id))::date
                 FROM visit v
                WHERE v.patient_id = patient.id AND v.org_id = patient.org_id
+                 AND v.status IN ('in_progress', 'documented', 'pending_billing', 'billed')
+                 AND v.visit_type <> ${CARE_MANAGEMENT_VISIT_TYPE}
                  AND COALESCE(v.start_time, v.scheduled_start) <= now()) AS last_visit_date,
              (SELECT (MIN(v.scheduled_start)
                         AT TIME ZONE (SELECT o.timezone FROM org o WHERE o.id = patient.org_id))::date
                 FROM visit v
                WHERE v.patient_id = patient.id AND v.org_id = patient.org_id
+                 AND v.status IN ('scheduled', 'in_progress')
                  AND v.scheduled_start > now()) AS next_visit_date,
-             primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
+             primary_np_user_id, rn_user_id, social_worker_user_id, chaplain_user_id, billing_agent_user_id,
              status, created_at, updated_at
           FROM patient
           WHERE org_id = ${args.orgId}::uuid
@@ -503,13 +645,16 @@ export async function searchPatients(args: {
                         AT TIME ZONE (SELECT o.timezone FROM org o WHERE o.id = patient.org_id))::date
                 FROM visit v
                WHERE v.patient_id = patient.id AND v.org_id = patient.org_id
+                 AND v.status IN ('in_progress', 'documented', 'pending_billing', 'billed')
+                 AND v.visit_type <> ${CARE_MANAGEMENT_VISIT_TYPE}
                  AND COALESCE(v.start_time, v.scheduled_start) <= now()) AS last_visit_date,
              (SELECT (MIN(v.scheduled_start)
                         AT TIME ZONE (SELECT o.timezone FROM org o WHERE o.id = patient.org_id))::date
                 FROM visit v
                WHERE v.patient_id = patient.id AND v.org_id = patient.org_id
+                 AND v.status IN ('scheduled', 'in_progress')
                  AND v.scheduled_start > now()) AS next_visit_date,
-             primary_np_user_id, rn_user_id, social_worker_user_id, billing_agent_user_id,
+             primary_np_user_id, rn_user_id, social_worker_user_id, chaplain_user_id, billing_agent_user_id,
              status, created_at, updated_at
       FROM patient
       -- Named by org as well as RLS, as in listPatients.
@@ -535,19 +680,27 @@ export async function searchPatients(args: {
 const DEMOGRAPHIC_KEYS: readonly (keyof NonNullable<UpdatePatient["demographics"]>)[] = [
   "firstName", "lastName", "dateOfBirth", "sexAssignedAtBirth",
   "addressLine1", "addressLine2", "city", "state", "zip", "phone",
+  "raceCodes", "ethnicity", "preferredLanguage",
 ];
 const INSURANCE_KEYS: readonly (keyof NonNullable<UpdatePatient["insurance"]>)[] = [
   "primaryPayerId", "primaryMemberId", "primaryGroupNumber", "insuranceState",
   "insuranceEffectiveDate", "insuranceTerminationDate",
+  "secondaryPayerId", "secondaryMemberId", "secondaryGroupNumber",
 ];
 const CLINICAL_KEYS: readonly (keyof NonNullable<UpdatePatient["clinical"]>)[] = [
   "primaryDiagnosisIcd10", "palliativeReferralReason", "acuity",
+];
+const CONSENT_KEYS: readonly (keyof NonNullable<UpdatePatient["consents"]>)[] = [
+  "hipaaAcknowledged", "goalsOfCareConsent", "telehealthConsent", "signedBy",
 ];
 
 /** Did the caller send any of these fields? (undefined = not sent.) */
 function provided(section: object, keys: readonly string[]): boolean {
   return keys.some((k) => (section as Record<string, unknown>)[k] !== undefined);
 }
+
+/** Tri-state flag for a nullable column: was the field sent at all (null clears). */
+const sent = (v: unknown) => v !== undefined;
 
 export async function updatePatient(args: {
   orgId: string;
@@ -609,18 +762,23 @@ export async function updatePatient(args: {
     const sections: string[] = [];
     const d = args.payload.demographics;
     if (d && provided(d, DEMOGRAPHIC_KEYS)) {
+      // Tri-state (UpdatePatientSchema): a field not sent keeps its value, null
+      // clears it. COALESCE alone could replace a wrong phone but never remove it.
       await tx.$executeRaw`
         UPDATE patient SET
           first_name = COALESCE(${d.firstName ?? null}, first_name),
           last_name  = COALESCE(${d.lastName ?? null},  last_name),
           date_of_birth = COALESCE(${d.dateOfBirth ?? null}::date, date_of_birth),
-          sex_assigned_at_birth = COALESCE(${d.sexAssignedAtBirth ?? null}, sex_assigned_at_birth),
-          address_line_1 = COALESCE(${d.addressLine1 ?? null}, address_line_1),
-          address_line_2 = COALESCE(${d.addressLine2 ?? null}, address_line_2),
-          city  = COALESCE(${d.city ?? null}, city),
-          state = COALESCE(${d.state ?? null}, state),
-          zip   = COALESCE(${d.zip ?? null}, zip),
-          phone = COALESCE(${d.phone ?? null}, phone),
+          sex_assigned_at_birth = CASE WHEN ${sent(d.sexAssignedAtBirth)} THEN ${d.sexAssignedAtBirth ?? null} ELSE sex_assigned_at_birth END,
+          address_line_1 = CASE WHEN ${sent(d.addressLine1)} THEN ${d.addressLine1 ?? null} ELSE address_line_1 END,
+          address_line_2 = CASE WHEN ${sent(d.addressLine2)} THEN ${d.addressLine2 ?? null} ELSE address_line_2 END,
+          city  = CASE WHEN ${sent(d.city)} THEN ${d.city ?? null} ELSE city END,
+          state = CASE WHEN ${sent(d.state)} THEN ${d.state ?? null} ELSE state END,
+          zip   = CASE WHEN ${sent(d.zip)} THEN ${d.zip ?? null} ELSE zip END,
+          phone = CASE WHEN ${sent(d.phone)} THEN ${d.phone ?? null} ELSE phone END,
+          race_codes = CASE WHEN ${sent(d.raceCodes)} THEN ${d.raceCodes ?? []}::text[] ELSE race_codes END,
+          ethnicity_code = CASE WHEN ${sent(d.ethnicity)} THEN ${d.ethnicity ?? null} ELSE ethnicity_code END,
+          preferred_language = CASE WHEN ${sent(d.preferredLanguage)} THEN ${d.preferredLanguage ?? null} ELSE preferred_language END,
           updated_at = now()
         WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
       `;
@@ -628,21 +786,38 @@ export async function updatePatient(args: {
     }
     const i = args.payload.insurance;
     if (i && provided(i, INSURANCE_KEYS)) {
+      if (i.secondaryPayerId) {
+        const both = await tx.$queryRaw<{ primary_payer_id: string | null }[]>`
+          SELECT primary_payer_id FROM patient WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+        `;
+        if ((i.primaryPayerId ?? both[0]?.primary_payer_id) === i.secondaryPayerId) {
+          throw new ValidationError("The secondary insurance is the same plan as the primary. Pick a different plan, or clear secondary.");
+        }
+      }
       await tx.$executeRaw`
         UPDATE patient SET
           primary_payer_id   = COALESCE(${i.primaryPayerId ?? null}::uuid, primary_payer_id),
-          primary_member_id  = COALESCE(${i.primaryMemberId ?? null},     primary_member_id),
-          -- Mirror the plaintext: absent = keep ciphertext; provided = re-encrypt
-          -- (or NULL when keyless — a stale ciphertext must never outlive its plaintext).
+          primary_member_id  = CASE WHEN ${sent(i.primaryMemberId)} THEN ${i.primaryMemberId ?? null} ELSE primary_member_id END,
+          -- Mirror the plaintext: not sent = keep ciphertext; sent = re-encrypt,
+          -- or NULL when cleared or keyless — a stale ciphertext must never
+          -- outlive its plaintext.
           primary_member_id_enc = CASE
-            WHEN ${i.primaryMemberId ?? null}::text IS NULL THEN primary_member_id_enc
-            WHEN ${phi} THEN encrypt_phi(${i.primaryMemberId ?? null})
+            WHEN NOT ${sent(i.primaryMemberId)} THEN primary_member_id_enc
+            WHEN ${i.primaryMemberId ?? null}::text IS NOT NULL AND ${phi} THEN encrypt_phi(${i.primaryMemberId ?? null})
             ELSE NULL
           END,
-          primary_group_number = COALESCE(${i.primaryGroupNumber ?? null}, primary_group_number),
+          primary_group_number = CASE WHEN ${sent(i.primaryGroupNumber)} THEN ${i.primaryGroupNumber ?? null} ELSE primary_group_number END,
           insurance_state = COALESCE(${i.insuranceState ?? null}, insurance_state),
-          insurance_effective_date  = COALESCE(${i.insuranceEffectiveDate ?? null}::date, insurance_effective_date),
-          insurance_termination_date = COALESCE(${i.insuranceTerminationDate ?? null}::date, insurance_termination_date),
+          insurance_effective_date  = CASE WHEN ${sent(i.insuranceEffectiveDate)} THEN ${i.insuranceEffectiveDate ?? null}::date ELSE insurance_effective_date END,
+          insurance_termination_date = CASE WHEN ${sent(i.insuranceTerminationDate)} THEN ${i.insuranceTerminationDate ?? null}::date ELSE insurance_termination_date END,
+          secondary_payer_id = CASE WHEN ${sent(i.secondaryPayerId)} THEN ${i.secondaryPayerId ?? null}::uuid ELSE secondary_payer_id END,
+          secondary_member_id = CASE WHEN ${sent(i.secondaryMemberId)} THEN ${i.secondaryMemberId ?? null} ELSE secondary_member_id END,
+          secondary_member_id_enc = CASE
+            WHEN NOT ${sent(i.secondaryMemberId)} THEN secondary_member_id_enc
+            WHEN ${i.secondaryMemberId ?? null}::text IS NOT NULL AND ${phi} THEN encrypt_phi(${i.secondaryMemberId ?? null})
+            ELSE NULL
+          END,
+          secondary_group_number = CASE WHEN ${sent(i.secondaryGroupNumber)} THEN ${i.secondaryGroupNumber ?? null} ELSE secondary_group_number END,
           updated_at = now()
         WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
       `;
@@ -652,10 +827,21 @@ export async function updatePatient(args: {
     // outside-provider roster (audit R30).
     const c = args.payload.clinical;
     if (c && provided(c, CLINICAL_KEYS)) {
+      // A changed acuity joins the history as a review on the chart (0115,
+      // Mark Q9), before the row takes the new value. The same value again is
+      // not a new judgement.
+      if (c.acuity) {
+        await tx.$executeRaw`
+          INSERT INTO patient_acuity_event (org_id, patient_id, acuity, source, recorded_by_user_id)
+          SELECT org_id, id, ${c.acuity}, 'review', ${args.userId ?? null}::uuid FROM patient
+           WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+             AND acuity IS DISTINCT FROM ${c.acuity}
+        `;
+      }
       await tx.$executeRaw`
         UPDATE patient SET
-          primary_diagnosis_icd10 = COALESCE(${c.primaryDiagnosisIcd10 ?? null}, primary_diagnosis_icd10),
-          palliative_referral_reason = COALESCE(${c.palliativeReferralReason ?? null}, palliative_referral_reason),
+          primary_diagnosis_icd10 = CASE WHEN ${sent(c.primaryDiagnosisIcd10)} THEN ${c.primaryDiagnosisIcd10 ?? null} ELSE primary_diagnosis_icd10 END,
+          palliative_referral_reason = CASE WHEN ${sent(c.palliativeReferralReason)} THEN ${c.palliativeReferralReason ?? null} ELSE palliative_referral_reason END,
           acuity = COALESCE(${c.acuity ?? null}, acuity),
           acuity_updated_at = CASE WHEN ${c.acuity ?? null}::text IS NULL THEN acuity_updated_at ELSE now() END,
           acuity_updated_by_user_id = CASE WHEN ${c.acuity ?? null}::text IS NULL THEN acuity_updated_by_user_id ELSE ${args.userId ?? null}::uuid END,
@@ -663,6 +849,30 @@ export async function updatePatient(args: {
         WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
       `;
       sections.push("clinical");
+    }
+    // Consents recorded or withdrawn after intake (0109): true keeps the date
+    // already on file or stamps now; false clears it.
+    const k = args.payload.consents;
+    if (k && provided(k, CONSENT_KEYS)) {
+      await tx.$executeRaw`
+        UPDATE patient SET
+          hipaa_acknowledged_at = CASE
+            WHEN NOT ${sent(k.hipaaAcknowledged)} THEN hipaa_acknowledged_at
+            WHEN ${k.hipaaAcknowledged === true} THEN COALESCE(hipaa_acknowledged_at, now())
+            ELSE NULL END,
+          goals_of_care_consent_at = CASE
+            WHEN NOT ${sent(k.goalsOfCareConsent)} THEN goals_of_care_consent_at
+            WHEN ${k.goalsOfCareConsent === true} THEN COALESCE(goals_of_care_consent_at, now())
+            ELSE NULL END,
+          telehealth_consent_at = CASE
+            WHEN NOT ${sent(k.telehealthConsent)} THEN telehealth_consent_at
+            WHEN ${k.telehealthConsent === true} THEN COALESCE(telehealth_consent_at, now())
+            ELSE NULL END,
+          consent_signed_by = CASE WHEN ${sent(k.signedBy)} THEN ${k.signedBy || null} ELSE consent_signed_by END,
+          updated_at = now()
+        WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+      `;
+      sections.push("consents");
     }
     if (args.payload.careTeam && Object.keys(args.payload.careTeam).length > 0) {
       const ct = args.payload.careTeam;
@@ -675,6 +885,7 @@ export async function updatePatient(args: {
           primary_np_user_id    = CASE WHEN ${ct.primaryNpUserId === undefined} THEN primary_np_user_id    ELSE ${ct.primaryNpUserId ?? null}::uuid END,
           rn_user_id            = CASE WHEN ${ct.rnUserId === undefined} THEN rn_user_id            ELSE ${ct.rnUserId ?? null}::uuid END,
           social_worker_user_id = CASE WHEN ${ct.socialWorkerUserId === undefined} THEN social_worker_user_id ELSE ${ct.socialWorkerUserId ?? null}::uuid END,
+          chaplain_user_id      = CASE WHEN ${ct.chaplainUserId === undefined} THEN chaplain_user_id      ELSE ${ct.chaplainUserId ?? null}::uuid END,
           billing_agent_user_id = CASE WHEN ${ct.billingAgentUserId === undefined} THEN billing_agent_user_id ELSE ${ct.billingAgentUserId ?? null}::uuid END,
           updated_at = now()
         WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
@@ -682,8 +893,31 @@ export async function updatePatient(args: {
       sections.push("careTeam");
     }
     if (args.payload.status) {
+      // Archiving, and back, is all a status change here does. A discharge or
+      // a death carries its day and the practice's reason (0115): set as a
+      // bare status it said neither, and discharged_at was never written. A
+      // discharged patient comes back by readmission, which starts an episode.
+      let to = args.payload.status;
+      if (to === "discharged" || to === "deceased") {
+        throw new ValidationError("Discharge the patient from the chart, with the day and the reason.");
+      }
+      const cur = await tx.$queryRaw<{ status: string }[]>`
+        SELECT status FROM patient WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
+      `;
+      if (to === "active" && cur[0] && cur[0].status !== "archived" && cur[0].status !== "active") {
+        throw new ValidationError("Readmit the patient from the chart to bring them back under care.");
+      }
+      // Unarchiving brings the chart back as it was: archived after a
+      // discharge, the patient is still discharged until readmitted.
+      if (to === "active" && cur[0]?.status === "archived") {
+        const d = await tx.$queryRaw<{ died: boolean }[]>`
+          SELECT died_on IS NOT NULL AS died FROM patient_discharge
+           WHERE patient_id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid AND reversed_at IS NULL
+        `;
+        if (d[0]) to = d[0].died ? "deceased" : "discharged";
+      }
       await tx.$executeRaw`
-        UPDATE patient SET status = ${args.payload.status}, updated_at = now()
+        UPDATE patient SET status = ${to}, updated_at = now()
         WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
       `;
       sections.push("status");

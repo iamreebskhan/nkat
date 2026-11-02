@@ -172,6 +172,23 @@ export function recordSignupAttempt(ip: string | null, now: number = Date.now())
   bump(signupKey(ip), now);
 }
 
+/**
+ * The client address to throttle on: X-Real-IP first (nginx sets it from the
+ * peer), else the LAST X-Forwarded-For hop, the one our own edge appended —
+ * the first is whatever the client chose to send. Same rule as the login and
+ * signup routes, for the routes added since (0121).
+ */
+export function throttleIpOf(headers: Headers): string | null {
+  const real = headers.get("x-real-ip");
+  if (real?.trim()) return real.trim();
+  const fwd = headers.get("x-forwarded-for");
+  if (fwd) {
+    const hops = fwd.split(",").map((h) => h.trim()).filter(Boolean);
+    if (hops.length) return hops[hops.length - 1]!;
+  }
+  return null;
+}
+
 /** Test seam. */
 export function __resetThrottle(): void {
   buckets.clear();

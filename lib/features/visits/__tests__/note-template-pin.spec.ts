@@ -39,6 +39,10 @@ vi.mock("@/lib/db", () => ({ prisma: {}, withOrgContext: vi.fn() }));
 vi.mock("@/lib/features/audit/audit-write", () => ({
   writeAudit: vi.fn().mockResolvedValue(undefined),
 }));
+// Escalation alerts have their own spec; this fake models the note's tables only.
+vi.mock("@/lib/features/care-coordination/escalation.service", () => ({
+  raiseForReadings: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { handleServiceError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
@@ -242,6 +246,11 @@ beforeEach(() => {
     visit_note_section: [],
     visit_vitals: [],
     org_visit_type: [],
+    // The practice's zone, read for the carry-forward source's day (0107).
+    org: [
+      { id: ORG, timezone: "America/New_York" },
+      { id: OTHER_ORG, timezone: "America/Los_Angeles" },
+    ],
   };
   vi.mocked(withOrgContext).mockImplementation(async (_o, fn) =>
     (fn as (tx: unknown) => Promise<unknown>)(fakeTx()),

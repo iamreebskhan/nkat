@@ -13,6 +13,7 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 
+import { askReason } from "@/components/billing/ask-reason";
 import { SubmissionDisclosure } from "@/components/billing/submission-disclosure";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,7 +23,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { lookupCarc } from "@/lib/features/denials/denial-pure";
+import { lookupCarc, lookupRarc } from "@/lib/features/denials/denial-pure";
 import type {
   AiRecommendation,
   DenialView,
@@ -133,12 +134,11 @@ export default function DenialDetailPage({
       // applies (audit R19). Going ahead is the biller's call, with a reason
       // the claim history keeps.
       if (!data.success && data.data?.documentationIncomplete) {
-        const reason = window.prompt(
+        const reason = askReason(
           `${data.error}\n\nTo refile anyway, enter the reason (at least 10 characters). It is recorded on the claim history.`,
-          "",
         );
-        if (reason !== null && reason.trim() !== "") {
-          data = await send({ documentationOverride: { reason: reason.trim() } });
+        if (reason !== null) {
+          data = await send({ documentationOverride: { reason } });
         }
       }
       if (!data.success) setError(data.error ?? "Refile failed.");
@@ -286,7 +286,16 @@ export default function DenialDetailPage({
         <CardContent className="space-y-2 text-sm text-slate-700">
           <Row label="CPT" value={denial.cptCode} mono />
           <Row label="CARC" value={`${denial.carcCode} — ${carc.text}`} />
-          {denial.rarcCode && <Row label="RARC" value={denial.rarcCode} mono />}
+          {denial.rarcCode && (
+            <Row
+              label="RARC"
+              value={
+                lookupRarc(denial.rarcCode)
+                  ? `${denial.rarcCode} — ${lookupRarc(denial.rarcCode)}`
+                  : denial.rarcCode
+              }
+            />
+          )}
           {denial.denialReason && <Row label="Payer text" value={denial.denialReason} />}
           <Row
             label="Denied amount"
@@ -422,6 +431,17 @@ export default function DenialDetailPage({
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {denial.claimResubmittedAt && !denial.refiledAt && denial.outcome === "pending" && (
+            <p
+              role="status"
+              className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-900 ring-1 ring-inset ring-emerald-600/20"
+            >
+              This claim already went back to the payer on{" "}
+              {new Date(denial.claimResubmittedAt).toLocaleDateString()}, from another denial on it
+              or from the claims queue. A corrected claim covers every line, this one included: choose
+              Refile and mark it refiled to record that, rather than sending the claim again.
+            </p>
+          )}
           {denial.decision === "pending" ? (
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => decide("refile")} loading={submitting}>

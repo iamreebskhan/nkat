@@ -136,6 +136,40 @@ describe("summarizeAuditPayload", () => {
     );
   });
 
+  // Every settings row read "—" on the audit page: the payload said what
+  // changed and nothing printed it.
+  it("settings changes say what changed, how, and which fields", () => {
+    expect(
+      summarizeAuditPayload("settings_update", "practice", null, { change: "edit", fields: ["dailyVisitCapacity", "timezone"] }).text,
+    ).toBe("Practice settings edited · Fields: visits per clinician per day, time zone");
+    expect(summarizeAuditPayload("settings_update", "visit_type", SB, { change: "deactivate", fields: ["active"] }).text).toBe(
+      "Visit type deactivated",
+    );
+    expect(
+      summarizeAuditPayload("settings_update", "visit_service", SB, { change: "edit", fields: ["cptHint", "name"] }).text,
+    ).toBe("Visit service edited · Fields: CPT hint, name");
+    expect(
+      summarizeAuditPayload("settings_update", "branding", null, { change: "edit", fields: ["customDomain", "primaryColor"] }).text,
+    ).toBe("Branding edited · Fields: custom domain, primary color");
+    expect(
+      summarizeAuditPayload("settings_update", "visit_type", SB, {
+        change: "create", label: "Bereavement call", codingBasis: "non_billable", isTelehealth: false,
+      }).text,
+    ).toBe("Visit type added · bills like non billable");
+  });
+
+  it("prints no org-written name, label or domain from a settings row, whatever it carries", () => {
+    const created = summarizeAuditPayload("settings_update", "visit_service", SB, {
+      change: "create", name: "Grief call with Mrs Jones", category: "psychosocial",
+    }).text;
+    expect(created).toBe("Visit service added");
+    const odd = summarizeAuditPayload("settings_update", "visit_type", SB, {
+      change: "edit", fields: ["label", "Mrs Jones"], codingBasis: "Mrs Jones",
+    }).text;
+    expect(odd).toBe("Visit type edited · Fields: name");
+    expect(summarizeAuditPayload("settings_update", "something_new", null, { change: "edit" }).text).toBe("");
+  });
+
   it("payer roster changes name the payer and its states: reference data, not PHI (audit R17)", () => {
     expect(
       summarizeAuditPayload("payer_roster_change", "payer", SB, {
@@ -336,6 +370,131 @@ describe("summarizeAuditPayload", () => {
 
   it("ignores a visitId that is not a uuid", () => {
     expect(summarizeAuditPayload("superbill_create", "superbill", SB, { visitId: "<script>" }).visitId).toBeNull();
+  });
+
+  it("says what kind of document was added, opened or removed, and never its name (0112)", () => {
+    expect(
+      summarizeAuditPayload("document_upload", "patient_document", SB, {
+        subject: "referral", kind: "face_sheet", contentType: "application/pdf", sizeBytes: 348_160,
+        fileName: "Smith_John_facesheet.pdf",
+      }).text,
+    ).toBe("Document added · face sheet · PDF, 340 KB · to a referral");
+    expect(summarizeAuditPayload("document_view", "patient_document", SB, { fileName: "x" }).text).toBe("Document opened");
+    expect(
+      summarizeAuditPayload("document_remove", "patient_document", SB, { kind: "other", reason: "Wrong patient Smith" }).text,
+    ).toBe("Document removed as filed in error · other");
+    // CONTROL: a kind or type outside the closed sets prints nothing of itself.
+    const odd = summarizeAuditPayload("document_upload", "patient_document", SB, {
+      kind: "<b>Smith</b>", contentType: "text/html", subject: "x",
+    });
+    expect(odd.text).toBe("Document added");
+  });
+
+  it("names the list and what was done to it, never the diagnosis, drug or substance (0114)", () => {
+    const s = (payload: Record<string, unknown>) => summarizeAuditPayload("clinical_list_change", "patient", SB, payload).text;
+    expect(s({ list: "medications", op: "stop", itemId: SB, name: "Morphine" })).toBe("Entry stopped on the medication list");
+    expect(s({ list: "problems", op: "edit", fields: ["onsetOn", "notes", "icd10"] })).toBe(
+      "Entry edited on the problem list · Fields: onset, notes",
+    );
+    expect(s({ list: "no_known_allergies", op: "record" })).toBe("No known allergies recorded");
+    // CONTROL: values outside the closed sets print nothing of themselves.
+    expect(s({ list: "Penicillin", op: "<script>" })).toBe("Clinical list changed");
+  });
+
+  it("says what changed in the course of care, from closed sets only (0115)", () => {
+    const s = (action: string, targetType: string, payload: Record<string, unknown>) =>
+      summarizeAuditPayload(action, targetType, SB, payload);
+    expect(s("acuity_change", "visit", { source: "visit", acuity: "high", patientId: SB })).toEqual({
+      text: "Acuity given at the visit · high",
+      visitId: SB,
+    });
+    expect(s("hospice_assessment", "patient", { assessmentId: SB, eligible: false }).text).toBe("Hospice eligibility assessed: not eligible");
+    expect(s("patient_event_change", "patient", { op: "void", kind: "ed_visit", eventId: SB }).text).toBe("ED visit voided as recorded in error");
+    expect(s("patient_event_change", "patient", { op: "add", kind: "hospice_referral", eventId: SB }).text).toBe("Hospice referral recorded");
+    expect(s("patient_discharge", "patient", { op: "discharge", reasonCode: "01b", category: "hospice_partner", status: "discharged" }).text).toBe(
+      "Discharged · code 01b",
+    );
+    expect(s("patient_discharge", "patient", { op: "discharge", reasonCode: "08", status: "deceased" }).text).toBe(
+      "Discharged: died on service · code 08",
+    );
+    expect(s("patient_discharge", "patient", { op: "hospice_outcome", endReason: "revocation" }).text).toBe("Hospice stay ended · revoked hospice");
+    expect(s("patient_discharge", "patient", { op: "hospice_details", fields: ["hospiceAdmittedOn"] }).text).toBe(
+      "Hospice stay details recorded",
+    );
+    expect(s("patient_discharge", "patient", { op: "readmit" }).text).toBe("Readmitted to care");
+    // CONTROL: values outside the closed sets print nothing of themselves.
+    expect(s("acuity_change", "visit", { acuity: "Smith is worse" }).text).toBe("Acuity given at the visit");
+    expect(s("patient_event_change", "patient", { op: "add", kind: "Fell at Mercy" }).text).toBe("Event changed");
+    expect(s("patient_discharge", "patient", { op: "discharge", reasonCode: "Hospice of Smith" }).text).toBe("Discharged");
+    expect(s("patient_discharge", "patient", { op: "hospice_outcome", endReason: "<b>x</b>" }).text).toBe("Hospice stay ended");
+  });
+
+  it("says what changed between visits, from closed sets only (0116)", () => {
+    const s = (action: string, payload: Record<string, unknown>) => summarizeAuditPayload(action, "patient", SB, payload).text;
+    expect(s("care_plan_update", { version: 6, duringVisit: true, parts: ["document", "escalation", "Morphine"] })).toBe(
+      "Care plan saved (v6) · during a visit · Parts: document, escalation parameters",
+    );
+    expect(s("care_program_enrollment", { op: "enroll", program: "pcm", consentMethod: "verbal" })).toBe("Enrolled · PCM · verbal consent");
+    expect(s("care_program_enrollment", { op: "end", program: "ccm" })).toBe("Enrolment ended · CCM");
+    expect(s("phone_encounter", { op: "add", direction: "inbound" })).toBe("Phone call recorded: they called");
+    expect(s("phone_encounter", { op: "void" })).toBe("Phone call voided as recorded in error");
+    expect(s("escalation_alert", { op: "raise", measure: "pain", source: "vitals" })).toBe("Escalation alert raised · pain");
+    expect(s("care_task", { op: "edit", discipline: "chaplaincy", fields: ["dueOn", "assigneeUserId"] })).toBe(
+      "Task changed · for chaplaincy · Fields: due day, assignee",
+    );
+    // CONTROL: values outside the closed sets print nothing of themselves.
+    expect(s("escalation_alert", { op: "raise", measure: "Pain 9 at night" })).toBe("Escalation alert raised");
+    expect(s("care_task", { op: "<i>", discipline: "Call Ruth" })).toBe("Task changed");
+    expect(s("care_program_enrollment", { op: "enroll", program: "Smith", consentMethod: "by email" })).toBe("Enrolled");
+  });
+
+  it("says what PCM/CCM time and charges did, from closed sets only, and opens the charge's visit (0117)", () => {
+    const sum = (action: string, payload: Record<string, unknown>) => summarizeAuditPayload(action, "patient", SB, payload);
+    expect(sum("care_management_time", { op: "log", program: "pcm", kind: "clinical_staff", minutes: 15, activity: "care_plan" }).text).toBe(
+      "PCM time logged · 15 minutes · clinical staff · care plan work",
+    );
+    expect(sum("care_management_time", { op: "log", program: "ccm", kind: "qhp", minutes: 1, activity: "phone", fromCall: true }).text).toBe(
+      "CCM time logged · 1 minute · practitioner · from a call",
+    );
+    expect(sum("care_management_time", { op: "void", program: "ccm", fromCall: true }).text).toBe(
+      "CCM time voided as recorded in error · with its call",
+    );
+    const VISIT = "e0000000-0000-4000-8000-0000000000cc";
+    const raised = sum("care_management_charge", {
+      op: "raise", program: "ccm", basis: "staff", cptCodes: ["99490", "99439"], addOnUnits: 2, visitId: VISIT,
+    });
+    expect(raised).toEqual({ text: "CCM month charged · CPT 99490, 99439 · 2 add-on units · on clinical staff time", visitId: VISIT });
+    // CONTROL: values outside the closed sets print nothing of themselves.
+    expect(sum("care_management_time", { op: "log", program: "Ruth's", kind: "nurse Ann", activity: "called Ruth" }).text).toBe(
+      "PCM/CCM time logged",
+    );
+    expect(sum("care_management_charge", { cptCodes: ["C34.12", "<b>"], basis: "Ruth", visitId: "not-a-uuid" })).toEqual({
+      text: "PCM/CCM month charged",
+      visitId: null,
+    });
+  });
+
+  it("says another payment on a claim apart from its total (D9)", () => {
+    const sum = (payload: Record<string, unknown>) => summarizeAuditPayload("superbill_status_change", "superbill", SB, payload);
+    expect(sum({ from: "partially_paid", to: "partially_paid", paidAmountCents: 7000, paymentCents: 2000 }).text).toBe(
+      "partially paid → partially paid · another payment $20.00 · paid $70.00 in all",
+    );
+    expect(sum({ from: "partially_paid", to: "paid", paidAmountCents: 10000, paymentCents: 3000, lastPayment: true }).text).toBe(
+      "partially paid → paid · last payment $30.00 · paid $100.00 in all",
+    );
+    // CONTROL: a first payment reads as it always did.
+    expect(sum({ from: "submitted", to: "partially_paid", paidAmountCents: 5000 }).text).toBe("submitted → partially paid · paid $50.00");
+  });
+
+  it("says what was loaded from CMS's NCCI files, in counts and dates (0122)", () => {
+    const sum = (action: string, payload: Record<string, unknown>) => summarizeAuditPayload(action, "ncci_load", SB, payload);
+    expect(sum("ncci_load", { kind: "ptp", change: "loaded", rowsKept: 3 }).text).toBe("NCCI pairs loaded from CMS's files · 3 pairs");
+    expect(sum("ncci_load", { kind: "mue", change: "loaded", rowsKept: 1, inForceFrom: "2026-10-01" }).text).toBe(
+      "MUE values loaded from CMS's files · 1 code · in force from 2026-10-01",
+    );
+    expect(sum("ncci_load", { kind: "ptp", change: "removed", rowsKept: 3 }).text).toBe("NCCI pairs no longer used · 3 pairs");
+    // CONTROL: a date that is not one prints nothing of itself.
+    expect(sum("ncci_load", { kind: "mue", change: "loaded", inForceFrom: "Ruth" }).text).toBe("MUE values loaded from CMS's files");
   });
 });
 

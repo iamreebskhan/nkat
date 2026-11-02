@@ -216,7 +216,9 @@ export function CreateBillDialog({
                 <option key={v.visitId} value={v.visitId}>
                   {(v.dateOfService ?? "").slice(0, 10)} · {v.visitType.replace(/_/g, " ")}
                   {v.clinicianName ? ` · ${v.clinicianName}` : ""}
-                  {v.superbillId ? ` · already billed (${v.superbillStatus})` : ""}
+                  {v.superbillId
+                    ? ` · already billed (${(v.superbillStatus ?? "").replace(/_/g, " ")})`
+                    : ""}
                 </option>
               ))}
             </Select>

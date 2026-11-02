@@ -131,7 +131,7 @@ export function TimeSpentPanel({
           value={minutes}
           onChange={(e) => onChange(parseInt(e.target.value, 10))}
           disabled={disabled}
-          className="flex-1 accent-emerald-600"
+          className="min-w-0 flex-1 accent-emerald-600"
           aria-label="Adjust minutes"
         />
       </div>

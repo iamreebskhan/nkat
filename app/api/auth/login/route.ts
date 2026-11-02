@@ -8,13 +8,14 @@
  *
  * Audit: every successful login writes an audit_log row.
  */
-import { type NextRequest } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { ok, fail, parseJson } from "@/lib/api";
 import { setSessionCookie, signSession } from "@/lib/auth";
 import { withOrgContext } from "@/lib/db";
 import { login } from "@/lib/features/auth/auth.service";
+import { signEnrolToken } from "@/lib/features/auth/mfa-enrol-token";
 import {
   checkLoginAllowed,
   recordLoginFailure,
@@ -50,6 +51,15 @@ export async function POST(req: NextRequest): Promise<Response> {
     mfaCode: body.mfaCode,
   });
   if ("error" in result) {
+    if (result.error === "mfa_enrollment_required") {
+      // The password was right (0121): no strike, and no session either. The
+      // form sets up the authenticator with this pass, then signs in.
+      const enrolToken = await signEnrolToken({ userId: result.userId, orgId: result.orgId, email: result.email });
+      return NextResponse.json(
+        { success: false, data: { enrolToken }, error: MFA_ENROLMENT_REQUIRED },
+        { status: 403 },
+      );
+    }
     // A suspended account is not a wrong guess; counting it would let a
     // known-suspended address burn the budget of everyone behind that IP.
     if (result.error !== "user_inactive") {
@@ -71,7 +81,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   // so four fat-fingered attempts followed by the right one costs nothing.
   recordLoginSuccess(throttleIp, body.email);
 
-  const token = await signSession(result.session);
+  const token = await signSession(result.session, { mfa: result.mfa });
   await setSessionCookie(token);
 
   // Audit log — fire-and-forget so a logging hiccup doesn't 5xx the user.
@@ -79,6 +89,13 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   return ok({ redirectTo: "/" });
 }
+
+/**
+ * What the form reads when a second factor must be set up before signing in
+ * (0121). The page keys on the 403 and the pass in `data`, not on these words.
+ */
+const MFA_ENROLMENT_REQUIRED =
+  "Your account signs in with a second factor. Set one up now with an authenticator app; it takes a minute.";
 
 async function writeLoginAudit(
   req: NextRequest,

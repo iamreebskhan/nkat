@@ -7,9 +7,13 @@ import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { writeAudit } from "@/lib/features/audit/audit-write";
 import { normalizeUnits, unitErrors } from "@/lib/features/billing/code-units";
-import { orgLocalDate } from "@/lib/features/org/org-date";
+import { freezeCarePlanForSignedVisit } from "@/lib/features/care-plans/care-plan.service";
+import { orgLocalDate, orgLocalMinute } from "@/lib/features/org/org-date";
+import { signsOnlyUnbilledVisits } from "@/lib/features/team/clinician";
 import { acpOverTotalProblem } from "./cpt-suggester";
+import { BEREAVEMENT_VISIT_TYPE } from "./note-template";
 import {
+  CARE_MANAGEMENT_VISIT_TYPE,
   NEW_PATIENT_LOOKBACK_YEARS,
   VISIT_TYPES,
   type DocumentVisit,
@@ -25,6 +29,7 @@ interface VisitRow {
   id: string;
   patient_id: string;
   clinician_user_id: string;
+  series_id?: string | null;
   visit_type: string;
   visit_type_label?: string | null;
   coding_basis?: VisitType | null;
@@ -80,9 +85,16 @@ function serviceDayOf(row: VisitRow): string | null {
   return at && row.org_timezone ? orgLocalDate(at, row.org_timezone) : null;
 }
 
+/** The same instant to the minute, as the practice's clock reads it. */
+function serviceAtOf(row: VisitRow): string | null {
+  const at = row.start_time ?? row.scheduled_start;
+  return at && row.org_timezone ? orgLocalMinute(at, row.org_timezone) : null;
+}
+
 function rowToView(row: VisitRow): VisitView {
   return {
     id: row.id,
+    seriesId: row.series_id ?? null,
     patientId: row.patient_id,
     clinicianUserId: row.clinician_user_id,
     visitType: row.visit_type,
@@ -97,6 +109,7 @@ function rowToView(row: VisitRow): VisitView {
     startTime: row.start_time?.toISOString() ?? null,
     stopTime: row.stop_time?.toISOString() ?? null,
     serviceDay: serviceDayOf(row),
+    serviceAt: serviceAtOf(row),
     totalMinutes: row.total_minutes,
     acpMinutes: row.acp_minutes ?? 0,
     prolongedMinutes: row.prolonged_minutes ?? 0,
@@ -123,69 +136,100 @@ function rowToView(row: VisitRow): VisitView {
   };
 }
 
+type Tx = Parameters<Parameters<typeof withOrgContext>[1]>[0];
+
+/**
+ * Whether a visit can be booked at all: this org's type, an active member, this
+ * org's patient, and a patient under care. Everything a booking checks that does
+ * not depend on the day; a repeating series checks it once.
+ */
+export async function assertBookable(
+  tx: Tx,
+  orgId: string,
+  payload: Pick<ScheduleVisit, "visitType" | "clinicianUserId" | "patientId" | "isTelehealth" | "telehealthModality">,
+): Promise<{ isTelehealth: boolean; modality: string | null }> {
+  // visit.visit_type lost its DB CHECK in 0062 so orgs can define their own
+  // types. This is what replaces it: the slug must be one of THIS org's
+  // active types, or visit_type stops being trustworthy. org_id is named as
+  // well as enforced by RLS: slugs repeat across orgs with different flags,
+  // and on a connection that bypasses RLS the slug alone found another
+  // org's row (its telehealth flag, or a type this org does not have).
+  const known = await tx.$queryRaw<{ slug: string; is_telehealth: boolean | null }[]>`
+    SELECT slug, is_telehealth FROM org_visit_type
+     WHERE org_id = ${orgId}::uuid AND slug = ${payload.visitType} AND active
+     LIMIT 1
+  `;
+  if (!known[0]) {
+    throw new ValidationError(`"${payload.visitType}" is not one of your visit types.`);
+  }
+  // A telehealth type is always a telehealth visit (audit R22). The box can
+  // add the modality to any type but cannot take it off a type that forces
+  // it — the "Telehealth" type with the box unticked used to bill an
+  // in-person visit at POS 12 with no modifier.
+  const forcedTelehealth = known[0].is_telehealth === true;
+  const isTelehealth = (payload.isTelehealth ?? false) || forcedTelehealth;
+  const modality = payload.telehealthModality ?? (forcedTelehealth ? "audio_video" : null);
+  // app_user is global, so the FK on visit.clinician_user_id accepts ANY
+  // user id. The /schedule picker only offers active members, but nothing
+  // here checked, so a direct POST could book a removed member — whose
+  // visit then nobody can open — or a user id from another tenant, which
+  // lands on this org's calendar under a stranger's name. The column is NOT
+  // NULL and ScheduleVisit requires a uuid, so every visit has a clinician
+  // and this always runs. org_id is named as well as relied on through RLS,
+  // so the guard holds even if the tenant GUC is ever missed.
+  const member = await tx.$queryRaw<{ ok: number }[]>`
+    SELECT 1 AS ok FROM org_member
+     WHERE org_id = ${orgId}::uuid
+       AND user_id = ${payload.clinicianUserId}::uuid
+       AND status = 'active'
+     LIMIT 1
+  `;
+  if (!member[0]) {
+    throw new ValidationError(
+      `Clinician ${payload.clinicianUserId} is not an active member of this organization. Pick someone from the Clinician list.`,
+    );
+  }
+  // The patient must be one of this org's. RLS does not cover this even on
+  // the app role: visit_patient_id_fkey references patient(id) alone, a
+  // foreign-key check skips row security, and visit has no trigger, so the
+  // INSERT below accepted another org's patient id. Named by org, as the
+  // member guard above is.
+  const patient = await tx.$queryRaw<{ status: string }[]>`
+    SELECT status FROM patient
+     WHERE org_id = ${orgId}::uuid
+       AND id = ${payload.patientId}::uuid
+     LIMIT 1
+  `;
+  if (!patient[0]) {
+    throw new ValidationError(
+      `Patient ${payload.patientId} is not one of this organization's patients.`,
+    );
+  }
+  // A visit is booked for a patient under care (0115). A discharged patient
+  // comes back by readmission, which starts the episode the visit belongs
+  // to; booked around it, the visit sat on a closed episode. After a death
+  // the one visit left is the family's bereavement follow-up.
+  const status = patient[0].status;
+  const bereavement = payload.visitType === BEREAVEMENT_VISIT_TYPE;
+  if (status !== "active" && !(status === "deceased" && bereavement)) {
+    throw new ValidationError(
+      status === "discharged"
+        ? "This patient is discharged. Readmit them from their chart before booking a visit."
+        : status === "deceased"
+          ? "This patient has died. Only a bereavement follow-up with the family can be booked."
+          : "This patient's chart is archived. Restore it before booking a visit.",
+    );
+  }
+  return { isTelehealth, modality };
+}
+
 export async function scheduleVisit(args: {
   orgId: string;
   payload: ScheduleVisit;
 }): Promise<{ id: string }> {
   const { orgId, payload } = args;
   return withOrgContext(orgId, async (tx) => {
-    // visit.visit_type lost its DB CHECK in 0062 so orgs can define their own
-    // types. This is what replaces it: the slug must be one of THIS org's
-    // active types, or visit_type stops being trustworthy. org_id is named as
-    // well as enforced by RLS: slugs repeat across orgs with different flags,
-    // and on a connection that bypasses RLS the slug alone found another
-    // org's row (its telehealth flag, or a type this org does not have).
-    const known = await tx.$queryRaw<{ slug: string; is_telehealth: boolean | null }[]>`
-      SELECT slug, is_telehealth FROM org_visit_type
-       WHERE org_id = ${orgId}::uuid AND slug = ${payload.visitType} AND active
-       LIMIT 1
-    `;
-    if (!known[0]) {
-      throw new ValidationError(`"${payload.visitType}" is not one of your visit types.`);
-    }
-    // A telehealth type is always a telehealth visit (audit R22). The box can
-    // add the modality to any type but cannot take it off a type that forces
-    // it — the "Telehealth" type with the box unticked used to bill an
-    // in-person visit at POS 12 with no modifier.
-    const forcedTelehealth = known[0].is_telehealth === true;
-    const isTelehealth = (payload.isTelehealth ?? false) || forcedTelehealth;
-    const modality = payload.telehealthModality ?? (forcedTelehealth ? "audio_video" : null);
-    // app_user is global, so the FK on visit.clinician_user_id accepts ANY
-    // user id. The /schedule picker only offers active members, but nothing
-    // here checked, so a direct POST could book a removed member — whose
-    // visit then nobody can open — or a user id from another tenant, which
-    // lands on this org's calendar under a stranger's name. The column is NOT
-    // NULL and ScheduleVisit requires a uuid, so every visit has a clinician
-    // and this always runs. org_id is named as well as relied on through RLS,
-    // so the guard holds even if the tenant GUC is ever missed.
-    const member = await tx.$queryRaw<{ ok: number }[]>`
-      SELECT 1 AS ok FROM org_member
-       WHERE org_id = ${orgId}::uuid
-         AND user_id = ${payload.clinicianUserId}::uuid
-         AND status = 'active'
-       LIMIT 1
-    `;
-    if (!member[0]) {
-      throw new ValidationError(
-        `Clinician ${payload.clinicianUserId} is not an active member of this organization. Pick someone from the Clinician list.`,
-      );
-    }
-    // The patient must be one of this org's. RLS does not cover this even on
-    // the app role: visit_patient_id_fkey references patient(id) alone, a
-    // foreign-key check skips row security, and visit has no trigger, so the
-    // INSERT below accepted another org's patient id. Named by org, as the
-    // member guard above is.
-    const patient = await tx.$queryRaw<{ ok: number }[]>`
-      SELECT 1 AS ok FROM patient
-       WHERE org_id = ${orgId}::uuid
-         AND id = ${payload.patientId}::uuid
-       LIMIT 1
-    `;
-    if (!patient[0]) {
-      throw new ValidationError(
-        `Patient ${payload.patientId} is not one of this organization's patients.`,
-      );
-    }
+    const { isTelehealth, modality } = await assertBookable(tx, orgId, payload);
     const rows = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO visit (
         org_id, patient_id, clinician_user_id, visit_type,
@@ -221,7 +265,7 @@ export async function getVisit(args: {
              v.total_minutes, v.acp_minutes, v.prolonged_minutes,
              v.is_telehealth, v.telehealth_modality, v.telehealth_consent_documented,
              v.document_text, v.cpt_codes_assigned, v.cpt_units, v.icd10_codes, v.modifiers,
-             v.status, v.signed_at, v.created_at, v.updated_at,
+             v.status, v.signed_at, v.created_at, v.updated_at, v.series_id,
              v.place_of_service_code,
              -- Who signed, under which credential, and the clinician of record
              -- (audit R32): the screen that attests the note can say so.
@@ -277,10 +321,13 @@ export async function getDailyCapacityStatus(args: {
     if (!org[0]) throw new NotFoundError("Organization not found.");
     const capacity = org[0].daily_visit_capacity ?? 8;
     const tz = org[0].timezone;
+    // A PCM/CCM month's charge (0117) is carried on a visit dated to its day
+    // of service, and is no visit on anyone's calendar.
     const cnt = await tx.$queryRaw<{ n: bigint }[]>`
       SELECT COUNT(*)::bigint AS n FROM visit
        WHERE clinician_user_id = ${args.clinicianUserId}::uuid
          AND status NOT IN ('cancelled', 'no_show')
+         AND visit_type <> ${CARE_MANAGEMENT_VISIT_TYPE}
          AND (COALESCE(scheduled_start, start_time) AT TIME ZONE ${tz})::date
              = (${args.at}::timestamptz AT TIME ZONE ${tz})::date
          AND org_id = ${args.orgId}::uuid
@@ -434,7 +481,7 @@ export async function listVisits(args: {
              v.total_minutes, v.acp_minutes, v.prolonged_minutes,
              v.is_telehealth, v.telehealth_modality, v.telehealth_consent_documented,
              v.document_text, v.cpt_codes_assigned, v.cpt_units, v.icd10_codes, v.modifiers,
-             v.status, v.signed_at, v.created_at, v.updated_at,
+             v.status, v.signed_at, v.created_at, v.updated_at, v.series_id,
              (p.first_name || ' ' || p.last_name) AS patient_name,
              p.city AS patient_city,
              u.full_name AS clinician_name,
@@ -657,7 +704,8 @@ export async function transitionVisit(args: {
                         AND num_nonnulls(vv.height_cm, vv.weight_kg, vv.bp_systolic,
                                          vv.bp_diastolic, vv.heart_rate, vv.resp_rate,
                                          vv.temperature_c, vv.spo2_percent,
-                                         vv.pps_percent, vv.pain_score) > 0) AS has_vitals,
+                                         vv.pps_percent, vv.pain_score,
+                                         vv.dyspnea_score, vv.nausea_score) > 0) AS has_vitals,
              -- Required sections still empty. Two things make this more than
              -- a NOT NULL check:
              --
@@ -700,7 +748,8 @@ export async function transitionVisit(args: {
                             AND num_nonnulls(vv.height_cm, vv.weight_kg, vv.bp_systolic,
                                              vv.bp_diastolic, vv.heart_rate, vv.resp_rate,
                                              vv.temperature_c, vv.spo2_percent,
-                                             vv.pps_percent, vv.pain_score) > 0)
+                                             vv.pps_percent, vv.pain_score,
+                                             vv.dyspnea_score, vv.nausea_score) > 0)
                        ELSE (s.id IS NULL OR s.is_empty)
                      END)                                        AS missing_required
         FROM visit v
@@ -736,6 +785,15 @@ export async function transitionVisit(args: {
     // a filled section of the structured note, a recorded vital sign, or the
     // legacy free-text column that visits written before 0088 still use.
     if (args.to === "documented") {
+      // Who signs before what is signed: an RN or LPN signs no billed visit
+      // (Mark 11f default). The bill names the clinician of record, and a
+      // nurse's attestation is not one a home E/M claim can rest on.
+      const credential = rows[0].signer_credential;
+      if (signsOnlyUnbilledVisits(credential) && rows[0].coding_basis !== "non_billable") {
+        throw new ValidationError(
+          `Your credential on the Team page is ${credential}. A billed visit is signed by a practitioner — an NP, MD, DO, PA or CNS. An ${credential} signs visits of a type that is not billed.`,
+        );
+      }
       const documented =
         Number(rows[0].filled_sections) > 0 ||
         rows[0].has_vitals ||
@@ -785,6 +843,8 @@ export async function transitionVisit(args: {
       if (acpProblem) throw new ValidationError(acpProblem);
     }
 
+    // The care-plan version this sign-off froze, if the patient has a plan.
+    let carePlanVersion: number | null = null;
     if (args.to === "documented") {
       await tx.$executeRaw`
         UPDATE visit SET
@@ -804,6 +864,14 @@ export async function transitionVisit(args: {
         WHERE id = ${args.id}::uuid
           AND org_id = ${args.orgId}::uuid
       `;
+      // The follow-up visit updates the care plan (doc:59); signing freezes
+      // the plan as it stood, so "what did the plan say at this visit" has an
+      // answer. Same transaction: a sign-off that fails freezes nothing.
+      carePlanVersion = await freezeCarePlanForSignedVisit(tx, {
+        orgId: args.orgId,
+        visitId: args.id,
+        signedByUserId: args.signedByUserId ?? null,
+      });
     } else {
       await tx.$executeRaw`
         UPDATE visit SET status = ${args.to}, updated_at = now()
@@ -819,7 +887,14 @@ export async function transitionVisit(args: {
     await writeAudit(tx, {
       orgId: args.orgId,
       userId: args.signedByUserId ?? null,
-      action: args.to === "documented" ? "visit_sign" : "visit_document",
+      action:
+        args.to === "documented"
+          ? "visit_sign"
+          : args.to === "cancelled"
+            ? "visit_cancel"
+            : args.to === "no_show"
+              ? "visit_no_show"
+              : "visit_document",
       targetType: "visit",
       targetId: args.id,
       payload:
@@ -832,6 +907,7 @@ export async function transitionVisit(args: {
               credential: rows[0]?.signer_credential ?? null,
               signerIsClinicianOfRecord:
                 !!args.signedByUserId && args.signedByUserId === rows[0]?.clinician_user_id,
+              carePlanVersion,
             }
           : { from, to: args.to },
     });
@@ -857,9 +933,10 @@ const PRIOR_VISIT_STATUSES: VisitStatus[] = [
  *
  * Left out: cancelled and no-show visits, which did not happen, and visits on a
  * "Not billed" type, which Pallio defines as bereavement follow-ups and
- * caregiver-only visits where the patient is not seen. A slug with no type row
- * still counts, so an unknown case leans established. A visit that is only
- * booked counts too, and says so by its status.
+ * caregiver-only visits where the patient is not seen, and a PCM/CCM month's
+ * charge (0117), which is no encounter. A slug with no type row still counts,
+ * so an unknown case leans established. A visit that is only booked counts
+ * too, and says so by its status.
  *
  * A hint for the screens, never a decision: the practice may have seen the
  * patient before it used Pallio, and nothing here can know that.
@@ -884,15 +961,28 @@ export async function findPriorVisit(args: {
          AND v.patient_id = ${args.patientId}::uuid
          AND (${excluded}::uuid IS NULL OR v.id <> ${excluded}::uuid)
          AND v.status = ANY(${PRIOR_VISIT_STATUSES}::text[])
-         AND (t.coding_basis IS NULL OR t.coding_basis <> 'non_billable')
+         -- Neither a "Not billed" visit nor a PCM/CCM month's charge (0117)
+         -- saw the patient.
+         AND (t.coding_basis IS NULL
+              OR (t.coding_basis <> 'non_billable' AND t.coding_basis <> 'care_management'))
          AND COALESCE(v.start_time, v.scheduled_start) < ${args.before}::timestamptz
          AND COALESCE(v.start_time, v.scheduled_start) >= ${windowStart}::timestamptz
        ORDER BY COALESCE(v.start_time, v.scheduled_start) DESC
        LIMIT 1
     `;
     const prior = rows[0];
+    // The day to show is the practice's (0107), not the viewer's.
+    let lastVisitDay: string | null = null;
+    if (prior) {
+      const org = await tx.$queryRaw<{ timezone: string | null }[]>`
+        SELECT timezone FROM org WHERE id = ${args.orgId}::uuid LIMIT 1
+      `;
+      const tz = org[0]?.timezone;
+      lastVisitDay = tz ? orgLocalDate(prior.seen_at, tz) : null;
+    }
     return {
       lastVisitAt: prior ? prior.seen_at.toISOString() : null,
+      lastVisitDay,
       lastVisitStatus: prior ? prior.status : null,
       windowStart: windowStart.toISOString(),
       suggestedBasis: prior ? "established_patient_home" : "new_patient_home",

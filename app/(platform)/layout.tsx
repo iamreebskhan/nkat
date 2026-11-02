@@ -8,6 +8,10 @@
  */
 import { redirect } from "next/navigation";
 
+import { IdleGuard } from "@/components/auth/idle-guard";
+import { MfaGate } from "@/components/auth/mfa-gate";
+import { OfflineBanner } from "@/components/offline/offline-banner";
+import { RegisterServiceWorker } from "@/components/offline/register-sw";
 import { Sidebar } from "@/components/sidebar";
 import { getSession } from "@/lib/auth";
 import { withOrgContext } from "@/lib/db";
@@ -52,6 +56,14 @@ export default async function PlatformLayout({
       />
       {/* pt-14 under md clears the fixed mobile nav bar the sidebar renders. */}
       <main className="flex-1 min-w-0 bg-[var(--color-canvas)] pt-14 md:pt-0">
+        {/* Offline (doc:33, 0119): the worker that opens the offline copy with
+            no signal, and the line that says so on every page. */}
+        <RegisterServiceWorker />
+        <OfflineBanner />
+        {/* 0121: sign-out after the org's idle limit, and a second factor
+            set up first where the role requires one. */}
+        <IdleGuard idleMinutes={session.idle} act={session.act} />
+        <MfaGate pending={session.mfaReq && !session.mfa} />
         {children}
       </main>
     </div>

@@ -14,11 +14,11 @@ import { SubmissionDisclosure } from "../submission-disclosure";
 afterEach(cleanup);
 
 describe("SubmissionDisclosure", () => {
-  it("says Pallio does not send claims, and that the figures are the team's own", () => {
+  it("says when Pallio sends a claim, and that the other figures are the team's own", () => {
     render(<SubmissionDisclosure />);
     const note = screen.getByRole("note");
     expect(note.textContent).toBe(SUBMISSION_DISCLOSURE);
-    expect(note.textContent).toMatch(/does not send claims/);
+    expect(note.textContent).toMatch(/sends a claim only when you send it through a connected clearinghouse/);
     expect(note.textContent).toMatch(/what your team recorded/);
   });
 

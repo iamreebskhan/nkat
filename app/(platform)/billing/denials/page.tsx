@@ -32,6 +32,7 @@ const PAGE_SIZE = 50;
 const NO_METRICS: DenialSummary = {
   total: 0,
   totalDeniedCents: 0,
+  totalRecoveredCents: 0,
   pendingDecisions: 0,
   byCarc: [],
   byPayerId: [],
@@ -110,6 +111,12 @@ export default function DenialsPage() {
   // payers included: /api/billing/payers lists active payers only (R17), so a
   // withdrawn payer used to print as the first 8 characters of its UUID.
   const payerNames = metrics.payerNames;
+  // The payer with the most money still not recovered. Ranked by what is
+  // denied, a payer whose denials were all paid on refile topped this card.
+  const topOutstanding = metrics.byPayerId.reduce<(typeof metrics.byPayerId)[number] | null>(
+    (best, p) => (best === null || p.outstandingCents > best.outstandingCents ? p : best),
+    null,
+  );
 
   return (
     <div className="px-8 py-8">
@@ -125,6 +132,13 @@ export default function DenialsPage() {
               ${(metrics.totalDeniedCents / 100).toFixed(2)}
             </span>{" "}
             denied
+            {metrics.totalRecoveredCents > 0 && (
+              <>
+                {" · "}
+                <span className="tabular">${(metrics.totalRecoveredCents / 100).toFixed(2)}</span>{" "}
+                recovered
+              </>
+            )}
           </p>
           {payerId && (
             <button
@@ -152,12 +166,8 @@ export default function DenialsPage() {
           value={metrics.byCarc[0] ? `${metrics.byCarc[0].carc} · ${metrics.byCarc[0].count}×` : "—"}
         />
         <KPICard
-          label="Top payer impact"
-          value={
-            metrics.byPayerId[0]
-              ? `$${(metrics.byPayerId[0].deniedCents / 100).toFixed(2)}`
-              : "—"
-          }
+          label="Top payer impact (not recovered)"
+          value={topOutstanding ? `$${(topOutstanding.outstandingCents / 100).toFixed(2)}` : "—"}
         />
       </div>
 
@@ -181,6 +191,7 @@ export default function DenialsPage() {
                   <th className="text-left font-semibold py-1">Payer</th>
                   <th className="text-right font-semibold py-1">Count</th>
                   <th className="text-right font-semibold py-1">$ denied</th>
+                  <th className="text-right font-semibold py-1">$ recovered</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -196,6 +207,9 @@ export default function DenialsPage() {
                     <td className="py-2 text-right tabular">{p.count}</td>
                     <td className="py-2 text-right tabular font-medium">
                       ${(p.deniedCents / 100).toFixed(0)}
+                    </td>
+                    <td className="py-2 text-right tabular text-emerald-800">
+                      ${(p.recoveredCents / 100).toFixed(0)}
                     </td>
                   </tr>
                 ))}
@@ -252,6 +266,7 @@ export default function DenialsPage() {
                   <th className="text-left font-semibold px-4 py-2.5">Reason</th>
                   <th className="text-right font-semibold px-4 py-2.5">Denied</th>
                   <th className="text-left font-semibold px-4 py-2.5">Decision</th>
+                  <th className="text-left font-semibold px-4 py-2.5">Outcome</th>
                   <th className="font-semibold px-4 py-2.5" />
                 </tr>
               </thead>
@@ -284,6 +299,9 @@ export default function DenialsPage() {
                       <td className="px-4 py-2">
                         <DecisionPill decision={d.decision} />
                       </td>
+                      <td className="px-4 py-2 text-xs text-slate-700 tabular">
+                        {outcomeText(d.outcome, d.outcomeAmountCents)}
+                      </td>
                       <td className="px-4 py-2 text-right">
                         <Link
                           href={`/billing/denials/${d.id}`}
@@ -311,6 +329,27 @@ export default function DenialsPage() {
       </Card>
     </div>
   );
+}
+
+/**
+ * How the denial ended, in a word and an amount. The list showed only the
+ * decision, so a refile paid in full and one still with the payer looked the
+ * same.
+ */
+function outcomeText(outcome: string | null | undefined, amountCents: number | null | undefined): string {
+  const money = amountCents != null ? ` $${(amountCents / 100).toFixed(2)}` : "";
+  switch (outcome) {
+    case "paid":
+      return `Paid${money}`;
+    case "partially_paid":
+      return `Partly paid${money}`;
+    case "secondary_denial":
+      return "Denied again";
+    case "written_off":
+      return "Written off";
+    default:
+      return "Open";
+  }
 }
 
 function KPICard({ label, value }: { label: string; value: string }) {

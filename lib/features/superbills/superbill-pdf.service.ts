@@ -9,7 +9,10 @@ import puppeteer, { type Browser } from "puppeteer";
 
 import { NotFoundError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
+import { readBillingProvider, readClaimReferring } from "@/lib/features/billing/billing-provider.service";
+import type { ClaimReferring } from "@/lib/features/billing/claim-referring";
 import { formatCodes, type CodeUnits } from "@/lib/features/billing/code-units";
+import { readClaimAuthNumbers } from "@/lib/features/patients/prior-auth.service";
 import { claimRefFor } from "@/lib/features/remittances/claim-ref";
 import { logPhiExport } from "@/lib/hipaa/phi-access-log";
 
@@ -44,6 +47,7 @@ interface SuperbillData {
   pos_description: string | null;
   billed_amount_cents: bigint;
   paid_amount_cents: bigint | null;
+  payer_id: string | null;
   payer_name: string | null;
   patient_id: string;
   first_name: string;
@@ -65,7 +69,7 @@ export async function generateSuperbillPdf(args: {
 
   const fetched = await withOrgContext(orgId, async (tx) => {
     const rows = await tx.$queryRaw<SuperbillData[]>`
-      SELECT s.id, s.visit_id, s.status, s.date_of_service,
+      SELECT s.id, s.visit_id, s.status, s.date_of_service, s.payer_id,
              s.cpt_codes, s.cpt_units, s.icd10_codes, s.modifiers,
              s.member_id_snapshot, s.provider_npi, s.provider_name, s.billing_npi,
              s.place_of_service_code, pos.description AS pos_description,
@@ -88,10 +92,20 @@ export async function generateSuperbillPdf(args: {
       SELECT display_name, primary_color FROM org_branding
        WHERE org_id = ${orgId}::uuid LIMIT 1
     `;
+    // Box 17 (0123), as the claim file and the export say it.
+    const { claimReferringProvider } = await readBillingProvider(tx, orgId);
+    const referring = await readClaimReferring(tx, { orgId, on: claimReferringProvider, patientIds: [rows[0]!.patient_id] });
+    // Box 23 (0124), as they say that too.
+    const sb = rows[0]!;
+    const authNumbers = await readClaimAuthNumbers(tx, orgId, [
+      { id: sb.id, patientId: sb.patient_id, payerId: sb.payer_id, codes: sb.cpt_codes ?? [], dos: sb.date_of_service.toISOString().slice(0, 10) },
+    ]);
     return {
-      sb: rows[0]!,
+      sb,
       orgName: brandRow[0]?.display_name ?? orgRow[0]?.name ?? "Pallio Organization",
       primary: brandRow[0]?.primary_color ?? "#0d9488",
+      referring: referring.get(sb.patient_id)?.provider ?? null,
+      priorAuthNumber: authNumbers.get(sb.id) ?? null,
     };
   });
 
@@ -128,8 +142,8 @@ export async function generateSuperbillPdf(args: {
  * the PDF travels in the audit packet, where a bare "Status: paid" reads as the
  * payer's word rather than the org's own record.
  */
-function renderHtml(d: { sb: SuperbillData; orgName: string; primary: string }): string {
-  const { sb, orgName, primary } = d;
+function renderHtml(d: { sb: SuperbillData; orgName: string; primary: string; referring: ClaimReferring | null; priorAuthNumber: string | null }): string {
+  const { sb, orgName, primary, referring, priorAuthNumber } = d;
   const dob = sb.date_of_birth.toISOString().slice(0, 10);
   const dos = sb.date_of_service.toISOString().slice(0, 10);
   const billed = (Number(sb.billed_amount_cents) / 100).toFixed(2);
@@ -180,6 +194,8 @@ function renderHtml(d: { sb: SuperbillData; orgName: string; primary: string }):
     <tr><td class="k">Rendering provider</td><td>${esc(sb.provider_name)}</td></tr>
     <tr><td class="k">Rendering NPI (box 24J)</td><td class="mono">${esc(sb.provider_npi || "not recorded")}</td></tr>
     <tr><td class="k">Billing provider NPI (box 33a)</td><td class="mono">${esc(sb.billing_npi || "not recorded")}</td></tr>
+    ${referring ? `<tr><td class="k">Referring provider (box 17, DN)</td><td>${esc(referring.fullName)}</td></tr>
+    <tr><td class="k">Referring NPI (box 17b)</td><td class="mono">${esc(referring.npi)}</td></tr>` : ""}
   </table>
 
   <h2>Codes</h2>
@@ -188,6 +204,7 @@ function renderHtml(d: { sb: SuperbillData; orgName: string; primary: string }):
     <tr><td class="k">ICD-10</td><td class="mono">${esc((sb.icd10_codes ?? []).join(", ") || "—")}</td></tr>
     <tr><td class="k">Modifiers</td><td class="mono">${esc((sb.modifiers ?? []).join(", ") || "—")}</td></tr>
     <tr><td class="k">Place of service</td><td>${esc(sb.place_of_service_code)}${sb.pos_description ? ` — ${esc(sb.pos_description)}` : ""}</td></tr>
+    ${priorAuthNumber ? `<tr><td class="k">Prior authorization (box 23)</td><td class="mono">${esc(priorAuthNumber)}</td></tr>` : ""}
   </table>
 
   <h2>Charges</h2>

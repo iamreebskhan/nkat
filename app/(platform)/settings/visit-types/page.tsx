@@ -47,13 +47,15 @@ interface VisitTypeRow {
 // No Telehealth entry: it is a modality, not a band (audit R22). A telehealth
 // type bills like new or established and carries the flag below instead.
 // Inpatient consult is only shown, on rows that already carry it: nothing can
-// code it, so it is no longer offered (audit R18).
+// code it, so it is no longer offered (audit R18). The PCM/CCM month band is
+// the charge's own type, which this page never lists (0117).
 const BASIS_LABEL: Record<VisitType, string> = {
   new_patient_home: "New patient — home",
   established_patient_home: "Established patient — home",
   advance_care_planning: "Advance care planning",
   inpatient_consult: "Inpatient consult (not coded)",
   non_billable: "Not billed",
+  care_management: "PCM/CCM month",
 };
 
 export default function VisitTypesSettingsPage() {

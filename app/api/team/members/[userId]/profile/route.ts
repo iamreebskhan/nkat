@@ -17,6 +17,8 @@ import { saveClinicianProfile } from "@/lib/features/team/clinician-profile.serv
 const Body = z.object({
   npi: z.string().trim().max(20).nullable(),
   credential: z.enum(CLINICIAN_CREDENTIALS).nullable(),
+  /** The rendering provider's taxonomy (0118); left out, unchanged. */
+  taxonomyCode: z.string().trim().max(20).nullable().optional(),
 });
 
 interface Params {
@@ -39,6 +41,7 @@ export async function PUT(req: NextRequest, ctx: Params): Promise<Response> {
         actorUserId: session.userId,
         npi: body.npi,
         credential: body.credential,
+        taxonomyCode: body.taxonomyCode,
       }),
     );
   } catch (err) {

@@ -41,6 +41,8 @@ const bills = (): FakeDb => ({
 
 /** What the status move hands back: empty when the claim was not submitted/partially paid. */
 let moved: { from_status: string; visit_id: string | null }[];
+/** What the insert hands back: empty when ON CONFLICT found an open denial already. */
+let inserted: { id: string }[];
 let calls: { sql: string; values: unknown[] }[] = [];
 
 function fakeTx() {
@@ -48,7 +50,7 @@ function fakeTx() {
     const sql = strings.join("¶");
     calls.push({ sql, values });
     if (sql.includes("SELECT payer_id FROM superbill")) return Promise.resolve(runSql(bills(), strings, values));
-    if (sql.includes("INSERT INTO superbill_denial")) return Promise.resolve([{ id: DENIAL }]);
+    if (sql.includes("INSERT INTO superbill_denial")) return Promise.resolve(inserted);
     if (sql.includes("WITH prev AS")) return Promise.resolve(moved);
     return Promise.resolve([]);
   };
@@ -57,6 +59,7 @@ function fakeTx() {
 
 beforeEach(() => {
   calls = [];
+  inserted = [{ id: DENIAL }];
   moved = [{ from_status: "submitted", visit_id: VISIT }];
   vi.mocked(withOrgContext).mockImplementation(async (_o, fn) =>
     (fn as (tx: unknown) => Promise<unknown>)(fakeTx()),
@@ -124,5 +127,26 @@ describe("logDenial — audit", () => {
     const move = calls.find((c) => c.sql.includes("WITH prev AS"))!;
     expect(move.sql).toContain("status IN ('submitted', 'partially_paid')");
     expect(move.sql).toContain("FOR UPDATE");
+  });
+});
+
+// A second open denial for the same claim, code and reason hit the partial
+// unique index as a raw violation: a 500 and "Something went wrong" on
+// localhost, with nothing on screen saying what was wrong.
+describe("logDenial — the same open denial twice", () => {
+  it("leaves the open one alone at the index, rather than raising the violation", async () => {
+    await logDenial({ orgId: ORG, payload: input as never, actorUserId: USER });
+    const insert = calls.find((c) => c.sql.includes("INSERT INTO superbill_denial"))!;
+    expect(insert.sql).toContain("ON CONFLICT (superbill_id, cpt_code, carc_code) WHERE decision = 'pending' DO NOTHING");
+  });
+
+  it("says which open denial it is, and moves nothing", async () => {
+    inserted = [];
+    await expect(logDenial({ orgId: ORG, payload: input as never, actorUserId: USER })).rejects.toMatchObject({
+      name: "ValidationError",
+      message: expect.stringContaining("already has an open denial for CPT 99344 with CARC 50"),
+    });
+    expect(calls.some((c) => c.sql.includes("WITH prev AS"))).toBe(false);
+    expect(statusRow()).toBeUndefined();
   });
 });

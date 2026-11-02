@@ -12,6 +12,7 @@ import {
   getCarePlan,
   upsertCarePlan,
 } from "@/lib/features/care-plans/care-plan.service";
+import { CarePlanStructureSchema } from "@/lib/features/care-plans/care-plan.types";
 import { logPhiAccess } from "@/lib/hipaa/phi-access-log";
 
 interface Params {
@@ -37,11 +38,17 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
   return ok({ carePlan: cp });
 }
 
-const PutSchema = z.object({
+// The structured parts (0116, doc:38): goals, interventions, monitoring, the
+// escalation parameters and the review day; each absent part is kept.
+const PutSchema = CarePlanStructureSchema.extend({
   document: z.unknown(),
   goalsOfCareSummary: z.string().max(5000).nullable().optional(),
-  primarySymptoms: z.array(z.string().max(120)).max(40).optional(),
-  activeMedications: z.array(z.string().max(200)).max(80).optional(),
+  // Symptoms to monitor (doc:50), edited as a list on the care-plan screen.
+  // A blank entry is not an entry. Medications are the chart's list (0114):
+  // the plan reads them and no longer takes its own.
+  primarySymptoms: z.array(z.string().trim().min(1).max(120)).max(40).optional(),
+  /** The visit this edit is made during (doc:59); its sign-off freezes the plan. */
+  visitId: z.string().uuid().optional(),
   /** When set, also record a frozen version snapshot tied to this visit. */
   snapshotForVisitId: z.string().uuid().optional(),
 });
@@ -63,7 +70,14 @@ export async function PUT(req: NextRequest, ctx: Params): Promise<Response> {
       document: body.document,
       goalsOfCareSummary: body.goalsOfCareSummary,
       primarySymptoms: body.primarySymptoms,
-      activeMedications: body.activeMedications,
+      structure: {
+        goals: body.goals,
+        interventions: body.interventions,
+        monitoring: body.monitoring,
+        escalation: body.escalation,
+        reviewOn: body.reviewOn,
+      },
+      visitId: body.visitId,
       snapshotForVisitId: body.snapshotForVisitId,
       signedByUserId: session.userId,
     });

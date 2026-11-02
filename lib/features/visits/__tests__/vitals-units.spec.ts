@@ -109,7 +109,10 @@ describe("VITALS_FIELDS", () => {
   });
 
   it("leaves unit-identical fields untouched by conversion", () => {
-    for (const key of ["bpSystolic", "bpDiastolic", "heartRate", "respRate", "spo2Percent", "ppsPercent", "painScore"]) {
+    for (const key of [
+      "bpSystolic", "bpDiastolic", "heartRate", "respRate", "spo2Percent", "ppsPercent", "painScore",
+      "dyspneaScore", "nauseaScore",
+    ]) {
       const f = field(key);
       expect(f.toStored(72)).toBe(72);
       expect(f.fromStored(72)).toBe(72);
@@ -118,7 +121,7 @@ describe("VITALS_FIELDS", () => {
 
   it("round-trips through the field spec, not just the raw helpers", () => {
     for (const f of VITALS_FIELDS) {
-      const shown = f.key === "ppsPercent" ? 60 : f.key === "painScore" ? 7 : 70;
+      const shown = f.key === "ppsPercent" ? 60 : f.key.endsWith("Score") ? 7 : 70;
       expect(f.fromStored(f.toStored(shown))).toBe(shown);
     }
   });

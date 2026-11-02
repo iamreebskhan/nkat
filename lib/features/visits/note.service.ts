@@ -9,7 +9,8 @@
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { writeAudit } from "@/lib/features/audit/audit-write";
-import { dateColumnIso } from "@/lib/features/org/org-date";
+import { raiseForReadings } from "@/lib/features/care-coordination/escalation.service";
+import { dateColumnIso, orgLocalDate } from "@/lib/features/org/org-date";
 
 import {
   DEFAULT_NOTE_SECTIONS,
@@ -53,6 +54,9 @@ export interface VitalsView {
   spo2Percent: number | null;
   ppsPercent: number | null;
   painScore: number | null;
+  /** Shortness of breath and nausea, 0-10, beside pain (0113, Mark Q11b). */
+  dyspneaScore: number | null;
+  nauseaScore: number | null;
   notes: string | null;
   recordedAt: string | null;
 }
@@ -70,7 +74,7 @@ export interface VisitNoteView {
 const EMPTY_VITALS: VitalsView = {
   heightCm: null, weightKg: null, bpSystolic: null, bpDiastolic: null,
   heartRate: null, respRate: null, temperatureC: null, spo2Percent: null,
-  ppsPercent: null, painScore: null, notes: null, recordedAt: null,
+  ppsPercent: null, painScore: null, dyspneaScore: null, nauseaScore: null, notes: null, recordedAt: null,
 };
 
 type Tx = Parameters<Parameters<typeof withOrgContext>[1]>[0];
@@ -373,7 +377,8 @@ export async function getVisitNote(args: {
 
     const v = await tx.$queryRaw<Record<string, unknown>[]>`
       SELECT height_cm, weight_kg, bp_systolic, bp_diastolic, heart_rate, resp_rate,
-             temperature_c, spo2_percent, pps_percent, pain_score, notes, recorded_at
+             temperature_c, spo2_percent, pps_percent, pain_score, dyspnea_score, nausea_score,
+             notes, recorded_at
         FROM visit_vitals WHERE visit_id = ${args.visitId}::uuid LIMIT 1
     `;
     const vitals = v[0] ? rowToVitals(v[0]) : null;
@@ -521,20 +526,38 @@ export async function saveVitals(args: {
       INSERT INTO visit_vitals
         (org_id, visit_id, patient_id, height_cm, weight_kg, bp_systolic, bp_diastolic,
          heart_rate, resp_rate, temperature_c, spo2_percent, pps_percent, pain_score,
-         notes, created_by_user_id)
+         dyspnea_score, nausea_score, notes, created_by_user_id)
       VALUES (${args.orgId}::uuid, ${args.visitId}::uuid, ${visit[0].patient_id}::uuid,
               ${v.heightCm ?? null}, ${v.weightKg ?? null}, ${v.bpSystolic ?? null},
               ${v.bpDiastolic ?? null}, ${v.heartRate ?? null}, ${v.respRate ?? null},
               ${v.temperatureC ?? null}, ${v.spo2Percent ?? null}, ${v.ppsPercent ?? null},
-              ${v.painScore ?? null}, ${v.notes ?? null}, ${args.userId ?? null}::uuid)
+              ${v.painScore ?? null}, ${v.dyspneaScore ?? null}, ${v.nauseaScore ?? null},
+              ${v.notes ?? null}, ${args.userId ?? null}::uuid)
       ON CONFLICT (visit_id) DO UPDATE
         SET height_cm = EXCLUDED.height_cm, weight_kg = EXCLUDED.weight_kg,
             bp_systolic = EXCLUDED.bp_systolic, bp_diastolic = EXCLUDED.bp_diastolic,
             heart_rate = EXCLUDED.heart_rate, resp_rate = EXCLUDED.resp_rate,
             temperature_c = EXCLUDED.temperature_c, spo2_percent = EXCLUDED.spo2_percent,
             pps_percent = EXCLUDED.pps_percent, pain_score = EXCLUDED.pain_score,
+            dyspnea_score = EXCLUDED.dyspnea_score, nausea_score = EXCLUDED.nausea_score,
             notes = EXCLUDED.notes, recorded_at = now()
     `;
+
+    // The readings as they now stand, against the NP's escalation parameters
+    // (0116, doc:55-56): an alert raised, updated or withdrawn with them.
+    await raiseForReadings(tx, {
+      orgId: args.orgId,
+      userId: args.userId ?? null,
+      patientId: visit[0].patient_id,
+      source: { kind: "vitals", visitId: args.visitId },
+      readings: {
+        pain: v.painScore ?? null,
+        dyspnea: v.dyspneaScore ?? null,
+        nausea: v.nauseaScore ?? null,
+        pps: v.ppsPercent ?? null,
+        spo2: v.spo2Percent ?? null,
+      },
+    });
 
     // Recording vitals starts a note as surely as typing a section does, so it
     // pins the visit the same way, with the same set-once COALESCE. Unpinned,
@@ -624,7 +647,7 @@ export async function getVitalsTrend(args: {
     const rows = await tx.$queryRaw<Record<string, unknown>[]>`
       SELECT vv.visit_id, vv.height_cm, vv.weight_kg, vv.bp_systolic, vv.bp_diastolic,
              vv.heart_rate, vv.resp_rate, vv.temperature_c, vv.spo2_percent,
-             vv.pps_percent, vv.pain_score, vv.notes, vv.recorded_at,
+             vv.pps_percent, vv.pain_score, vv.dyspnea_score, vv.nausea_score, vv.notes, vv.recorded_at,
              (COALESCE(v.start_time, v.scheduled_start, vv.recorded_at) AT TIME ZONE o.timezone)::date
                AS dos_day
         FROM visit_vitals vv
@@ -665,6 +688,12 @@ export async function getVitalsTrend(args: {
 export interface CarryForwardSource {
   visitId: string;
   visitDate: string | null;
+  /**
+   * That visit's day where the practice is ('YYYY-MM-DD', 0107) — the date the
+   * note shows. It printed visitDate in the viewer's zone: an 8:30 pm Ohio
+   * visit on the 21st read 22/10 from Karachi.
+   */
+  visitDay?: string | null;
   visitTypeLabel: string | null;
   /** Sections on that visit that hold something worth bringing forward. */
   sections: { sectionKey: string; label: string }[];
@@ -723,9 +752,19 @@ export async function getCarryForwardSource(args: {
        ORDER BY t.sort_order
     `;
 
+    let visitDay: string | null = null;
+    if (prev[0].dos) {
+      const org = await tx.$queryRaw<{ timezone: string | null }[]>`
+        SELECT timezone FROM org WHERE id = ${args.orgId}::uuid LIMIT 1
+      `;
+      const tz = Array.isArray(org) ? org[0]?.timezone : null;
+      visitDay = tz ? orgLocalDate(prev[0].dos, tz) : null;
+    }
+
     return {
       visitId: prev[0].id,
       visitDate: prev[0].dos ? new Date(prev[0].dos).toISOString() : null,
+      visitDay,
       visitTypeLabel: prev[0].label,
       sections: sections.map((s) => ({ sectionKey: s.section_key, label: s.label })),
     };
@@ -847,7 +886,8 @@ export async function noteHasContent(args: {
     if (Number(rows[0]?.n ?? 0) > 0) return true;
     const v = await tx.$queryRaw<Record<string, unknown>[]>`
       SELECT height_cm, weight_kg, bp_systolic, bp_diastolic, heart_rate, resp_rate,
-             temperature_c, spo2_percent, pps_percent, pain_score, notes, recorded_at
+             temperature_c, spo2_percent, pps_percent, pain_score, dyspnea_score, nausea_score,
+             notes, recorded_at
         FROM visit_vitals WHERE visit_id = ${args.visitId}::uuid LIMIT 1
     `;
     return v[0] ? hasAnyReading(rowToVitals(v[0])) : false;
@@ -869,6 +909,8 @@ function rowToVitals(r: Record<string, unknown>): VitalsView {
     spo2Percent: num(r.spo2_percent),
     ppsPercent: num(r.pps_percent),
     painScore: num(r.pain_score),
+    dyspneaScore: num(r.dyspnea_score),
+    nauseaScore: num(r.nausea_score),
     notes: (r.notes as string | null) ?? null,
     recordedAt: r.recorded_at ? new Date(r.recorded_at as string).toISOString() : null,
   };
@@ -876,12 +918,14 @@ function rowToVitals(r: Record<string, unknown>): VitalsView {
 
 /**
  * At least one measurement. The rule for "is the vitals section filled":
- * the same ten columns the sign guard's num_nonnulls counts, and nothing else.
+ * the same twelve columns the sign guard's num_nonnulls counts, and nothing
+ * else (a symptom score is a measurement, 0113).
  */
 export function hasAnyMeasurement(v: VitalsView): boolean {
   return [
     v.heightCm, v.weightKg, v.bpSystolic, v.bpDiastolic, v.heartRate,
     v.respRate, v.temperatureC, v.spo2Percent, v.ppsPercent, v.painScore,
+    v.dyspneaScore, v.nauseaScore,
   ].some((x) => x !== null);
 }
 

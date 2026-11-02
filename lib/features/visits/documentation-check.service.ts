@@ -88,7 +88,8 @@ export async function loadDocumentationGaps(
                           WHERE vv.visit_id = dv.id
                             AND num_nonnulls(vv.weight_kg, vv.height_cm, vv.bp_systolic, vv.bp_diastolic,
                                              vv.heart_rate, vv.resp_rate, vv.temperature_c, vv.spo2_percent,
-                                             vv.pps_percent, vv.pain_score) > 0) AS has_vitals
+                                             vv.pps_percent, vv.pain_score,
+                                             vv.dyspnea_score, vv.nausea_score) > 0) AS has_vitals
             FROM visit dv
             JOIN patient dp ON dp.id = dv.patient_id
             JOIN org o ON o.id = dv.org_id
@@ -119,7 +120,8 @@ export async function loadDocumentationGaps(
                           WHERE vv.visit_id = dv.id
                             AND num_nonnulls(vv.weight_kg, vv.height_cm, vv.bp_systolic, vv.bp_diastolic,
                                              vv.heart_rate, vv.resp_rate, vv.temperature_c, vv.spo2_percent,
-                                             vv.pps_percent, vv.pain_score) > 0) AS has_vitals
+                                             vv.pps_percent, vv.pain_score,
+                                             vv.dyspnea_score, vv.nausea_score) > 0) AS has_vitals
             FROM superbill sb
             JOIN visit dv ON dv.id = sb.visit_id
             JOIN patient dp ON dp.id = sb.patient_id

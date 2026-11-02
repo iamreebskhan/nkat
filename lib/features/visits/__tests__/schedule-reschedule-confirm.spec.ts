@@ -69,6 +69,11 @@ beforeEach(() => {
           },
         };
       } else if (url.startsWith("/api/schedule/context")) body = { success: true, data: { externalBusy: [], timeOff: [] } };
+      else if (url === "/api/schedule/time-zone") {
+        const n = new Date();
+        const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+        body = { success: true, data: { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, today, zoneName: "EDT" } };
+      }
       else if (url === `/api/visits/${VISIT}/reschedule` && init?.method === "PATCH") {
         patches.push(JSON.parse(String(init.body)) as Record<string, unknown>);
         ({ status, body } = answers[patches.length - 1] ?? { status: 500, body: { success: false, error: "extra" } });

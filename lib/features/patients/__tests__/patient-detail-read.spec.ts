@@ -134,6 +134,31 @@ describe("getPatient intake telehealth consent (audit R22)", () => {
   });
 });
 
+describe("getPatient referral link (0111)", () => {
+  const REFERRAL = "f0000000-0000-4000-8000-000000000001";
+  // The detail read's own columns are what mark a row as a detail read.
+  const detail = (over: Record<string, unknown>) => row({ palliative_referral_reason: "", ...over });
+
+  it("names the referral the patient was admitted from, this org's only", async () => {
+    detailRow = detail({ referral_id: REFERRAL, referral_received_on: "2026-10-20", referral_source_name: "TH Oncology" });
+    const view = await getPatient({ orgId: ORG, id: PATIENT });
+    expect(view?.referral).toEqual({ id: REFERRAL, receivedOn: "2026-10-20", sourceName: "TH Oncology" });
+    const q = calls.find((c) => c.sql.includes("LEFT JOIN payer pay"))!;
+    expect(q.sql).toContain("WHERE r.patient_id = patient.id AND r.org_id = patient.org_id");
+    // Only its own three columns reach the outer SELECT: a plain join put
+    // referral.first_name beside the unqualified first_name, and Postgres
+    // refused the whole read as ambiguous (caught on localhost, 28 Oct).
+    expect(q.sql).toMatch(/LEFT JOIN LATERAL \(\s*SELECT r\.id AS referral_id,/);
+    expect(q.sql).not.toMatch(/JOIN referral ref ON/);
+  });
+
+  it("CONTROL: a patient created without a referral has none", async () => {
+    detailRow = detail({ referral_id: null, referral_received_on: null, referral_source_name: null });
+    const view = await getPatient({ orgId: ORG, id: PATIENT });
+    expect(view?.referral).toBeNull();
+  });
+});
+
 describe("list reads", () => {
   it("carry null for both, since they select neither column", async () => {
     const { rows } = await listPatients({ orgId: ORG });

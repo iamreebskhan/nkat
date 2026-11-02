@@ -54,6 +54,7 @@ interface Overview {
     paid: number;
     denied: number;
     billedCents: number;
+    paidCents: number;
   }[];
   denials: {
     total: number;
@@ -356,7 +357,7 @@ export default function BillingDashboardPage() {
               <CardHeader>
                 <CardTitle>By clinician</CardTitle>
                 <CardDescription>
-                  Who raised what, and how it landed.
+                  Who raised what, how it landed, and what it brought in.
                   {data.truncated.byNurse && " Showing the busiest only — there are more."}
                 </CardDescription>
               </CardHeader>
@@ -372,6 +373,9 @@ export default function BillingDashboardPage() {
                         <th className="text-right font-semibold px-4 py-2.5">Submitted</th>
                         <th className="text-right font-semibold px-4 py-2.5">Paid</th>
                         <th className="text-right font-semibold px-4 py-2.5">Denied</th>
+                        {/* Revenue per provider (Level-1 doc:106). */}
+                        <th className="text-right font-semibold px-4 py-2.5">Billed</th>
+                        <th className="text-right font-semibold px-4 py-2.5">Collected</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -384,6 +388,8 @@ export default function BillingDashboardPage() {
                           <td className="px-4 py-2 text-right tabular">{n.submitted}</td>
                           <td className="px-4 py-2 text-right tabular">{n.paid}</td>
                           <td className="px-4 py-2 text-right tabular">{n.denied}</td>
+                          <td className="px-4 py-2 text-right tabular">{money(n.billedCents)}</td>
+                          <td className="px-4 py-2 text-right tabular">{money(n.paidCents)}</td>
                         </tr>
                       ))}
                     </tbody>

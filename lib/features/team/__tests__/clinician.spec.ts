@@ -2,6 +2,10 @@
  * Clinician billing identity (audit R40 and R25): NPI check digit and the
  * credential → pricing-tier mapping.
  */
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -50,7 +54,17 @@ describe("tierForCredential", () => {
   });
 
   it("returns null for credentials that do not bill home E/M", () => {
-    for (const c of ["RN", "LCSW", "OTHER"]) expect(tierForCredential(c)).toBeNull();
+    for (const c of ["RN", "LPN", "LCSW", "OTHER"]) expect(tierForCredential(c)).toBeNull();
+  });
+
+  it("offers every credential the database accepts, LPN included (0109), and no other", () => {
+    const sql = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "db", "migrations", "0109_patient_record_and_roles.sql"),
+      "utf8",
+    );
+    const check = /clinician_profile_credential_check[\s\S]*?IN\s*\(([^)]*)\)/.exec(sql)!;
+    const allowed = [...check[1]!.matchAll(/'([A-Z]+)'/g)].map((m) => m[1]);
+    expect([...CLINICIAN_CREDENTIALS].sort()).toEqual(allowed.sort());
   });
 
   it("returns null when the credential was never recorded", () => {

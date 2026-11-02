@@ -24,7 +24,19 @@ import puppeteer, { type Browser } from "puppeteer";
 
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
-import { formatCodes, sameAssignment, type CodeUnits } from "@/lib/features/billing/code-units";
+import { formatCodes, sameAssignment, unitsOf, type CodeUnits } from "@/lib/features/billing/code-units";
+import { CARE_PROGRAM_SHORT, type CareProgram } from "@/lib/features/care-coordination/care-coordination.types";
+import {
+  CM_ACTIVITY_LABEL,
+  PERFORMER_KIND_LABEL,
+  chargeFor,
+  monthBounds,
+  monthLabel,
+  monthProgress,
+  type ChargeBasis,
+  type CmActivity,
+  type PerformerKind,
+} from "@/lib/features/care-coordination/care-management";
 import { orgLocalDate, orgToday } from "@/lib/features/org/org-date";
 import { logPhiExport } from "@/lib/hipaa/phi-access-log";
 
@@ -108,6 +120,7 @@ interface PacketData {
     primary_member_id: string | null;
     /** The patient's primary NP, who heads the care-team header (audit R30). */
     palliative_provider_name?: string | null;
+    chaplain_name?: string | null;
   };
   /**
    * The care-team header (audit R30): outside providers and the POA and
@@ -152,6 +165,22 @@ interface PacketData {
    * Optional, so a hand-built PacketData (the reconcile tests) needs none.
    */
   documentation?: DocumentationGaps;
+  /**
+   * A PCM/CCM month's charge (0117): the time log its codes rest on, in place
+   * of a note, and the consent. Optional, so a hand-built PacketData needs none.
+   */
+  careManagement?: {
+    program: CareProgram;
+    month: string;
+    basis: ChargeBasis;
+    enrolledOn: string;
+    consentOn: string;
+    consentMethod: string;
+    entries: {
+      serviceOn: string; minutes: number; kind: PerformerKind; performedBy: string; performedByName: string | null;
+      activity: CmActivity; fromCall: boolean; note: string | null;
+    }[];
+  } | null;
   orgName: string;
   /**
    * org.timezone (0107): the visit's date, the addenda's and the export's are
@@ -271,9 +300,10 @@ async function load(orgId: string, visitId: string): Promise<PacketData> {
 
     const p = await tx.$queryRaw<PacketData["patient"][]>`
       SELECT pt.id, pt.first_name, pt.last_name, pt.date_of_birth, pt.primary_member_id,
-             np.full_name AS palliative_provider_name
+             np.full_name AS palliative_provider_name, COALESCE(ch.full_name, ch.email) AS chaplain_name
         FROM visit v JOIN patient pt ON pt.id = v.patient_id AND pt.org_id = v.org_id
         LEFT JOIN app_user np ON np.id = pt.primary_np_user_id
+        LEFT JOIN app_user ch ON ch.id = pt.chaplain_user_id
        WHERE v.id = ${visitId}::uuid AND v.org_id = ${orgId}::uuid LIMIT 1
     `;
 
@@ -303,7 +333,7 @@ async function load(orgId: string, visitId: string): Promise<PacketData> {
 
     const vitals = await tx.$queryRaw<Record<string, unknown>[]>`
       SELECT weight_kg, height_cm, bp_systolic, bp_diastolic, heart_rate, resp_rate,
-             temperature_c, spo2_percent, pps_percent, pain_score, recorded_at
+             temperature_c, spo2_percent, pps_percent, pain_score, dyspnea_score, nausea_score, recorded_at
         FROM visit_vitals WHERE visit_id = ${visitId}::uuid AND org_id = ${orgId}::uuid LIMIT 1
     `;
 
@@ -349,6 +379,52 @@ async function load(orgId: string, visitId: string): Promise<PacketData> {
 
     const documentation = await loadDocumentationGaps(tx, { visitId });
 
+    // A PCM/CCM month (0117): the charge's enrolment and the month's counted
+    // time — not voided, on days the enrolment was in force.
+    let careManagement: PacketData["careManagement"] = null;
+    if (v[0].coding_basis === "care_management") {
+      const c = await tx.$queryRaw<
+        {
+          enrollment_id: string; program: CareProgram; month: string; basis: ChargeBasis; enrolled_on: string;
+          ended_on: string | null; consent_on: string; consent_method: string;
+        }[]
+      >`
+        SELECT c.enrollment_id, e.program, to_char(c.month, 'YYYY-MM') AS month, c.basis,
+               to_char(e.enrolled_on, 'YYYY-MM-DD') AS enrolled_on, to_char(e.ended_on, 'YYYY-MM-DD') AS ended_on,
+               to_char(e.consent_on, 'YYYY-MM-DD') AS consent_on, e.consent_method
+          FROM care_management_charge c
+          JOIN care_program_enrollment e ON e.id = c.enrollment_id AND e.org_id = c.org_id
+         WHERE c.visit_id = ${visitId}::uuid AND c.org_id = ${orgId}::uuid
+      `;
+      if (c[0]) {
+        const { first, last } = monthBounds(c[0].month);
+        const entries = await tx.$queryRaw<
+          {
+            service_on: string; minutes: number; performer_kind: PerformerKind; performed_by_user_id: string;
+            name: string | null; activity: CmActivity; from_call: boolean; note: string | null;
+          }[]
+        >`
+          SELECT to_char(t.service_on, 'YYYY-MM-DD') AS service_on, t.minutes, t.performer_kind, t.performed_by_user_id,
+                 COALESCE(u.full_name, u.email) AS name, t.activity, (t.phone_encounter_id IS NOT NULL) AS from_call, t.note
+            FROM care_management_time t
+            LEFT JOIN app_user u ON u.id = t.performed_by_user_id
+           WHERE t.enrollment_id = ${c[0].enrollment_id}::uuid AND t.org_id = ${orgId}::uuid AND t.voided_at IS NULL
+             AND t.service_on BETWEEN ${first}::date AND ${last}::date
+             AND t.service_on >= ${c[0].enrolled_on}::date
+             AND (${c[0].ended_on}::date IS NULL OR t.service_on <= ${c[0].ended_on}::date)
+           ORDER BY t.service_on, t.created_at
+        `;
+        careManagement = {
+          program: c[0].program, month: c[0].month, basis: c[0].basis, enrolledOn: c[0].enrolled_on,
+          consentOn: c[0].consent_on, consentMethod: c[0].consent_method,
+          entries: entries.map((t) => ({
+            serviceOn: t.service_on, minutes: t.minutes, kind: t.performer_kind, performedBy: t.performed_by_user_id,
+            performedByName: t.name, activity: t.activity, fromCall: t.from_call, note: t.note,
+          })),
+        };
+      }
+    }
+
     const orgRow = await tx.$queryRaw<{ name: string; timezone: string }[]>`
       SELECT name, timezone FROM org WHERE id = ${orgId}::uuid LIMIT 1
     `;
@@ -374,6 +450,7 @@ async function load(orgId: string, visitId: string): Promise<PacketData> {
                 [
                   "weight_kg", "height_cm", "bp_systolic", "bp_diastolic", "heart_rate",
                   "resp_rate", "temperature_c", "spo2_percent", "pps_percent", "pain_score",
+                  "dyspnea_score", "nausea_score",
                 ].some((col) => vitals[0]![col] !== null && vitals[0]![col] !== undefined)
               ),
             }
@@ -383,10 +460,12 @@ async function load(orgId: string, visitId: string): Promise<PacketData> {
       addenda,
       careTeam: careTeamHeaderRows({
         palliativeProvider: p[0]?.palliative_provider_name ?? null,
+        chaplain: p[0]?.chaplain_name ?? null,
         providers: headerProviders,
         contacts: headerContacts,
       }),
       documentation,
+      careManagement,
       superbill: sb[0] ?? null,
       orgName: brand[0]?.display_name ?? orgRow[0].name,
       timeZone: orgRow[0].timezone,
@@ -519,6 +598,13 @@ export function reconcile(d: PacketData): PacketFinding[] {
     }
   }
 
+  // A PCM/CCM month (0117) has no note: its codes rest on the time log and the
+  // consent, which is what is checked, and nothing note-shaped is.
+  if (d.careManagement) {
+    out.push(...careManagementFindings(d, d.careManagement));
+    return out;
+  }
+
   const filled = d.sections.filter((s) => !s.is_empty);
   const missing = d.sections.filter((s) => s.is_empty).map((s) => s.label);
   // Same status question as the missing bill: this runs before signing now,
@@ -567,7 +653,9 @@ export function reconcile(d: PacketData): PacketFinding[] {
         (acp > 0 ? `, of which ${acp} minutes advance care planning.` : ".") +
         " Recorded from the start and stop times captured during the visit.",
     });
-  } else {
+  } else if (d.visit.coding_basis !== "non_billable") {
+    // Only where a code rests on the time. A "Not billed" visit codes nothing,
+    // and this warned about defending a time-based code on a bereavement call.
     out.push({
       severity: "attention",
       label: "No time recorded",
@@ -619,6 +707,52 @@ export function reconcile(d: PacketData): PacketFinding[] {
     });
   }
 
+  return out;
+}
+
+/**
+ * A PCM/CCM month's codes against its time log: does the counted time reach
+ * the base code, and the add-on units billed? The bill's codes when there is
+ * a bill, the visit's when not. And the consent, which the codes need first.
+ */
+function careManagementFindings(d: PacketData, cm: NonNullable<PacketData["careManagement"]>): PacketFinding[] {
+  const program = CARE_PROGRAM_SHORT[cm.program];
+  const progress = monthProgress(
+    cm.program,
+    cm.entries.map((e) => ({ serviceOn: e.serviceOn, minutes: e.minutes, kind: e.kind, performedBy: e.performedBy })),
+    d.visit.clinician_user_id,
+  );
+  const set = cm.basis === "staff" ? progress.staff : progress.qhp;
+  const most = set ? chargeFor(set) : null;
+  const codes = d.superbill ? d.superbill.cpt_codes ?? [] : d.visit.cpt_codes_assigned ?? [];
+  const units = d.superbill ? d.superbill.cpt_units : d.visit.cpt_units;
+  const where = d.superbill ? "The bill" : "The charge";
+  const whose = cm.basis === "staff" ? "clinical staff time (everyone's minutes)" : "the practitioner's own time";
+  const out: PacketFinding[] = [];
+  if (!set || !most) {
+    out.push({
+      severity: "mismatch",
+      label: "Time log",
+      detail: `${where} carries ${formatCodes(codes, units) || "nothing"}, but ${monthLabel(cm.month)}'s ${program} time log holds ${set?.minutes ?? 0} minutes of ${whose}, short of what ${set?.base ?? "the base code"} needs.`,
+    });
+  } else {
+    const unknown = codes.filter((c) => c !== set.base && c !== set.addOn);
+    const billedUnits = set.addOn && codes.includes(set.addOn) ? unitsOf(units, set.addOn) : 0;
+    const supported = most.addOnUnits;
+    const ok = codes.includes(set.base) && unknown.length === 0 && billedUnits <= supported;
+    out.push({
+      severity: ok ? "match" : "mismatch",
+      label: "Time log",
+      detail: ok
+        ? `${set.minutes} minutes of ${whose} in ${cm.entries.length} entries support ${formatCodes(codes, units)}; ${set.base} was reached on ${set.reached[0]}.`
+        : `${where} carries ${formatCodes(codes, units) || "nothing"}; the ${set.minutes} minutes of ${whose} in the time log support at most ${formatCodes(most.codes, most.units)}.`,
+    });
+  }
+  out.push({
+    severity: cm.consentOn <= cm.enrolledOn ? "match" : "mismatch",
+    label: "Consent",
+    detail: `${cm.consentMethod[0]!.toUpperCase()}${cm.consentMethod.slice(1)} consent on ${cm.consentOn}; enrolled in ${program} on ${cm.enrolledOn}.`,
+  });
   return out;
 }
 
@@ -736,6 +870,28 @@ function renderHtml(d: PacketData, findings: PacketFinding[]): string {
 
   const vitalsRows = renderVitalsRows(d.vitals);
 
+  // A PCM/CCM month (0117): the time log stands where the note would.
+  const cm = d.careManagement;
+  const recordHtml = cm
+    ? `<h2>Time log — ${escapeHtml(CARE_PROGRAM_SHORT[cm.program])}, ${escapeHtml(monthLabel(cm.month))}</h2>
+  <p class="sub">${escapeHtml(`${cm.consentMethod} consent on ${cm.consentOn}; enrolled ${cm.enrolledOn}. Billed on ${cm.basis === "staff" ? "clinical staff time" : "the practitioner's own time"}.`)}</p>
+  <table>
+    <tr><td class="k">Day</td><td class="k">Minutes</td><td class="k">By</td><td class="k">What</td><td class="k">Note</td></tr>
+    ${cm.entries
+      .map(
+        (e) => `<tr>
+      <td class="mono">${escapeHtml(e.serviceOn)}</td>
+      <td class="mono">${e.minutes}</td>
+      <td>${escapeHtml(`${e.performedByName ?? "—"} (${PERFORMER_KIND_LABEL[e.kind].toLowerCase()})`)}</td>
+      <td>${escapeHtml(e.fromCall ? "Phone call" : CM_ACTIVITY_LABEL[e.activity])}</td>
+      <td style="white-space:pre-wrap">${escapeHtml(e.note ?? "")}</td>
+    </tr>`,
+      )
+      .join("")}
+  </table>`
+    : `<h2>Signed note</h2>
+  ${renderNoteBodyHtml(d.sections, vitalsRows)}`;
+
   return `<!doctype html>
 <html><head><meta charset="utf-8" /><title>Audit packet ${escapeHtml(d.visit.id.slice(0, 8))}</title>
 <style>
@@ -767,7 +923,7 @@ function renderHtml(d: PacketData, findings: PacketFinding[]): string {
   <div class="hd">
     <div>
       <h1>${escapeHtml(d.orgName)}</h1>
-      <div class="sub">Visit audit packet — signed note and superbill</div>
+      <div class="sub">${cm ? "PCM/CCM month audit packet — time log and superbill" : "Visit audit packet — signed note and superbill"}</div>
     </div>
     <div class="meta">
       <div>Visit <span class="mono">${escapeHtml(d.visit.id)}</span></div>
@@ -788,7 +944,7 @@ function renderHtml(d: PacketData, findings: PacketFinding[]): string {
   </table>
   ${careTeamCaption}
 
-  <h2>Reconciliation — note against bill</h2>
+  <h2>Reconciliation — ${cm ? "time log" : "note"} against bill</h2>
   ${findings
     .map(
       (f) => `<div class="find" style="border-left-color:${SEV_COLOUR[f.severity]}">
@@ -798,8 +954,7 @@ function renderHtml(d: PacketData, findings: PacketFinding[]): string {
     )
     .join("")}
 
-  <h2>Signed note</h2>
-  ${renderNoteBodyHtml(d.sections, vitalsRows)}
+  ${recordHtml}
 
   ${renderAddendaHtml(d.addenda ?? [], d.timeZone)}
 

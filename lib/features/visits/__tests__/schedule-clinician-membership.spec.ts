@@ -54,9 +54,16 @@ const MEMBERS: MemberRow[] = [
 /** One patient per org. Each booking below names its own org's patient. */
 const PATIENT = "f0000000-0000-4000-8000-000000000001";
 const OTHER_PATIENT = "f0000000-0000-4000-8000-000000000002";
-const PATIENTS: { org_id: string; id: string }[] = [
-  { org_id: ORG, id: PATIENT },
-  { org_id: OTHER_ORG, id: OTHER_PATIENT },
+/** ORG's patients no longer under care (0115). */
+const DISCHARGED = "f0000000-0000-4000-8000-000000000003";
+const DIED = "f0000000-0000-4000-8000-000000000004";
+const ARCHIVED = "f0000000-0000-4000-8000-000000000005";
+const PATIENTS: { org_id: string; id: string; status: string }[] = [
+  { org_id: ORG, id: PATIENT, status: "active" },
+  { org_id: OTHER_ORG, id: OTHER_PATIENT, status: "active" },
+  { org_id: ORG, id: DISCHARGED, status: "discharged" },
+  { org_id: ORG, id: DIED, status: "deceased" },
+  { org_id: ORG, id: ARCHIVED, status: "archived" },
 ];
 
 let calls: { sql: string; values: unknown[] }[] = [];
@@ -70,8 +77,8 @@ function fakeTx() {
     }
     // scheduleVisit's patient guard. Bindings are (org_id, patient_id).
     if (sql.includes("FROM patient")) {
-      const hit = PATIENTS.some((p) => p.org_id === values[0] && p.id === values[1]);
-      return Promise.resolve(hit ? [{ ok: 1 }] : []);
+      const hit = PATIENTS.find((p) => p.org_id === values[0] && p.id === values[1]);
+      return Promise.resolve(hit ? [{ status: hit.status }] : []);
     }
     if (sql.includes("FROM org_member")) {
       // Bindings are (org_id, clinician_user_id). status = 'active' is a
@@ -160,6 +167,29 @@ describe("scheduleVisit — the clinician must be an active member of this org",
       payload: payloadFor(STRANGER, OTHER_PATIENT),
     });
     expect(r).toEqual({ id: VISIT });
+    expect(inserted()).toHaveLength(1);
+  });
+});
+
+describe("scheduleVisit — the patient must be under care (0115)", () => {
+  for (const [label, patientId, message] of [
+    ["a discharged patient", DISCHARGED, /discharged\. Readmit them/],
+    ["a patient who has died", DIED, /has died\. Only a bereavement follow-up/],
+    ["an archived chart", ARCHIVED, /archived\. Restore it/],
+  ] as const) {
+    it(`refuses ${label}, and writes no visit`, async () => {
+      await expect(scheduleVisit({ orgId: ORG, payload: payloadFor(ACTIVE, patientId) })).rejects.toThrow(message);
+      expect(inserted()).toHaveLength(0);
+    });
+  }
+
+  it("still books the family's bereavement follow-up after a death, and nothing else then", async () => {
+    const r = await scheduleVisit({ orgId: ORG, payload: { ...payloadFor(ACTIVE, DIED), visitType: "bereavement_follow_up" } });
+    expect(r).toEqual({ id: VISIT });
+    // CONTROL: the bereavement type does not reopen a discharged patient.
+    await expect(
+      scheduleVisit({ orgId: ORG, payload: { ...payloadFor(ACTIVE, DISCHARGED), visitType: "bereavement_follow_up" } }),
+    ).rejects.toThrow(/discharged/);
     expect(inserted()).toHaveLength(1);
   });
 });

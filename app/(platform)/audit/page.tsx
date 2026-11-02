@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { RecordAccessCard } from "@/components/visits/record-access-card";
 import { summarizeAuditPayload } from "@/lib/features/audit/audit-pure";
 import type { AuditLogRow } from "@/lib/features/audit/audit.service";
 
@@ -258,6 +259,8 @@ export default function AuditPage() {
           </Button>
         </div>
       )}
+
+      <RecordAccessCard />
     </div>
   );
 }

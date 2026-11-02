@@ -18,6 +18,7 @@ import { usePathname } from "next/navigation";
 import {
   AlertTriangle,
   BadgeCheck,
+  BarChart3,
   BookOpen,
   Building2,
   Calendar,
@@ -28,17 +29,24 @@ import {
   HelpCircle,
   Inbox,
   LineChart,
+  ListChecks,
   LogOut,
   type LucideIcon,
   Receipt,
   ScrollText,
   SearchCheck,
+  Send,
   Settings,
   ShieldCheck,
+  Stethoscope,
+  UserPlus,
   Users,
+  WifiOff,
 } from "lucide-react";
 
 import { AmaLicenseBadge } from "@/components/AmaLicenseBadge";
+import { NotificationBell } from "@/components/notifications/notification-bell";
+import { clearOfflineData, countDrafts, offlineSupported } from "@/lib/features/offline/offline-store";
 import { cn } from "@/lib/utils";
 
 /**
@@ -50,6 +58,7 @@ import { cn } from "@/lib/utils";
 const ICONS: Record<string, LucideIcon> = {
   AlertTriangle,
   BadgeCheck,
+  BarChart3,
   BookOpen,
   Building2,
   Calendar,
@@ -59,12 +68,17 @@ const ICONS: Record<string, LucideIcon> = {
   HeartPulse,
   Inbox,
   LineChart,
+  ListChecks,
   Receipt,
   ScrollText,
   SearchCheck,
+  Send,
   Settings,
   ShieldCheck,
+  Stethoscope,
+  UserPlus,
   Users,
+  WifiOff,
 };
 
 export type SerializableNavItem = {
@@ -112,6 +126,9 @@ export function Sidebar({ items, badges = {}, orgName, userEmail }: Props) {
           {open ? "×" : "☰"}
         </button>
         <span className="font-display text-lg tracking-tight text-white">Pallio</span>
+        <div className="ml-auto">
+          <NotificationBell placement="mobile" />
+        </div>
       </div>
 
       {open && (
@@ -128,7 +145,8 @@ export function Sidebar({ items, badges = {}, orgName, userEmail }: Props) {
         className={cn(
           "flex flex-col w-64 shrink-0 border-r border-slate-800",
           "bg-[var(--color-sidebar-bg)] text-[var(--color-sidebar-fg)]",
-          "h-screen sticky top-0",
+          // z-30: the notification dropdown opens over the page beside it.
+          "h-screen sticky top-0 md:z-30",
           // Off-canvas drawer under md; unchanged sticky column at md and up.
           "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50",
           "max-md:transition-transform max-md:duration-200 motion-reduce:max-md:transition-none",
@@ -138,13 +156,19 @@ export function Sidebar({ items, badges = {}, orgName, userEmail }: Props) {
         aria-hidden={undefined}
       >
       {/* Brand */}
-      <div className="px-5 py-5 border-b border-slate-800">
-        <div className="font-display text-xl tracking-tight text-white">
-          Pallio
+      <div className="px-5 py-5 border-b border-slate-800 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-display text-xl tracking-tight text-white">
+            Pallio
+          </div>
+          {orgName && (
+            <div className="text-xs text-slate-400 mt-0.5 truncate">{orgName}</div>
+          )}
         </div>
-        {orgName && (
-          <div className="text-xs text-slate-400 mt-0.5 truncate">{orgName}</div>
-        )}
+        {/* The phone's top bar carries its own bell. */}
+        <div className="max-md:hidden -mr-2">
+          <NotificationBell placement="desktop" />
+        </div>
       </div>
 
       {/* Nav */}
@@ -225,6 +249,22 @@ export function Sidebar({ items, badges = {}, orgName, userEmail }: Props) {
 
 function LogoutButton() {
   async function logout() {
+    // The offline copy is this clinician's (0119): it leaves the device with
+    // them. Notes written offline and not yet sent are said first, since
+    // signing out deletes them.
+    if (offlineSupported()) {
+      // Counted without opening the copy: drafts are sealed on the device (0121).
+      const waiting = await countDrafts().catch(() => 0);
+      if (
+        waiting > 0 &&
+        !window.confirm(
+          `${waiting} part${waiting === 1 ? "" : "s"} of notes written offline ${waiting === 1 ? "has" : "have"} not been sent. Signing out deletes ${waiting === 1 ? "it" : "them"} from this device. Sign out anyway?`,
+        )
+      ) {
+        return;
+      }
+      await clearOfflineData().catch(() => {});
+    }
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } finally {

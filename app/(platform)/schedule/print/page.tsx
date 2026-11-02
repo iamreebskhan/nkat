@@ -9,10 +9,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { localDateKey } from "@/lib/features/visits/visit-pure";
+import { orgClockTime, orgLocalDate } from "@/lib/features/org/org-date";
+import { usePracticeZone } from "@/lib/features/schedule/use-practice-zone";
 import type { VisitView } from "@/lib/features/visits/visit.types";
 
 export default function PrintRoutePage() {
+  // The route runs on the practice's clock, as the board it is printed from.
+  const zone = usePracticeZone();
+  const tz = zone?.timeZone;
+  const practiceToday = zone?.today;
   // ?date=YYYY-MM-DD read client-side (below), defaulting to today. Avoiding
   // useSearchParams keeps this off a Suspense boundary that can stall on a cold
   // load — relevant here because the page is opened in a fresh tab to print.
@@ -26,13 +31,14 @@ export default function PrintRoutePage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!practiceToday) return;
     // From a timer, so the date isn't set synchronously in the effect body.
     const t = setTimeout(() => {
       const d = new URLSearchParams(window.location.search).get("date");
-      setDate(d || localDateKey(new Date()));
+      setDate(d || practiceToday);
     }, 0);
     return () => clearTimeout(t);
-  }, []);
+  }, [practiceToday]);
 
   useEffect(() => {
     fetch("/api/visits?status=scheduled&limit=200")
@@ -46,14 +52,14 @@ export default function PrintRoutePage() {
   const dayVisits = useMemo(
     () =>
       visits
-        // The visit's day where the nurse is, not its UTC day: a 9 pm visit
+        // The visit's day where the practice is, not its UTC day: a 9 pm visit
         // is stored as the next morning in UTC.
         .filter((v) => {
           const at = v.scheduledStart ?? v.startTime;
-          return date !== null && at != null && localDateKey(new Date(at)) === date;
+          return date !== null && at != null && !!tz && orgLocalDate(at, tz) === date;
         })
         .sort((a, b) => (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? "")),
-    [visits, date],
+    [visits, date, tz],
   );
 
   useEffect(() => {
@@ -97,7 +103,7 @@ export default function PrintRoutePage() {
           <tbody>
             {dayVisits.map((v) => (
               <tr key={v.id} className="border-b border-slate-200">
-                <td className="py-2 pr-3 tabular">{timeOf(v.scheduledStart ?? v.startTime)}</td>
+                <td className="py-2 pr-3 tabular">{tz ? timeOf(v.scheduledStart ?? v.startTime, tz) : "—"}</td>
                 <td className="py-2 pr-3">{v.patientName ?? "—"}</td>
                 <td className="py-2 pr-3">{v.patientCity ?? "—"}</td>
                 <td className="py-2 pr-3">{v.visitType.replace(/_/g, " ")}{v.isTelehealth ? " (telehealth)" : ""}</td>
@@ -111,7 +117,6 @@ export default function PrintRoutePage() {
   );
 }
 
-function timeOf(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+function timeOf(iso: string | null, tz: string): string {
+  return iso ? orgClockTime(iso, tz) : "—";
 }

@@ -164,6 +164,8 @@ export function renderVitalsRows(v: Record<string, unknown> | null): string {
     show("spo2Percent", "spo2_percent"),
     show("ppsPercent", "pps_percent"),
     show("painScore", "pain_score"),
+    show("dyspneaScore", "dyspnea_score"),
+    show("nauseaScore", "nausea_score"),
   ];
   return rows
     .filter((r): r is [string, string, string] => r !== null)
@@ -310,6 +312,8 @@ export interface HeaderRow {
  */
 export function careTeamHeaderRows(a: {
   palliativeProvider: string | null;
+  /** The chaplain on the care team, printed when there is one. */
+  chaplain?: string | null;
   providers: HeaderProvider[];
   contacts: HeaderContact[];
 }): HeaderRow[] {
@@ -334,6 +338,7 @@ export function careTeamHeaderRows(a: {
   const byName = [...a.contacts].sort((x, y) => x.full_name.localeCompare(y.full_name));
   return [
     { label: "Palliative care provider", value: a.palliativeProvider?.trim() || "—" },
+    ...(a.chaplain?.trim() ? [{ label: "Chaplain", value: a.chaplain.trim() }] : []),
     { label: "Primary care provider", value: fixedRole("primary_care") },
     { label: "Referring physician", value: fixedRole("referring") },
     ...labelled("specialist", "Specialist"),

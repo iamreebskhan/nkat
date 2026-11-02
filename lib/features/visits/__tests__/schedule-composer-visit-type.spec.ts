@@ -76,6 +76,7 @@ beforeEach(() => {
         status = 403;
       } else if (url === "/api/auth/me") body = { success: true, data: { userId: ME, email: "priya@example.test", fullName: "Priya Raman" } };
       else if (url === "/api/settings/visit-types") body = { success: true, data: { types: TYPES } };
+      else if (url === "/api/schedule/time-zone") body = { success: true, data: { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, today: "2026-10-30", zoneName: "EDT" } };
       else if (url.startsWith(`/api/patients/${PATIENT}/visit-type-hint?`)) {
         hintUrls.push(url);
         if (hintHangs) return new Promise<Response>(() => {});

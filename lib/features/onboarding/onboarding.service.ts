@@ -23,6 +23,7 @@ interface Row {
   org_type: OrgType | null;
   custom_domain: string | null;
   notes: string | null;
+  npi?: string | null;
   completed_at: Date | null;
   created_at: Date;
   updated_at: Date;
@@ -41,6 +42,7 @@ function toView(r: Row): OnboardingStatusView {
     orgType: r.org_type,
     customDomain: r.custom_domain,
     notes: r.notes,
+    npi: r.npi ?? null,
     completedAt: r.completed_at?.toISOString() ?? null,
     createdAt: r.created_at.toISOString(),
     updatedAt: r.updated_at.toISOString(),
@@ -57,7 +59,24 @@ export async function getOrCreateOnboarding(
       ON CONFLICT (org_id) DO UPDATE SET updated_at = onboarding_status.updated_at
       RETURNING *
     `;
-    return toView(rows[0]!);
+    const org = await tx.$queryRaw<{ name: string | null }[]>`
+      SELECT name FROM org WHERE id = ${orgId}::uuid LIMIT 1
+    `;
+    return { ...toView(rows[0]!), orgName: org[0]?.name ?? null };
+  });
+}
+
+/**
+ * The payers this org picked at onboarding (step 3), for the lists that offer
+ * the whole roster: intake listed all 19 payers in OH, NC and SC with the
+ * practice's own two lost among them. Empty for an org that has not picked.
+ */
+export async function getOrgPayerIds(orgId: string): Promise<string[]> {
+  return withOrgContext(orgId, async (tx) => {
+    const rows = await tx.$queryRaw<{ active_payer_ids: string[] | null }[]>`
+      SELECT active_payer_ids FROM onboarding_status WHERE org_id = ${orgId}::uuid LIMIT 1
+    `;
+    return rows[0]?.active_payer_ids ?? [];
   });
 }
 

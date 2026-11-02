@@ -9,6 +9,11 @@ import { z } from "zod";
 export const ROLE_TEMPLATES = [
   "org_admin",
   "clinician",
+  // Level-1 audit, 27 Oct (0109): Mark, 3 Sep [00:38] — the person in intake
+  // "does all the referrals, gets all the demographics in ... insurance
+  // verification, the triage, referral tracking, scheduling". Only org_admin
+  // could create a patient by default.
+  "intake_coordinator",
   "billing_agent",
   "consultant",
   "analyst",
@@ -68,6 +73,20 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleTemplate, string[]> = {
     "schedule.view", "schedule.create", "schedule.edit",
     "messaging.read", "messaging.send",
     "patient.acuity.edit",
+  ],
+  intake_coordinator: [
+    // The referral comes in, the chart is opened, demographics, insurance and
+    // the care team are entered.
+    "patients.list", "patients.view", "patients.create", "patients.edit",
+    "patients.careteam.edit",
+    // The payer list the insurance step offers (GET /api/billing/payers).
+    "billing.lookup.view",
+    // Booking for every clinician: the roster (team.view) to pick one, and
+    // every clinician's booked visits to book around and move. Not
+    // visits.view.all — the calendar does not need the notes.
+    "schedule.view", "schedule.create", "schedule.edit", "schedule.manage.all",
+    "team.view",
+    "messaging.read", "messaging.send",
   ],
   billing_agent: [
     "patients.list", "patients.view",
@@ -247,4 +266,6 @@ export interface MemberRecord {
   npi: string | null;
   /** Licensure from clinician_profile — sets the pricing tier. */
   credential: string | null;
+  /** The rendering provider's taxonomy code (0118), carried by the claim export. */
+  taxonomyCode?: string | null;
 }

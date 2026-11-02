@@ -156,6 +156,72 @@ export function orgLocalMinute(at: Date | string, timeZone: string): string {
   return `${day} ${part("hour")}:${part("minute")} ${part("timeZoneName")}`;
 }
 
+/** One wall-clock formatter per zone, seconds included, for the conversions below. */
+const clockFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** The practice's wall clock at an instant, as if that clock were UTC, in ms. */
+function wallClockMs(at: Date, timeZone: string): number {
+  let f = clockFormatters.get(timeZone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    clockFormatters.set(timeZone, f);
+  }
+  const parts = f.formatToParts(at);
+  const n = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  return Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second"));
+}
+
+const LOCAL_MINUTE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
+
+/**
+ * The instant a time on the practice's clock falls on: 'YYYY-MM-DDTHH:MM', as a
+ * datetime-local input holds it. This is how a time typed for a practice is
+ * read, wherever the person typing is: new Date() on it reads the browser's
+ * zone, so 10:00 typed in Karachi booked 01:00 in New York.
+ *
+ * A time the clocks skip in spring comes out an hour on; one they pass twice in
+ * autumn is the first. Throws as orgLocalDate does.
+ */
+export function orgInstant(local: string, timeZone: string): Date {
+  const m = LOCAL_MINUTE.exec(local);
+  if (!m) throw new RangeError(`Not a local time: ${local}`);
+  if (typeof timeZone !== "string" || timeZone.trim() === "") {
+    throw new TypeError("orgInstant needs the org's time zone; without one Intl would use the server's.");
+  }
+  const wanted = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  // The zone's offset depends on the instant being looked for: twice settles it.
+  let guess = wanted;
+  for (let i = 0; i < 2; i++) guess = wanted - (wallClockMs(new Date(guess), timeZone) - guess);
+  return new Date(guess + (wanted - wallClockMs(new Date(guess), timeZone)));
+}
+
+/** An instant on the practice's clock, 'YYYY-MM-DDTHH:MM', for a datetime-local input. */
+export function orgLocalInput(at: Date | string, timeZone: string): string {
+  const instant = at instanceof Date ? at : new Date(at);
+  if (Number.isNaN(instant.getTime())) throw new RangeError(`Invalid instant: ${String(at)}`);
+  return new Date(wallClockMs(instant, timeZone)).toISOString().slice(0, 16);
+}
+
+/** An instant's time of day on the practice's clock: "9:30 AM". */
+export function orgClockTime(at: Date | string, timeZone: string): string {
+  return new Date(at).toLocaleTimeString("en-US", { timeZone, hour: "numeric", minute: "2-digit" });
+}
+
+/** The zone's year-round abbreviation: 'ET', 'CT'. A schedule runs across clock changes, so never 'EDT'. */
+export function orgZoneName(timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortGeneric" }).formatToParts(new Date());
+  return parts.find((p) => p.type === "timeZoneName")?.value ?? timeZone;
+}
+
 /**
  * Is this a 'YYYY-MM-DD' day that exists? Check a day from a request with it
  * before binding it into ::date: Postgres refuses 2026-09-31 ("date/time field

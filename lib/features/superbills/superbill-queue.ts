@@ -58,12 +58,36 @@ export const QUEUE_ACTIONS: Record<string, QueueAction[]> = {
 };
 
 /**
- * Said wherever Pallio shows a claim's status or money (audit R35). Nothing
- * here sends an 837 or reads an 835, so every such figure is what the org
- * typed, and a client reading it must not take it for the payer's word.
+ * Another payment on a partially paid claim (D9). Not a status move, so not in
+ * QUEUE_ACTIONS and not in the service's transition map: the amount is added
+ * to what is recorded, and what that comes to decides where the claim goes.
+ */
+export const FURTHER_PAYMENT_LABEL = "Record another payment";
+
+export function furtherPaymentTotal(a: { paidCents: number; billedCents: number; amountCents: number }): {
+  totalCents: number;
+  /** The total passes what the claim billed: an overpayment, to be confirmed. */
+  above: boolean;
+  /** The total reaches the bill: paid in full. An unpriced claim has no bill to reach. */
+  covers: boolean;
+} {
+  const totalCents = a.paidCents + a.amountCents;
+  return {
+    totalCents,
+    above: a.billedCents > 0 && totalCents > a.billedCents,
+    covers: a.billedCents > 0 && totalCents >= a.billedCents,
+  };
+}
+
+/**
+ * Said wherever Pallio shows a claim's status or money (audit R35). A client
+ * reading a status must know whose word it is. Since 0120 Pallio sends a
+ * claim itself when the practice sends it through a connected clearinghouse,
+ * and reads that clearinghouse's answers and the payer's 835 back; anything
+ * else is still what the org typed.
  */
 export const SUBMISSION_DISCLOSURE =
-  "Pallio does not send claims to payers. Submit each claim through your clearinghouse or the payer's portal, then record what happened here. Statuses and paid amounts are what your team recorded.";
+  "Pallio sends a claim only when you send it through a connected clearinghouse, and then reads the clearinghouse's acknowledgments and the payer's 835 back. A claim you submit through your clearinghouse or the payer's portal yourself, record here. Statuses and paid amounts that did not come from those files are what your team recorded.";
 
 /**
  * The confirm before "Record paid in full" (audit R35). It writes paid =

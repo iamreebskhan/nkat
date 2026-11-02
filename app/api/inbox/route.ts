@@ -12,6 +12,7 @@ export async function GET(): Promise<Response> {
     userId: session.userId,
     canSeeDenials: session.permissions.includes("billing.denials.view"),
     canAttest: session.permissions.includes("knowledge.attest"),
+    canSeePatients: session.permissions.includes("patients.view"),
   });
   return ok({ rows: items, total: items.length });
 }

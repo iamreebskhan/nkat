@@ -618,8 +618,21 @@ INSERT INTO _cy2026_rules (code, attribute, coverage_status, value_json, source_
   ('R0075', 'covered', 'varies', '{"answer":"For CY 2026, CMS did not establish national pricing for HCPCS code R0075 (transportation of portable x-ray equipment and personnel to home or nursing home, per trip, more than one patient seen); the code remains contractor priced by the MACs (observed at roughly $80 to $90 per service), with commenter concerns to inform any future national rate."}', 'the concerns raised by commenters to help inform any establishment of a');
 
 -- 4. Supersede other documents' active rules for the same keys (the final
---    rule is the controlling authority). GREATEST() keeps expiration >=
---    effective for same-day rows (migration 0053).
+--    rule is the controlling authority) — the rules that took effect ON OR
+--    BEFORE it, 2026-01-01. GREATEST() keeps expiration >= effective for
+--    same-day rows (migration 0053).
+--
+--    Never a rule CMS published after it. This step used to expire every
+--    other document's rule on the key, and the CMS RVU26C fee schedule
+--    (payer-rules-fee-schedules-full.sql, effective 2026-07-01) runs just
+--    before this seed in db/seed/MANIFEST. On the 46 codes the final rule
+--    also has a 'covered' row for — 99341, 99350, G0318, 99497, 99498, the
+--    TCM and care-management codes — it expired the July rows, and
+--    db/maintenance/close-rule-timelines.sql then collapsed them to zero
+--    width. Those rows are where value.rate lives. readPayerRates found no
+--    rate on any date of service and every Medicare bill for those codes
+--    was priced from the 2025 reference table: 99350 + G0318 billed
+--    $173.31 on production where the July file pays $227.13.
 UPDATE payer_rule pr
    SET expiration_date = GREATEST(CURRENT_DATE, pr.effective_date)
   FROM _cy2026_rules r
@@ -629,7 +642,26 @@ UPDATE payer_rule pr
    AND pr.code = r.code
    AND pr.attribute = r.attribute
    AND pr.expiration_date IS NULL
+   AND pr.effective_date <= DATE '2026-01-01'
    AND pr.source_doc_id <> 'b0000000-0000-4000-8000-000000002026'::uuid;
+
+-- 4b. Bring back the fee-schedule rows earlier runs of step 4 switched off.
+--     A database that applied the old step 4 holds them expired (or
+--     zero-width, after close-rule-timelines), and nothing else revives
+--     them unless payer-rules-fee-schedules-full.sql itself is applied
+--     again. Only that seed's own rows, on keys this seed writes, dated
+--     after the final rule: what step 4 above no longer touches.
+UPDATE payer_rule pr
+   SET expiration_date = NULL
+  FROM _cy2026_rules r
+ WHERE pr.payer_id = (SELECT id FROM payer WHERE name ILIKE '%medicare%'
+                       ORDER BY (payer_type = 'medicare_mac') DESC, created_at ASC LIMIT 1)
+   AND pr.state = ANY(ARRAY['OH','NC','SC'])
+   AND pr.code = r.code
+   AND pr.attribute = r.attribute
+   AND pr.created_by = 'extract:fee-schedules-full-2026-08'
+   AND pr.effective_date > DATE '2026-01-01'
+   AND pr.expiration_date IS NOT NULL;
 
 -- 5. Insert: one row per rule per state.
 INSERT INTO payer_rule (
@@ -656,6 +688,27 @@ SELECT
   'b0000000-0000-4000-8000-000000002026'::uuid, r.source_quote, 'crawler:cms_pfs'
 FROM _cy2026_rules r
 CROSS JOIN (VALUES ('OH'),('NC'),('SC')) AS s(state);
+
+-- 5b. Where a later rule is live on the same key, this one answers only up
+--     to it: the July RVU26C row takes over on 2026-07-01, and this row
+--     keeps January to June. Without the close both would be live with no
+--     end date, which db/test/0003_rule_supersession.sql refuses and which
+--     close-rule-timelines.sql would only settle on a deploy, never in CI.
+UPDATE payer_rule cy
+   SET expiration_date = later.effective_date
+  FROM (
+    SELECT pr.payer_id, pr.state, pr.code, pr.attribute,
+           min(pr.effective_date) AS effective_date
+      FROM payer_rule pr
+     WHERE pr.expiration_date IS NULL
+       AND pr.effective_date > DATE '2026-01-01'
+       AND pr.source_doc_id <> 'b0000000-0000-4000-8000-000000002026'::uuid
+     GROUP BY pr.payer_id, pr.state, pr.code, pr.attribute
+  ) later
+ WHERE cy.source_doc_id = 'b0000000-0000-4000-8000-000000002026'::uuid
+   AND cy.expiration_date IS NULL
+   AND (cy.payer_id, cy.state, cy.code, cy.attribute)
+     = (later.payer_id, later.state, later.code, later.attribute);
 
 -- 6. Mark the source document as extracted so /documents shows it correctly
 -- (it produced the rules above; it didn't go through the live pipeline).

@@ -42,6 +42,14 @@ describe("careTeamHeaderRows", () => {
     ]);
   });
 
+  it("names the chaplain beside the palliative provider, only when there is one", () => {
+    const rows = careTeamHeaderRows({ palliativeProvider: "Helen Okafor", chaplain: "Ruth Amos", providers: [], contacts: [] });
+    expect(rows.slice(0, 3).map((r) => r.label)).toEqual(["Palliative care provider", "Chaplain", "Primary care provider"]);
+    expect(rows[1]!.value).toBe("Ruth Amos");
+    const none = careTeamHeaderRows({ palliativeProvider: "Helen Okafor", chaplain: null, providers: [], contacts: [] });
+    expect(none.map((r) => r.label)).not.toContain("Chaplain");
+  });
+
   it("always prints primary care and referring, as — when none is on file", () => {
     const rows = careTeamHeaderRows({ palliativeProvider: null, providers: [], contacts: [] });
     expect(rows).toEqual([

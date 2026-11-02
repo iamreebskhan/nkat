@@ -25,7 +25,7 @@ import { withTransientRetry } from "@/lib/ai/anthropic.client";
 import { assertNoPhi } from "@/lib/ai/phi-guard";
 import { fetchPayerRule } from "@/lib/features/billing/payer-rule.repository";
 import { fetchOrgRule } from "@/lib/features/rulebook/org-rule.repository";
-import { describeDenialHeuristic, lookupCarc } from "@/lib/features/denials/denial-pure";
+import { describeDenialHeuristic, lookupCarc, lookupRarc } from "@/lib/features/denials/denial-pure";
 import type { AiRecommendation } from "@/lib/features/denials/denial.types";
 import { env } from "@/lib/env";
 
@@ -90,6 +90,7 @@ const SYSTEM_PROMPT = [
   'Format your response as JSON only: {"likely_cause": string, "explanation": string, "recommendation": "refile"|"write_off"|"appeal"|"unknown", "citation": {"document_name": string, "verbatim_quote": string} | null}.',
   "If no payer rule was provided, return citation: null and recommendation: \"unknown\". Never invent a rule.",
   "If you would need PHI to answer, set recommendation to \"unknown\" and explain in `explanation`.",
+  "Explain a CARC or RARC only from the wording given with it. A remark code given without wording is unexplained: refer to it by code and do not say what it means.",
 ].join(" ");
 
 /**
@@ -165,23 +166,42 @@ export async function analyzeDenial(
           .join("\n")
       : null;
 
-  const userMsg = [
+  // The RARC goes with its wording, or is marked as having none: handed the
+  // bare code, the model explained MA130 ("unprocessable — submit a new
+  // claim") as a missing patient reason for visit.
+  const rarcText = lookupRarc(input.rarcCode);
+  const signal = [
     `Denial signal:`,
     `  CPT: ${input.cptCode}`,
-    `  CARC: ${input.carcCode}${input.rarcCode ? ` / RARC: ${input.rarcCode}` : ""}`,
+    `  CARC: ${input.carcCode}${carcEntry.category !== "other" ? ` — ${carcEntry.text}` : ""}`,
+    input.rarcCode
+      ? `  RARC: ${input.rarcCode} — ${rarcText ?? "(wording not on file; do not interpret this code)"}`
+      : null,
     `  Reason: ${input.denialReason ?? "(none provided)"}`,
     input.icd10Codes && input.icd10Codes.length > 0
       ? `  ICD-10 codes: ${input.icd10Codes.join(", ")}`
       : null,
-    "",
-    ruleSummary ? `Payer rule (effective at DOS):\n${ruleSummary}` : "Payer rule: NONE_AVAILABLE",
   ]
     .filter(Boolean)
     .join("\n");
+  const ruleBlock = ruleSummary ? `Payer rule (effective at DOS):\n${ruleSummary}` : "Payer rule: NONE_AVAILABLE";
+  const userMsg = `${signal}\n${ruleBlock}`;
 
   let response: Anthropic.Messages.Message;
   try {
-    assertNoPhi(userMsg, "denialAnalyst");
+    // What came from the claim is held to the prompt bar, and so is a rule
+    // from the practice's own rulebook, typed here like the claim. A rule from
+    // Pallio's library quotes a payer's public document, which is made of
+    // dates ("revised 01/01/2026"), and is held to the document bar it passed
+    // at ingestion (phi-guard.ts). Read as a prompt, that one date refused
+    // every analysis matched to CareSource Ohio's fee schedule, and the
+    // heuristic was shown instead.
+    if (orgRule || !ruleSummary) {
+      assertNoPhi(userMsg, "denialAnalyst");
+    } else {
+      assertNoPhi(signal, "denialAnalyst");
+      assertNoPhi(ruleBlock, "denialAnalyst.rule", "document");
+    }
     response = await withTransientRetry(() =>
       client().messages.create({
         model: MODEL,
@@ -190,8 +210,11 @@ export async function analyzeDenial(
         messages: [{ role: "user", content: userMsg }],
       }),
     );
-  } catch {
-    // Network / API error — fall back so the workflow doesn't block.
+  } catch (err) {
+    // Network or API error, or the PHI guard refusing — fall back so the
+    // workflow doesn't block. The screen only says the AI was unavailable, so
+    // the log says why. A guard refusal names its pattern, never the text.
+    console.warn(`denialAnalyst: AI not used — ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
     return {
       text: `${heuristic.heuristic} (AI unavailable; heuristic shown.)`,
       likelyCause: heuristic.heuristic,

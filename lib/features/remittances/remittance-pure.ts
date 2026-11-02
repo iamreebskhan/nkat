@@ -192,7 +192,10 @@ export function planPosting(
   }
   if (status === "partially_paid" && (outcome === "partially_paid" || outcome === "paid")) {
     return {
-      needsReview: "A partial payment is already recorded on this bill. Add this one to it by hand.",
+      // Held, not added: a payer's second 835 may restate the claim rather than
+      // add to it, and only a person with both in front of them can tell.
+      needsReview:
+        "A partial payment is already recorded on this bill. If this is a further payment and not a restatement of the first, add it with Record another payment in the Superbills queue.",
     };
   }
   if (status === "denied" && outcome === "denied") return { steps: [] };

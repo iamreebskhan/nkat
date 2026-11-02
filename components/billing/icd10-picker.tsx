@@ -5,13 +5,16 @@
  * Type ≥2 chars → debounced search of the icd10 reference table; click a
  * result to add it. Selected codes show as removable chips. Codes are
  * validated against the reference (free-typed unknown codes are still
- * allowed via Enter, mirroring clinical override behavior).
+ * allowed via Enter, mirroring clinical override behavior) — in the dotted
+ * ICD-10-CM form, and only when shaped like a code: "i509" is added as
+ * I50.9, "heart failure" is not added at all.
  */
 "use client";
 
 import { Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { normalizeIcd10 } from "@/lib/features/billing/icd10-format";
 import { cn } from "@/lib/utils";
 
 interface Match {
@@ -110,8 +113,9 @@ export function Icd10Picker({ selected, onChange, disabled }: Props) {
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              // Add exact-typed code (uppercase, ICD-10 shape) as override.
-              if (/^[A-Z]\d/i.test(query.trim())) add(query);
+              // Add the typed code as an override, dotted, if it is one.
+              const typed = normalizeIcd10(query);
+              if (typed) add(typed);
             }
           }}
           placeholder="Search ICD-10 (e.g. Z51.5, neoplasm)…"
@@ -124,7 +128,9 @@ export function Icd10Picker({ selected, onChange, disabled }: Props) {
           {loading && <li className="px-3 py-2 text-xs text-slate-400">Searching…</li>}
           {!loading && matches.length === 0 && (
             <li className="px-3 py-2 text-xs text-slate-400">
-              No match. Press Enter to add &ldquo;{query.trim().toUpperCase()}&rdquo; anyway.
+              {normalizeIcd10(query)
+                ? <>No match. Press Enter to add &ldquo;{normalizeIcd10(query)}&rdquo; anyway.</>
+                : <>No match, and &ldquo;{query.trim()}&rdquo; is not an ICD-10-CM code.</>}
             </li>
           )}
           {matches.map((m) => (

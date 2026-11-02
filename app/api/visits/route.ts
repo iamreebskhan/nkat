@@ -11,6 +11,7 @@ import {
   getBusyForClinician,
   pushVisitToGoogle,
 } from "@/lib/features/calendar/google-calendar.service";
+import { isOnClinicalCareTeam, SCHEDULE_ANY_VISIT } from "@/lib/features/visits/visit-access";
 import {
   getDailyCapacityStatus,
   listVisits,
@@ -67,26 +68,42 @@ export async function GET(req: NextRequest): Promise<Response> {
   if (session instanceof Response) return session;
   const canSeeAll = session.permissions.includes("visits.view.all");
   const canSeeOwn = session.permissions.includes("visits.view.own");
-  if (!canSeeAll && !canSeeOwn) {
+  // The practice's scheduler sees every clinician's BOOKED visits — the
+  // schedule board — and no other list (visit-access.ts SCHEDULE_ANY_VISIT).
+  const canSeeBoard = session.permissions.includes(SCHEDULE_ANY_VISIT);
+  if (!canSeeAll && !canSeeOwn && !canSeeBoard) {
     return fail("Permission denied", { status: 403 });
   }
 
   const url = new URL(req.url);
   const params = parseSearchParams(url, ListSchema);
   if (params instanceof Response) return params;
+  const seesBoard = !canSeeAll && canSeeBoard && params.status === "scheduled";
 
   // If only .own, force the filter to this user. The count has to be given the
   // same narrowed value, or a clinician would be told how many visits the whole
-  // org has while being shown only their own.
-  const clinicianUserId = canSeeAll ? params.clinicianUserId : session.userId;
+  // org has while being shown only their own. One patient's list is the
+  // exception: a member in the patient's clinical care team reads all of the
+  // patient's visits (visit-access.ts mayReadVisit, Level-1 doc:49).
+  const readsWholePatient =
+    !canSeeAll &&
+    !!params.patientId &&
+    (await isOnClinicalCareTeam({ orgId: session.orgId, patientId: params.patientId, userId: session.userId }));
+  const clinicianUserId =
+    canSeeAll || readsWholePatient || seesBoard ? params.clinicianUserId : session.userId;
 
-  const visits = await listVisits({
+  const listed = await listVisits({
     orgId: session.orgId,
     patientId: params.patientId,
     status: params.status,
     clinicianUserId,
     limit: params.limit,
   });
+  // The board is who and when, not what was written: a booked visit's note is
+  // normally empty, and any text in another clinician's stays theirs.
+  const visits = seesBoard
+    ? listed.map((v) => (v.clinicianUserId === session.userId ? v : { ...v, documentText: null }))
+    : listed;
   // Sequential, not Promise.all: each of these opens its own withOrgContext
   // transaction to set the tenant GUC, and firing them together exhausted the
   // Prisma pool on the claims screen (P2028), which then rendered as an empty
@@ -97,7 +114,20 @@ export async function GET(req: NextRequest): Promise<Response> {
     status: params.status,
     clinicianUserId,
   });
-  return ok({ rows: visits, total });
+  // One chart, opened by someone outside its care team, lists only their own
+  // visits, and "on file" has to mean on file: the chart is told how many more
+  // it holds, never which, so it cannot read "No visits yet" over a colleague's
+  // five. Behind the chart's own gate, like the vitals trend and the visit-type
+  // hint, which are drawn from every clinician's visits too.
+  const withheld =
+    params.patientId &&
+    !canSeeAll &&
+    !readsWholePatient &&
+    !seesBoard &&
+    session.permissions.includes("patients.view")
+      ? (await countVisits({ orgId: session.orgId, patientId: params.patientId, status: params.status })) - total
+      : 0;
+  return ok({ rows: visits, total, withheld });
 }
 
 export async function POST(req: NextRequest): Promise<Response> {

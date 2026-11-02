@@ -67,6 +67,36 @@ describe("listAuditLog — canonical ids and free text (review fixes)", () => {
     expect(calls[0]!.sql).toContain("a.payload->>'fromVisitId' = (¶::uuid)::text");
   });
 
+  // The cursor was the last row's time cut to milliseconds and read as "older
+  // than", so a row sharing that millisecond with the end of a page was on
+  // neither page: 13 of 30 page sizes lost rows on the Design Partner org's
+  // real log on localhost. It is now the time to the microsecond plus the id.
+  it("pages on the time to the microsecond and the id, and resumes strictly after that row", async () => {
+    const ID = "5f0e8b1a-2c3d-4e5f-8a9b-0c1d2e3f4a5b";
+    rowsOut = [
+      {
+        id: ID, user_email: null, action: "login", target_type: null, target_id: null, payload: {},
+        ip_address: null, user_agent: null, occurred_at: new Date("2026-10-27T12:00:00.123Z"),
+        at_micros: "2026-10-27T12:00:00.123456Z",
+      },
+    ];
+    const page = await listAuditLog({ orgId: ORG, limit: 1 });
+    expect(page.nextCursor).toBe(`2026-10-27T12:00:00.123456Z|${ID}`);
+    expect((await listAuditLog({ orgId: ORG, limit: 2 })).nextCursor).toBeNull();
+
+    await listAuditLog({ orgId: ORG, cursor: page.nextCursor! });
+    const { sql, values } = calls[calls.length - 1]!;
+    expect(sql).toContain("(a.occurred_at, a.id) < (");
+    expect(sql).toContain("ORDER BY a.occurred_at DESC, a.id DESC");
+    expect(values).toContain("2026-10-27T12:00:00.123456Z");
+    expect(values).toContain(ID);
+  });
+
+  it("refuses a cursor it did not hand out, rather than casting it inside the query", async () => {
+    await expect(listAuditLog({ orgId: ORG, cursor: "2026-10-27T12:00:00.000Z" })).rejects.toThrow(/malformed cursor/);
+    expect(calls).toHaveLength(0);
+  });
+
   it("strips free-text keys from payloads before they leave the server", async () => {
     rowsOut = [
       {

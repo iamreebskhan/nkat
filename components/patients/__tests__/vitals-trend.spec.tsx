@@ -21,7 +21,7 @@ const row = (o: Record<string, unknown>) => ({
   visitId: "v1", dateOfService: "2026-09-09T10:00:00.000Z", recordedAt: "2026-09-09T10:00:00.000Z",
   heightCm: null, weightKg: null, bpSystolic: null, bpDiastolic: null,
   heartRate: null, respRate: null, temperatureC: null, spo2Percent: null,
-  ppsPercent: null, painScore: null, notes: null, ...o,
+  ppsPercent: null, painScore: null, dyspneaScore: null, nauseaScore: null, notes: null, ...o,
 });
 
 let trend: Record<string, unknown>[];
@@ -220,6 +220,31 @@ describe("VitalsTrend", () => {
     const down = await screen.findByText(/Down/);
     expect(down.textContent).toContain("2026-07-09");
     expect(down.textContent).toContain("not the first on file");
+  });
+
+  it("shows each symptom score now and where it started, better or worse (doc:83, 0113)", async () => {
+    trend = [
+      row({ visitId: "c", painScore: 3, dyspneaScore: 7, nauseaScore: 0, dateOfService: "2026-09-09T10:00:00.000Z" }),
+      row({ visitId: "b", painScore: null, dyspneaScore: 5, dateOfService: "2026-08-09T10:00:00.000Z" }),
+      row({ visitId: "a", painScore: 6, dyspneaScore: 4, nauseaScore: 0, dateOfService: "2026-07-09T10:00:00.000Z" }),
+    ];
+    render(<VitalsTrend patientId={PATIENT} />);
+    const line = await screen.findByLabelText("Symptom scores");
+    expect(line.textContent).toContain("Pain 3/10 (from 6)");
+    expect(line.textContent).toContain("Shortness of breath 7/10 (from 4)");
+    // Unchanged reads as the score alone, not "(from 0)".
+    expect(line.textContent).toContain("Nausea 0/10");
+    expect(line.textContent).not.toContain("Nausea 0/10 (from");
+    const head = (await screen.findAllByRole("row"))[0]!;
+    expect(head.textContent).toContain("Shortness of breath");
+    expect(head.textContent).toContain("Nausea");
+  });
+
+  it("CONTROL: no symptom line when no symptom was ever scored", async () => {
+    trend = [row({ weightKg: 68.04 })];
+    render(<VitalsTrend patientId={PATIENT} />);
+    await screen.findByText(/150 lb/);
+    expect(screen.queryByLabelText("Symptom scores")).toBeNull();
   });
 
   it("does not disclaim the weight change when nothing is behind the cap", async () => {

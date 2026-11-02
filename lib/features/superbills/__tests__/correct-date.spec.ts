@@ -57,6 +57,8 @@ function fakeTx() {
       }]);
     }
     if (sql.includes("SELECT payer_type FROM payer")) return Promise.resolve([{ payer_type: "medicaid_mco" }]);
+    // The practice's own fees (0118): this practice has none.
+    if (sql.includes("FROM practice_fee")) return Promise.resolve([]);
     if (sql.includes("FROM payer_rule pr")) {
       // `effective_date <= ¶::date`: the day the rates are read for.
       const at = sql.slice(0, sql.indexOf("pr.effective_date <= ¶")).split("¶").length - 1;
@@ -101,7 +103,14 @@ const writes = () => calls.filter((c) => /UPDATE superbill|INSERT INTO superbill
 describe("correctDateOfService", () => {
   it("re-dates a draft to its visit's day and reprices it at that day's rate", async () => {
     const r = await correct();
-    expect(r).toEqual({ from: "2026-09-23", to: "2026-09-22", billedAmountCents: 7013, status: "draft" });
+    // No practice fee on file, so the payer is expected to pay what is billed.
+    expect(r).toEqual({
+      from: "2026-09-23",
+      to: "2026-09-22",
+      billedAmountCents: 7013,
+      expectedAmountCents: 7013,
+      status: "draft",
+    });
     expect(bill).toMatchObject({ dos: "2026-09-22", billed: 7013 });
     // The rates were read for the corrected day, not the old one.
     expect(ratesAskedFor).toEqual(["2026-09-22"]);

@@ -15,6 +15,7 @@ import { z } from "zod";
 
 import { ok, parseJson, handleServiceError, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+import { ReviewWarningsError } from "@/lib/features/billing/claim-checks.service";
 import {
   SUPERBILL_STATUSES,
   markStatus,
@@ -30,6 +31,8 @@ const Body = z
     paidAmountCents: z.number().int().min(0).max(100_000_000).optional(),
     /** Submit over a payer documentation gap, with the reason (audit R19). */
     documentationOverride: z.object({ reason: z.string().trim().min(10).max(500) }).optional(),
+    /** Mark ready over the review's warnings, with the reason (0118, Mark Q5). */
+    reviewOverride: z.object({ reason: z.string().trim().min(10).max(500) }).optional(),
     /** "Yes, the payer paid more than this claim billed" — see markStatus. */
     overpaymentAcknowledged: z.boolean().optional(),
     /**
@@ -70,14 +73,21 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
       documentationOverride: body.documentationOverride,
       overpaymentAcknowledged: body.overpaymentAcknowledged,
       paidInFull: body.paidInFull,
+      reviewOverride: body.reviewOverride,
     });
     return ok(r);
   } catch (err) {
-    // The one refusal a screen can act on: it offers to submit with a reason.
-    // A stable field, so the page never matches on the message's wording.
+    // The refusals a screen can act on: it offers to go ahead with a reason.
+    // Stable fields, so the page never matches on the message's wording.
     if (err instanceof DocumentationIncompleteError) {
       return NextResponse.json(
         { success: false, data: { documentationIncomplete: err.gap }, error: err.message },
+        { status: 422 },
+      );
+    }
+    if (err instanceof ReviewWarningsError) {
+      return NextResponse.json(
+        { success: false, data: { reviewWarnings: err.warnings }, error: err.message },
         { status: 422 },
       );
     }

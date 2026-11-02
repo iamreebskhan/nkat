@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { FieldMarker } from "@/components/forms/field-marker";
+import { PasswordInput } from "@/components/forms/password-input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface Me {
@@ -142,13 +143,13 @@ export default function AccountPage() {
         <CardContent>
           <form onSubmit={savePw} className="space-y-4">
             <Field label="Current password" required>
-              <input required type="password" value={cur} onChange={(e) => setCur(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
+              <PasswordInput required value={cur} onChange={(e) => setCur(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
             </Field>
             <Field label="New password (min 12 chars)" required>
-              <input required type="password" minLength={12} value={pw1} onChange={(e) => setPw1(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
+              <PasswordInput required minLength={12} value={pw1} onChange={(e) => setPw1(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
             </Field>
             <Field label="Confirm new password" required>
-              <input required type="password" minLength={12} value={pw2} onChange={(e) => setPw2(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
+              <PasswordInput required minLength={12} value={pw2} onChange={(e) => setPw2(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm font-mono" />
             </Field>
             {pwMsg && (
               <div role="alert" className={`text-sm px-3 py-2 rounded ${pwMsg.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>

@@ -84,6 +84,38 @@ describe("denialRateTrend", () => {
     });
     expect(series[0].value).toBe(25);
   });
+
+  // A window past 92 days is drawn a bar a month (report-range.ts): each
+  // month's rate is its own denied $ over its own billed $, never an average
+  // of daily rates, and a month with nothing billed is still drawn.
+  it("by month: a point per calendar month the window touches, each month's $ over its $", () => {
+    const series = denialRateTrend({
+      superbills: [
+        { payerId: PAYER_A, status: "submitted", billedAmountCents: 100_00, paidAmountCents: null, dateOfService: "2026-01-05" },
+        { payerId: PAYER_A, status: "submitted", billedAmountCents: 300_00, paidAmountCents: null, dateOfService: "2026-01-28" },
+        { payerId: PAYER_A, status: "paid", billedAmountCents: 200_00, paidAmountCents: 200_00, dateOfService: "2026-03-10" },
+      ],
+      denials: [
+        // $40 of January's $400: 10%, though it is 40% of the 5 Jan bill alone.
+        denial({ deniedAmountCents: 40_00, claimDateOfService: "2026-01-05" }),
+      ],
+      fromDate: new Date("2026-01-15T00:00:00Z"),
+      toDate: new Date("2026-04-02T00:00:00Z"),
+      bucket: "month",
+    });
+    expect(series.map((p) => p.date)).toEqual(["2026-01", "2026-02", "2026-03", "2026-04"]);
+    expect(series.map((p) => p.value)).toEqual([10, 0, 0, 0]);
+  });
+
+  it("CONTROL: by day by default", () => {
+    const series = denialRateTrend({
+      superbills: [],
+      denials: [],
+      fromDate: new Date("2026-01-30T00:00:00Z"),
+      toDate: new Date("2026-02-02T00:00:00Z"),
+    });
+    expect(series.map((p) => p.date)).toEqual(["2026-01-30", "2026-01-31", "2026-02-01", "2026-02-02"]);
+  });
 });
 
 describe("denialsByPayer", () => {

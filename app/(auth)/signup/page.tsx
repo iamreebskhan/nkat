@@ -10,6 +10,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { PasswordInput } from "@/components/forms/password-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -71,9 +72,8 @@ export default function SignupPage() {
               />
             </Field>
             <Field label="Password (min 12 characters)" required>
-              <input
+              <PasswordInput
                 required
-                type="password"
                 minLength={12}
                 value={form.password}
                 onChange={(e) => setForm({ ...form, password: e.target.value })}

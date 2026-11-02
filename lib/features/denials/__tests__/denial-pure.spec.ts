@@ -38,6 +38,14 @@ describe("lookupCarc", () => {
   it("classifies missing-info as refile", () => {
     expect(lookupCarc("16").defaultRecommendation).toBe("refile");
   });
+
+  // Read "Unknown CARC 252. See CMS WPC list at cms.gov." on the denial page.
+  it("knows CARC 252, a payer asking for documentation", () => {
+    const e = lookupCarc("252");
+    expect(e.text).toBe("An attachment/other documentation is required to adjudicate this claim/service.");
+    expect(e.category).toBe("missing_info");
+    expect(e.defaultRecommendation).toBe("refile");
+  });
 });
 
 describe("describeDenialHeuristic", () => {
@@ -82,7 +90,29 @@ describe("computeDenialMetrics", () => {
     const m = computeDenialMetrics([]);
     expect(m.total).toBe(0);
     expect(m.totalDeniedCents).toBe(0);
+    expect(m.totalRecoveredCents).toBe(0);
     expect(m.byCarc).toEqual([]);
     expect(m.byPayerId).toEqual([]);
+  });
+
+  it("counts what came back, and what is still out, per payer", () => {
+    const m = computeDenialMetrics([
+      { carcCode: "16", payerId: "p1", deniedAmountCents: 10_000, decision: "refile", outcome: "paid", outcomeAmountCents: 10_000 },
+      { carcCode: "16", payerId: "p1", deniedAmountCents: 4_000, decision: "refile", outcome: "partially_paid", outcomeAmountCents: 1_000 },
+      // Paid with no amount: the payer settled two lines at once. Counted in full.
+      { carcCode: "50", payerId: "p1", deniedAmountCents: 2_000, decision: "appeal", outcome: "paid", outcomeAmountCents: null },
+      { carcCode: "29", payerId: "p1", deniedAmountCents: 3_000, decision: "write_off", outcome: "written_off" },
+      { carcCode: "16", payerId: "p1", deniedAmountCents: 5_000, decision: "pending" },
+    ]);
+    expect(m.totalRecoveredCents).toBe(13_000);
+    expect(m.byPayerId[0]).toMatchObject({ deniedCents: 24_000, recoveredCents: 13_000, outstandingCents: 11_000 });
+  });
+
+  it("does not let an overpayment on one denial pay off another", () => {
+    const m = computeDenialMetrics([
+      { carcCode: "16", payerId: "p1", deniedAmountCents: 1_000, decision: "refile", outcome: "paid", outcomeAmountCents: 1_500 },
+      { carcCode: "16", payerId: "p1", deniedAmountCents: 1_000, decision: "pending" },
+    ]);
+    expect(m.byPayerId[0]).toMatchObject({ recoveredCents: 1_500, outstandingCents: 1_000 });
   });
 });

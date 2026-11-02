@@ -90,10 +90,11 @@ function demoDb(): FakeDb {
       ],
     },
     clinician_profile: {
-      columns: ["org_id", "user_id", "npi", "credential"],
+      // taxonomy_code since 0118.
+      columns: ["org_id", "user_id", "npi", "credential", "taxonomy_code"],
       rows: [
-        { org_id: ORG, user_id: ADMIN, npi: "1234567893", credential: "MD" },
-        { org_id: OTHER_ORG, user_id: MULTI, npi: "1245319599", credential: "NP" },
+        { org_id: ORG, user_id: ADMIN, npi: "1234567893", credential: "MD", taxonomy_code: "207RH0002X" },
+        { org_id: OTHER_ORG, user_id: MULTI, npi: "1245319599", credential: "NP", taxonomy_code: null },
       ],
     },
   };
@@ -127,7 +128,7 @@ describe("listMembers — org_member is the roster of record", () => {
     ]);
   });
 
-  it("still carries the billing identity the roster renders (audit R40, R25)", async () => {
+  it("still carries the billing identity the roster renders (audit R40, R25; taxonomy 0118)", async () => {
     const rows = await listMembers({ orgId: ORG });
     const admin = rows.find((r) => r.email === "admin@design-partner.test");
     expect(admin).toEqual({
@@ -137,6 +138,7 @@ describe("listMembers — org_member is the roster of record", () => {
       permissions: ["patients.list", "team.view"],
       npi: "1234567893",
       credential: "MD",
+      taxonomyCode: "207RH0002X",
     });
   });
 
@@ -158,6 +160,7 @@ describe("listMembers — org_member is the roster of record", () => {
         permissions: ["visits.view.own"],
         npi: null,
         credential: null,
+        taxonomyCode: null,
       },
     ]);
   });

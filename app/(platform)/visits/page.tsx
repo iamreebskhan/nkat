@@ -68,7 +68,7 @@ export default function VisitsPage() {
         </p>
       )}
 
-      {!loading && visits.length === 0 && (
+      {!loading && !error && visits.length === 0 && (
         <Card>
           <CardHeader>
             <CardTitle>No visits assigned</CardTitle>
@@ -99,17 +99,23 @@ export default function VisitsPage() {
                       className="py-2 flex items-center justify-between text-sm"
                     >
                       <div>
-                        <span className="font-medium">
-                          {v.visitType.replace(/_/g, " ")}
-                        </span>
+                        <span className="font-medium">{v.visitTypeLabel}</span>
                         <span className="text-slate-500 tabular">
                           {" · "}
-                          {(
-                            v.scheduledStart ??
-                            v.startTime ??
-                            v.createdAt
-                          ).slice(0, 16).replace("T", " ")}
+                          {/* The practice's clock (VisitView.serviceAt). This
+                              sliced the ISO string, which is UTC: an 8:30 pm
+                              Ohio visit read as 00:30 the next day. A PCM/CCM
+                              month (0117) has a date of service and no visit
+                              time: its noon is only where the day is kept. */}
+                          {v.codingBasis === "care_management"
+                            ? `date of service ${v.serviceDay ?? "—"}`
+                            : (v.serviceAt ?? v.serviceDay ?? "not scheduled")}
                         </span>
+                        {OTHER_STATUS_WORDS[v.status] && (
+                          <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                            {OTHER_STATUS_WORDS[v.status]}
+                          </span>
+                        )}
                         <span className="text-slate-500"> · </span>
                         <Link
                           href={`/patients/${v.patientId}`}
@@ -124,7 +130,8 @@ export default function VisitsPage() {
                         </Link>
                       </div>
                       <Link
-                        href={`/visits/${v.id}/document`}
+                        // A PCM/CCM month is read, never documented (0117).
+                        href={`/visits/${v.id}/${v.codingBasis === "care_management" ? "view" : "document"}`}
                         className="text-xs text-[var(--color-brand-700)] hover:underline"
                       >
                         Open →
@@ -140,6 +147,17 @@ export default function VisitsPage() {
     </div>
   );
 }
+
+/**
+ * The statuses the "Other" card holds, said on each row. A billed visit and a
+ * cancelled one sat side by side with nothing to tell them apart, each with
+ * the same "Open →".
+ */
+const OTHER_STATUS_WORDS: Partial<Record<VisitView["status"], string>> = {
+  billed: "billed",
+  cancelled: "cancelled",
+  no_show: "no-show",
+};
 
 function bucketize(visits: VisitView[]): {
   label: string;

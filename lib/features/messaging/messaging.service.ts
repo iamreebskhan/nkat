@@ -12,12 +12,19 @@
 import { NotFoundError, ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 
+import { findMentions, type Mentionable } from "./mentions";
+
 const EDIT_WINDOW_MS = 5 * 60 * 1000;
 
 export interface MessageView {
   id: string;
   threadId: string;
   authorUserId: string;
+  /**
+   * The author's name (email when they have none). The panel printed the
+   * first 8 characters of their user id.
+   */
+  authorName: string | null;
   body: string;
   mentionedUserIds: string[];
   readBy: string[];
@@ -29,6 +36,7 @@ interface MessageRow {
   id: string;
   thread_id: string;
   author_user_id: string;
+  author_name: string | null;
   body: string;
   mentioned_user_ids: string[];
   read_by: string[];
@@ -41,6 +49,7 @@ function rowToView(r: MessageRow): MessageView {
     id: r.id,
     threadId: r.thread_id,
     authorUserId: r.author_user_id,
+    authorName: r.author_name,
     body: r.body,
     mentionedUserIds: r.mentioned_user_ids,
     readBy: r.read_by,
@@ -50,32 +59,34 @@ function rowToView(r: MessageRow): MessageView {
 }
 
 /**
- * Resolve @mentions in the body to user_ids. We accept @full-name or
- * @email; the resolver looks up org members by either. Unknown
- * @mentions are silently ignored (no PII leak about who is on the team).
+ * The org's active members, who a message can mention: what the composer
+ * suggests and what a mention is matched against.
+ */
+export async function listMentionable(orgId: string): Promise<Mentionable[]> {
+  return withOrgContext(orgId, async (tx) => {
+    const rows = await tx.$queryRaw<{ id: string; full_name: string | null; email: string }[]>`
+      SELECT u.id, u.full_name, u.email
+        FROM app_user u
+        JOIN org_member m ON m.user_id = u.id
+       WHERE m.org_id = ${orgId}::uuid
+         AND m.status = 'active'
+       ORDER BY lower(COALESCE(u.full_name, u.email))
+    `;
+    return rows.map((r) => ({ userId: r.id, fullName: r.full_name, email: r.email }));
+  });
+}
+
+/**
+ * Resolve @mentions in the body to user_ids: a member's full name, email, or
+ * a first name only one member has (mentions.ts). Unknown @mentions are
+ * silently ignored (no PII leak about who is on the team).
  */
 async function resolveMentions(args: {
   orgId: string;
   body: string;
 }): Promise<string[]> {
-  const tokens = Array.from(args.body.matchAll(/@([\w@.+-]{2,80})/g)).map(
-    (m) => m[1],
-  );
-  if (tokens.length === 0) return [];
-  return withOrgContext(args.orgId, async (tx) => {
-    const rows = await tx.$queryRaw<{ id: string }[]>`
-      SELECT DISTINCT u.id
-        FROM app_user u
-        JOIN org_member m ON m.user_id = u.id
-       WHERE m.org_id = ${args.orgId}::uuid
-         AND m.status = 'active'
-         AND (
-           lower(u.email) = ANY(${tokens.map((t) => t.toLowerCase())}::text[])
-           OR lower(u.full_name) = ANY(${tokens.map((t) => t.toLowerCase())}::text[])
-         )
-    `;
-    return rows.map((r) => r.id);
-  });
+  if (!args.body.includes("@")) return [];
+  return findMentions(args.body, await listMentionable(args.orgId));
 }
 
 async function ensureThread(args: {
@@ -115,11 +126,13 @@ export async function listMessages(args: {
     if (!t[0]) return { messages: [], threadId: null };
     const threadId = t[0].id;
     const rows = await tx.$queryRaw<MessageRow[]>`
-      SELECT id, thread_id, author_user_id, body, mentioned_user_ids,
-             read_by, edited_at, created_at
-        FROM patient_message
-       WHERE thread_id = ${threadId}::uuid
-       ORDER BY created_at ASC
+      SELECT pm.id, pm.thread_id, pm.author_user_id,
+             COALESCE(u.full_name, u.email) AS author_name,
+             pm.body, pm.mentioned_user_ids, pm.read_by, pm.edited_at, pm.created_at
+        FROM patient_message pm
+        LEFT JOIN app_user u ON u.id = pm.author_user_id
+       WHERE pm.thread_id = ${threadId}::uuid
+       ORDER BY pm.created_at ASC
        LIMIT ${limit}
     `;
     // Mark each as read by the caller (idempotent).
@@ -153,8 +166,9 @@ export async function postMessage(args: {
         ${args.orgId}::uuid, ${threadId}::uuid, ${args.userId}::uuid,
         ${args.body}, ${mentions}::uuid[], ARRAY[${args.userId}::uuid]::uuid[]
       )
-      RETURNING id, thread_id, author_user_id, body, mentioned_user_ids,
-                read_by, edited_at, created_at
+      RETURNING id, thread_id, author_user_id,
+                (SELECT COALESCE(full_name, email) FROM app_user WHERE id = author_user_id) AS author_name,
+                body, mentioned_user_ids, read_by, edited_at, created_at
     `;
     await tx.$executeRaw`
       UPDATE patient_thread SET last_message_at = now()

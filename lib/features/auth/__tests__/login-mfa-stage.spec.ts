@@ -25,6 +25,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/db", () => ({ prisma: {}, withOrgContext: vi.fn() }));
 vi.mock("@/lib/features/auth/auth.service", () => ({ login: vi.fn() }));
+vi.mock("@/lib/features/auth/mfa-enrol-token", () => ({ signEnrolToken: vi.fn().mockResolvedValue("enrol-pass") }));
 
 import { POST } from "@/app/api/auth/login/route";
 import { login } from "@/lib/features/auth/auth.service";
@@ -77,6 +78,24 @@ describe("POST /api/auth/login — the MFA challenge the login form reads", () =
     expect(r.status).toBe(401);
     expect(stageFlip.test.test(r.error)).toBe(false);
     expect(r.error).not.toBe("");
+  });
+
+  it("answers a second factor the role must set up with 403 and the pass the form starts setup with (0121)", async () => {
+    vi.mocked(login).mockResolvedValue({
+      error: "mfa_enrollment_required",
+      userId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      orgId: "11111111-1111-4111-8111-111111111111",
+      email: "nurse@design-partner.test",
+    });
+    const res = await POST(post());
+    const body = await res.json();
+    expect(res.status).toBe(403);
+    expect(body.data).toEqual({ enrolToken: "enrol-pass" });
+    // The page switches on exactly this: a 403 carrying the pass.
+    const src = readFileSync(new URL("../../../../app/(auth)/login/page.tsx", import.meta.url), "utf8");
+    expect(src).toContain('res.status === 403 && typeof data.data?.enrolToken === "string"');
+    // And it is not the code challenge: the form must not flip to a code field.
+    expect(stageFlip.test.test(body.error)).toBe(false);
   });
 
   it("CONTROL — a wrong password does NOT read as the challenge", async () => {

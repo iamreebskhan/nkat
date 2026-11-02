@@ -2,7 +2,7 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { ok, parseSearchParams } from "@/lib/api";
+import { handleServiceError, ok, parseSearchParams } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { isCalendarDay } from "@/lib/features/org/org-date";
 import { getOverview } from "@/lib/features/reports/reports.service";
@@ -24,10 +24,15 @@ export async function GET(req: NextRequest): Promise<Response> {
   // The practice's calendar days, passed through as they came: turned into
   // instants (T00:00:00Z / T23:59:59Z) they landed on other days in any
   // database session not running in UTC.
-  const overview = await getOverview({
-    orgId: session.orgId,
-    fromDay: params.fromDate,
-    toDay: params.toDate,
-  });
-  return ok(overview);
+  try {
+    const overview = await getOverview({
+      orgId: session.orgId,
+      fromDay: params.fromDate,
+      toDay: params.toDate,
+    });
+    return ok(overview);
+  } catch (err) {
+    // A backwards or over-long window is a 422 with its reason (report-range).
+    return handleServiceError(err);
+  }
 }

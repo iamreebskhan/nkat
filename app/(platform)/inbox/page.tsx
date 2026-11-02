@@ -2,7 +2,10 @@
  * /inbox — task feed routed to the current user.
  *
  * Aggregates: open visits the user is the clinician for, attestation
- * requests the user has claimed, and pending denials (if billing.denials.view).
+ * requests the user has claimed, pending denials (if billing.denials.view),
+ * and care between visits (0116): escalation alerts the user was told of,
+ * tasks assigned to them, and the follow-ups and plan reviews their caseload
+ * has due.
  */
 "use client";
 
@@ -10,10 +13,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import type { InboxItemKind } from "@/lib/features/inbox/inbox.service";
 
 interface InboxItem {
   key: string;
-  kind: "visit" | "attestation_request" | "denial" | "attestation_expiring";
+  kind: InboxItemKind;
   title: string;
   subtitle: string;
   href: string;
@@ -25,6 +29,9 @@ const KIND_LABEL: Record<InboxItem["kind"], string> = {
   attestation_request: "Attestation",
   denial: "Denial",
   attestation_expiring: "Expiring",
+  alert: "Escalation",
+  task: "Task",
+  follow_up: "Follow-up",
 };
 
 const KIND_COLORS: Record<InboxItem["kind"], string> = {
@@ -32,6 +39,9 @@ const KIND_COLORS: Record<InboxItem["kind"], string> = {
   attestation_request: "bg-amber-50 text-amber-800 ring-amber-600/30",
   denial: "bg-red-50 text-red-800 ring-red-600/30",
   attestation_expiring: "bg-orange-50 text-orange-800 ring-orange-600/30",
+  alert: "bg-red-50 text-red-800 ring-red-600/30",
+  task: "bg-sky-50 text-sky-800 ring-sky-600/30",
+  follow_up: "bg-violet-50 text-violet-800 ring-violet-600/30",
 };
 
 /**
@@ -70,7 +80,8 @@ export default function InboxPage() {
       <header className="mb-6">
         <h1 className="font-display text-3xl tracking-tight">Inbox</h1>
         <p className="text-slate-600 mt-1">
-          Visits to document, attestations you&rsquo;ve claimed, denials awaiting decision.
+          Escalation alerts, your tasks, follow-ups due, visits to document, attestations you&rsquo;ve claimed,
+          denials awaiting decision.
         </p>
       </header>
 
@@ -87,9 +98,7 @@ export default function InboxPage() {
         </CardHeader>
         <CardContent className="p-0">
           {!loading && items.length === 0 ? (
-            <p className="px-4 py-12 text-center text-sm text-slate-500">
-              Nothing waiting. Schedule a visit, claim an attestation, or wait for a denial.
-            </p>
+            <p className="px-4 py-12 text-center text-sm text-slate-500">Nothing waiting.</p>
           ) : (
             <ul className="divide-y divide-slate-100">
               {items.map((it) => (

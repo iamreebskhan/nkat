@@ -5,6 +5,7 @@ import { type NextRequest } from "next/server";
 
 import { ok, fail, requireUuidParam } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+import { isOnClinicalCareTeam } from "@/lib/features/visits/visit-access";
 import { getVisit } from "@/lib/features/visits/visit.service";
 import { logPhiAccess } from "@/lib/hipaa/phi-access-log";
 
@@ -26,10 +27,16 @@ export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
   if (bad) return bad;
   const visit = await getVisit({ orgId: session.orgId, id });
   if (!visit) return fail("Visit not found.", { status: 404 });
-  // .own permission requires the row's clinician_user_id to match.
+  // .own permission requires the row's clinician_user_id to match, or a seat
+  // on the patient's clinical care team: a read (visit-access.ts mayReadVisit).
   if (
     !session.permissions.includes("visits.view.all") &&
-    visit.clinicianUserId !== session.userId
+    visit.clinicianUserId !== session.userId &&
+    !(await isOnClinicalCareTeam({
+      orgId: session.orgId,
+      patientId: visit.patientId,
+      userId: session.userId,
+    }))
   ) {
     return fail("Permission denied", { status: 403 });
   }

@@ -86,6 +86,9 @@ export default function OnboardingPage() {
           if (s.orgType) setOrgType(s.orgType);
           if (s.customDomain) setCustomDomain(s.customDomain);
           if (s.notes) setNotes(s.notes);
+          // Sign-up already named the org; step 1 asks to confirm it, not retype it.
+          if (s.orgName) setOrgName(s.orgName);
+          if (s.npi) setNpi(s.npi);
         }
       } catch {
         /* ok — wizard works fine starting fresh */
@@ -290,7 +293,7 @@ export default function OnboardingPage() {
       key: "cpt",
       title: "CPT code set",
       description:
-        "We pre-selected the palliative-care core set from Mark's cheat sheet. Deselect codes you don't bill.",
+        "We pre-selected the codes a home-based palliative practice bills most. Deselect codes you don't bill.",
       isValid: () => selectedCpts.size > 0,
       render: () => (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">

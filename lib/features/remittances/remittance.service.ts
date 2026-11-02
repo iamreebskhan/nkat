@@ -108,9 +108,12 @@ interface MatchedBill {
 
 interface ClaimContext {
   orgId: string;
-  userId: string;
+  /** null when no person uploaded it: the clearinghouse poll read it (0120). */
+  userId: string | null;
   fileId: string;
   filename: string;
+  /** Where the file came from, for source_file_uri. */
+  via: "upload" | "sftp";
   traceNumber: string | null;
   /** BPR16, the date the payer issued the file; null when it gives none. */
   paymentDate: string | null;
@@ -143,9 +146,12 @@ function claimDates(claim: Era835Claim): string[] {
 
 export async function ingestRemittance(args: {
   orgId: string;
-  userId: string;
+  /** null when the clearinghouse poll read the file, not a person (0120). */
+  userId: string | null;
   filename: string;
   text: string;
+  /** Read from a clearinghouse's SFTP folder rather than uploaded (0120). */
+  via?: "upload" | "sftp";
 }): Promise<RemittanceReport> {
   if (!ST_835.test(args.text)) {
     throw new ValidationError(
@@ -216,6 +222,7 @@ export async function ingestRemittance(args: {
       userId: args.userId,
       fileId,
       filename,
+      via: args.via ?? "upload",
       traceNumber,
       paymentDate: dateOnly(parsed.header.payment_date),
       seq: i + 1,
@@ -361,8 +368,10 @@ async function postClaim(tx: Tx, c: ClaimContext): Promise<ClaimResult> {
   // A file older than the bill's latest refile is the payer's answer to the
   // claim as first filed (see staleAgainstRefile). Posted, a denial in it
   // would move a refiled bill back to denied and close the refile while the
-  // corrected claim is still with the payer.
-  const stale = staleAgainstRefile(c.paymentDate, await latestRefile(tx, bill.id));
+  // corrected claim is still with the payer. The date decides only when the
+  // payer's own claim number cannot (answersClearinghouseRefile).
+  const answersRefile = await answersClearinghouseRefile(tx, bill.id, c.claim.payer_claim_control_number ?? null, c.fileId);
+  const stale = answersRefile ? null : staleAgainstRefile(c.paymentDate, await latestRefile(tx, bill.id));
   if (stale) return hold(tx, c, "needs_review", stale, bill, verdict);
 
   for (const to of plan.steps) {
@@ -370,7 +379,7 @@ async function postClaim(tx: Tx, c: ClaimContext): Promise<ClaimResult> {
       orgId: c.orgId,
       id: bill.id,
       to,
-      actorUserId: c.userId,
+      actorUserId: c.userId ?? undefined,
       source: c.source,
       ...(to === "paid" || to === "partially_paid" ? { paidAmountCents: verdict.paidCents } : {}),
     });
@@ -481,6 +490,51 @@ async function latestRefile(tx: Tx, billId: string): Promise<Date | null> {
     ) AS at
   `;
   return rows[0]?.at ?? null;
+}
+
+/**
+ * Whether this claim (CLP07) answers the bill's latest refile because the
+ * payer said so: Pallio sent that refile through a clearinghouse (0120), the
+ * payer's 277CA gave it a claim number (REF*1K), and that number is this one.
+ * Then the file adjudicates the corrected claim on whatever day it is dated,
+ * and staleAgainstRefile's date test, which assumes no payer answers a refile
+ * the day it is sent, is not needed.
+ *
+ * Only a number that is the refile's own counts: one an earlier filing or an
+ * earlier remittance of the bill also carried may be the payer reusing the
+ * original claim's number, and then the date decides as before. So does a
+ * refile recorded from the denials screen after the clearinghouse one.
+ *
+ * The refile's own file, or one sent after it: a refile the clearinghouse or
+ * the payer rejected (999, 277CA) goes out again as a new file, and the
+ * payer's number is that file's.
+ */
+async function answersClearinghouseRefile(tx: Tx, billId: string, payerClaimNumber: string | null, fileId: string): Promise<boolean> {
+  const pcn = payerClaimNumber?.trim();
+  if (!pcn) return false;
+  const rows = await tx.$queryRaw<{ answers: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+        FROM (SELECT a.at, a.detail->>'submissionId' AS submission_id
+                FROM superbill_activity a
+               WHERE a.superbill_id = ${billId}::uuid AND a.kind = 'resubmitted'
+               ORDER BY a.at DESC
+               LIMIT 1) l
+        JOIN claim_submission_item i ON i.superbill_id = ${billId}::uuid
+        JOIN claim_submission s ON s.id = i.submission_id
+       WHERE i.payer_claim_number = ${pcn}
+         AND (i.submission_id::text = l.submission_id OR s.created_at > l.at)
+         AND l.at >= COALESCE((SELECT max(d.refiled_at) FROM superbill_denial d WHERE d.superbill_id = ${billId}::uuid), l.at)
+         AND NOT EXISTS (
+           SELECT 1 FROM claim_submission_item e
+            WHERE e.superbill_id = ${billId}::uuid AND e.submission_id <> i.submission_id AND e.payer_claim_number = ${pcn})
+         AND NOT EXISTS (
+           SELECT 1 FROM era_835_record x
+            WHERE x.superbill_id = ${billId}::uuid AND x.payer_claim_control_number = ${pcn}
+              AND x.remittance_file_id IS DISTINCT FROM ${fileId}::uuid)
+    ) AS answers
+  `;
+  return rows[0]?.answers === true;
 }
 
 /**
@@ -915,6 +969,10 @@ async function insertLines(
     const billed = line ? line.billed_amount : claim.billed_amount;
     const paid = line ? line.paid_amount : claim.paid_amount;
     const adjusted = adjustments.reduce((sum, x) => sum + x.amount, 0);
+    // The adjustments by group (0118), as the payer stated them: contractual
+    // (CO), the patient's share (PR), and the rest (OA, PI).
+    const group = (g: string[]) =>
+      adjustments.filter((x) => g.includes(x.group_code)).reduce((sum, x) => sum + x.amount, 0).toFixed(2);
     await tx.$executeRaw`
       INSERT INTO era_835_record (
         org_id, remittance_file_id, claim_seq, line_seq,
@@ -922,6 +980,7 @@ async function insertLines(
         payer_id, superbill_id, trace_number,
         claim_id, claim_status_code, payer_claim_control_number,
         service_dos, billed_amount, paid_amount, adjustment_amount,
+        contractual_amount, patient_responsibility_amount, other_adjustment_amount,
         carc_codes, rarc_codes, group_code, service_codes, modifiers, units,
         posting, posting_note, source_file_uri
       ) VALUES (
@@ -932,11 +991,12 @@ async function insertLines(
         ${claim.payer_claim_control_number ?? null},
         ${dateOnly(line?.service_dos ?? claim.service_dos)}::date,
         ${billed.toFixed(2)}::numeric, ${paid.toFixed(2)}::numeric, ${adjusted.toFixed(2)}::numeric,
+        ${group(["CO"])}::numeric, ${group(["PR"])}::numeric, ${group(["OA", "PI"])}::numeric,
         ${uniq(adjustments.map((x) => x.reason_code))}::text[], ${rarcs}::text[],
         ${lead?.group_code ?? null},
         ${line?.service_code ? [line.service_code] : []}::text[], ${line?.modifiers ?? []}::text[],
         ${line ? Math.round(line.units) : null},
-        ${a.posting}, ${a.note}, ${`upload://${c.filename}`}
+        ${a.posting}, ${a.note}, ${`${c.via}://${c.filename}`}
       )
     `;
   }

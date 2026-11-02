@@ -77,6 +77,9 @@ const MUST_NOT_CARRY = [
   // Figures parsed from a payer's own 835 — "what your team recorded" would
   // be false of every number on the screen.
   "/billing/remittances",
+  // The files Pallio sent and the 999s, 277CAs and 835s that came back
+  // (0120): the clearinghouse's and the payer's own word, line for line.
+  "/billing/clearinghouse",
 ];
 
 describe("SubmissionDisclosure placement (audit R35)", () => {

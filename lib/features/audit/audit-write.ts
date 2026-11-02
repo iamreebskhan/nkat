@@ -42,12 +42,33 @@ import { withOrgContext } from "@/lib/db";
  */
 export type AuditAction =
   | "login"
+  /**
+   * A session ended (0121): signed out by the person, or after the org's idle
+   * limit passed with nothing done. Payload is the reason, a closed set.
+   */
+  | "logout"
+  /**
+   * A second factor set up (at sign-in, when the role requires one, or on
+   * Settings → Security) or turned off (0121). Payload says which and where;
+   * never the secret or a code.
+   */
+  | "mfa_change"
   | "patient_create"
   | "patient_update"
   | "patient_export"
   | "visit_document"
   | "visit_sign"
+  /**
+   * A visit that did not happen: cancelled, or the patient was a no-show.
+   * Recorded as visit_document like any other status move until there was a
+   * way to do either from the app, which read in the log as documentation.
+   * Payload is the from/to status only.
+   */
+  | "visit_cancel"
+  | "visit_no_show"
   | "visit_reschedule"
+  /** A repeating series booked (0126): how many visits and how often, never a date. */
+  | "visit_series_create"
   /**
    * A visit's type corrected before sign-off, which moves the CPT band it is
    * coded on (a first visit booked as established bills 99347-99350 instead of
@@ -85,6 +106,12 @@ export type AuditAction =
   | "superbill_status_change"
   | "superbill_code_override"
   | "denial_decision"
+  /**
+   * A denied claim recorded as sent out again. Ids and whether the claim had
+   * already gone back out (from the queue, or another denial on it) — the case
+   * that wrote no audit row at all before.
+   */
+  | "denial_refile"
   // What finally happened to a denied claim (audit R24): outcome and amount only.
   | "denial_outcome"
   // A payer's 835 uploaded and posted (audit R10). Counts only: no claim id,
@@ -125,7 +152,105 @@ export type AuditAction =
    * feeds every chart that links it, so a changed fax number reaches them all.
    * Provider id and field names only.
    */
-  | "external_provider_change";
+  | "external_provider_change"
+  /**
+   * The intake pipeline (Level-1 doc:22-28, 0111): a referral received or
+   * corrected, its stage moved (admitted, NTUC with its code, set aside), its
+   * pending requirements ticked, a triage recorded. Referral id, field names,
+   * stages, codes and counts — never the person's name or what triage found.
+   */
+  | "referral_create"
+  | "referral_update"
+  | "referral_stage"
+  | "referral_requirements"
+  | "referral_triage"
+  /**
+   * A check of a referral's or patient's coverage (doc:23): method and result,
+   * which decide whether the visit is billable. Never the member id.
+   */
+  | "insurance_verification"
+  // The practice's discharge and NTUC codes (0111): code and field names.
+  | "reason_code_change"
+  /**
+   * A document kept on a referral or a chart (0112): uploaded, opened, or
+   * removed as filed in error. Kind, type, size and the subject's ids — never
+   * the file's name, which is often the patient's.
+   */
+  | "document_upload"
+  | "document_view"
+  | "document_remove"
+  /**
+   * The chart's problem, medication or allergy list changed, or "no known
+   * allergies" was recorded (0114): which list, what was done (add, resolve,
+   * stop, inactivate…), the item's id and the field names. Never the
+   * diagnosis code, the drug or the substance.
+   */
+  | "clinical_list_change"
+  /**
+   * The course of care (0115): an acuity given at a visit (its source and the
+   * level, a closed set), a hospice-eligibility assessment (yes or no), a
+   * significant event recorded, corrected or voided (its kind), a discharge,
+   * the hospice stay's outcome or a readmission (the practice's code number,
+   * its category, the status). Never what was written about the patient.
+   */
+  | "acuity_change"
+  | "hospice_assessment"
+  | "patient_event_change"
+  | "patient_discharge"
+  /**
+   * Care between visits (0116): a care-plan save (which parts, the version,
+   * whether during a visit), a PCM/CCM enrolment or its end (the program), a
+   * telephone encounter recorded or voided, an escalation alert raised,
+   * withdrawn or acknowledged (the measure, a closed set — never the reading),
+   * a task created, changed, done or cancelled (its discipline and the field
+   * names — never its title or details).
+   */
+  | "care_plan_update"
+  | "care_program_enrollment"
+  | "phone_encounter"
+  | "escalation_alert"
+  | "care_task"
+  /**
+   * PCM/CCM (0117): time logged or voided (the program, practitioner or
+   * clinical staff, minutes, the activity, whether from a call — never the
+   * note), and a month's charge raised (the program, the code set, the CPT
+   * codes and add-on units, the visit carrying it; never the diagnoses).
+   */
+  | "care_management_time"
+  | "care_management_charge"
+  /**
+   * Claims exported for the billing software (0118): the batch, how many
+   * claims and lines, and the claims' ids. Never what the file held.
+   */
+  | "claim_export"
+  /**
+   * A clearinghouse connection saved, tested, switched off or removed, or its
+   * payer IDs set (0120): the vendor, the channels, the names of the settings
+   * changed and of the secrets set or cleared — never a value, ID or host.
+   */
+  | "clearinghouse_connection"
+  /**
+   * An 837P file built (0120): sent over SFTP, failed to send, or downloaded.
+   * The submission, its control numbers and how many claims — no patient.
+   */
+  | "claim_submission"
+  /**
+   * A response file read from a clearinghouse or uploaded (0120): its kind
+   * and what it changed, in counts.
+   */
+  | "clearinghouse_file"
+  /** A claim status question asked of the payer (276/277, 0120): the claim and the answer's state. */
+  | "claim_status_check"
+  /** A prior authorization added, corrected or withdrawn on a chart (0124): the id, never its number. */
+  | "prior_auth_change"
+  /**
+   * CMS's NCCI files loaded by the practice, or a load no longer used (0122):
+   * PTP pairs or MUE values, how many rows were read and kept, the in-force
+   * date. Never a row: they are CMS's, with AMA text.
+   */
+  | "ncci_load"
+  /** Monthly figures entered or cleared (0125): how many, and for which months. */
+  | "kpi_history_change";
 
 export type AuditTargetType =
   | "patient"
@@ -139,11 +264,35 @@ export type AuditTargetType =
   | "visit_type"
   | "visit_service"
   | "branding"
+  // The practice's time zone and daily visit cap (Settings → Practice).
+  | "practice"
+  // The idle limit and who needs a second factor (Settings → Security, 0121).
+  | "security"
   | "note_template"
   | "user"
   | "payer"
   // The org's roster of outside providers (audit R30).
-  | "external_provider";
+  | "external_provider"
+  // Intake (0111): a referral, and the practice's reason codes.
+  | "referral"
+  | "reason_code"
+  // A document on a referral or a chart (0112).
+  | "patient_document"
+  // A task to the team (0116), which need not be about a patient.
+  | "care_task"
+  // Who the claims bill as, and the practice's own fees (0118).
+  | "billing_provider"
+  | "fee_schedule"
+  // A batch of claims exported for the billing software (0118).
+  | "claim_export"
+  // A clearinghouse connection, an 837P file built, a response file read (0120).
+  | "clearinghouse_connection"
+  | "claim_submission"
+  | "clearinghouse_file"
+  // A load of CMS's NCCI files (0122).
+  | "ncci_load"
+  // A practice's monthly figures (0125).
+  | "kpi_history";
 
 export interface AuditEntry {
   orgId: string;

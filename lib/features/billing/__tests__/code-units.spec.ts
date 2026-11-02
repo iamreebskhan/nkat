@@ -74,8 +74,14 @@ describe("normalizeUnits", () => {
     expect(normalizeUnits(codes, null)).toEqual({});
   });
 
-  it("names exactly the three per-increment codes in this code set", () => {
-    expect([...PER_INCREMENT_CODES].sort()).toEqual(["99417", "99498", "G0318"]);
+  it("names exactly the per-increment codes in this code set, the PCM/CCM add-ons included (0117)", () => {
+    expect([...PER_INCREMENT_CODES].sort()).toEqual(["99417", "99425", "99427", "99439", "99498", "G0318"]);
+  });
+
+  it("keeps units on the PCM/CCM add-ons and drops them on their base codes", () => {
+    expect(normalizeUnits(["99490", "99439"], { "99439": 2, "99490": 2 })).toEqual({ "99439": 2 });
+    expect(normalizeUnits(["99426", "99427"], { "99427": 3 })).toEqual({ "99427": 3 });
+    expect(normalizeUnits(["99424", "99425"], { "99425": 2 })).toEqual({ "99425": 2 });
   });
 });
 
@@ -83,7 +89,9 @@ describe("unitErrors", () => {
   it("refuses units on a code billed once per visit", () => {
     const errors = unitErrors(["99350", "G0318"], { "99350": 2 });
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatch(/^99350 is billed once per visit; units apply only to G0318, 99417 and 99498\.$/);
+    expect(errors[0]).toMatch(
+      /^99350 is billed once per visit; units apply only to G0318, 99417, 99498, 99439, 99427 and 99425\.$/,
+    );
   });
 
   it("passes units on a per-increment code", () => {

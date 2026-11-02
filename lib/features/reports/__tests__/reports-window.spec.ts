@@ -313,3 +313,53 @@ describe("report windows, a day that does not exist", () => {
     expect(o.range).toEqual({ fromDate: "2026-09-01", toDate: "2026-09-30" });
   });
 });
+
+// The page now picks any window (Level-1 doc:75), so the API is asked for
+// ones it never was: backwards, open-ended past today, years long.
+describe("report windows the page can ask for", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(requireAuth).mockResolvedValue(session);
+    vi.mocked(withOrgContext).mockImplementation(async (_o, fn) =>
+      (fn as (tx: unknown) => Promise<unknown>)(fakeTx("UTC")),
+    );
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // 10 pm EDT on 22 Sep.
+    vi.setSystemTime(new Date("2026-09-23T02:00:00Z"));
+  });
+
+  it.each([
+    ["?fromDate=2026-09-13&toDate=2026-09-01", "The range starts after it ends."],
+    // No toDate: it is the practice's today, 22 Sep, before the 30th.
+    ["?fromDate=2026-09-30", "The range starts after it ends."],
+    ["?fromDate=2020-01-01&toDate=2026-09-22", "Pick a range of five years or less."],
+  ])("CONTROL: %s is a 422 saying why, not an empty report", async (query, message) => {
+    const res = await get(query);
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe(message);
+  });
+
+  it("answers with the practice's today, for the page's presets", async () => {
+    const o = (await overview("?fromDate=2026-09-01&toDate=2026-09-13")) as unknown as { today: string };
+    expect(o.today).toBe("2026-09-22");
+  });
+
+  it("draws a year a bar a month, its bills in their months", async () => {
+    const o = (await overview("?fromDate=2026-01-01&toDate=2026-09-22")) as Awaited<ReturnType<typeof overview>> & {
+      trendBucket: string;
+    };
+    expect(o.trendBucket).toBe("month");
+    expect(o.denialRateTrend.map((p) => p.date)).toEqual([
+      "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09",
+    ]);
+    // August: $10 billed on the 31st, $10 of it denied. September: $140 billed
+    // (1st, 13th, 14th), $40 + $80 denied.
+    expect(o.denialRateTrend.find((p) => p.date === "2026-08")!.value).toBe(100);
+    expect(o.denialRateTrend.find((p) => p.date === "2026-09")!.value).toBe(Math.round((12000 / 14000) * 10000) / 100);
+  });
+
+  it("CONTROL: 13 days stay a bar a day", async () => {
+    const o = (await overview("?fromDate=2026-09-01&toDate=2026-09-13")) as unknown as { trendBucket: string };
+    expect(o.trendBucket).toBe("day");
+  });
+});

@@ -34,9 +34,13 @@ export default function PlatformOrgsPage() {
     <div className="px-8 py-8">
       <header className="mb-6">
         <h1 className="font-display text-3xl tracking-tight">Organizations</h1>
-        <p className="text-slate-600 mt-1">
-          {rows.length} org{rows.length === 1 ? "" : "s"} on the platform.
-        </p>
+        {/* Only once the list arrived: refused, it said "0 orgs on the platform"
+            above "Platform admin access required". */}
+        {!loading && !error && (
+          <p className="text-slate-600 mt-1">
+            {rows.length} org{rows.length === 1 ? "" : "s"} on the platform.
+          </p>
+        )}
       </header>
 
       {error && (

@@ -16,9 +16,11 @@ vi.mock("@/lib/db", () => ({ prisma: {}, withOrgContext: vi.fn() }));
 vi.mock("@/lib/features/superbills/superbill.service", () => ({
   markStatus: vi.fn(),
 }));
+vi.mock("@/lib/features/audit/audit-write", () => ({ writeAudit: vi.fn() }));
 
 import { ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
+import { writeAudit } from "@/lib/features/audit/audit-write";
 import { markStatus } from "@/lib/features/superbills/superbill.service";
 import { DocumentationIncompleteError } from "@/lib/features/visits/documentation-check";
 
@@ -28,6 +30,7 @@ const ORG = "11111111-1111-4111-8111-111111111111";
 const DENIAL = "d0000000-0000-4000-8000-000000000001";
 const SB = "b2e303af-e2cb-4292-8d00-c35c07423a0d";
 const USER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const VISIT = "c0000000-0000-4000-8000-000000000001";
 
 /** The refile-decided denial's claim, as the lookup returns it. Empty = none matched. */
 let returned: { superbill_id: string }[];
@@ -41,6 +44,7 @@ function fakeTx() {
     calls.push(sql);
     if (sql.includes("SELECT superbill_id FROM superbill_denial")) return Promise.resolve(returned);
     if (sql.includes("a.kind = 'resubmitted'")) return Promise.resolve(resent);
+    if (sql.includes("UPDATE superbill_denial")) return Promise.resolve([{ visit_id: VISIT }]);
     return Promise.resolve(1);
   };
   return { $queryRaw: run, $executeRaw: run, $executeRawUnsafe: () => Promise.resolve() };
@@ -111,6 +115,45 @@ describe("markRefiled", () => {
     // A database failure must surface; only the expected race is tolerated.
     vi.mocked(markStatus).mockRejectedValueOnce(new Error("connection reset"));
     await expect(markRefiled({ orgId: ORG, id: DENIAL })).rejects.toThrow(/connection reset/);
+  });
+});
+
+/**
+ * The refile in the audit log. Only the claim's move to submitted was audited
+ * (by markStatus), so refiling a claim that had already gone back out — the
+ * second denial on a refiled claim, on the live test — left no audit row.
+ */
+describe("markRefiled — audit", () => {
+  it("records the refile, naming the visit", async () => {
+    await markRefiled({ orgId: ORG, id: DENIAL, actorUserId: USER });
+    expect(writeAudit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(writeAudit).mock.calls[0]![1]).toEqual({
+      orgId: ORG,
+      userId: USER,
+      action: "denial_refile",
+      targetType: "denial",
+      targetId: DENIAL,
+      payload: { visitId: VISIT, claimAlreadyResent: false },
+    });
+  });
+
+  it("records it when the claim had already gone back out, and says so", async () => {
+    vi.mocked(markStatus).mockRejectedValueOnce(
+      new ValidationError("Illegal superbill transition submitted → submitted."),
+    );
+    await markRefiled({ orgId: ORG, id: DENIAL, actorUserId: USER });
+    expect(vi.mocked(writeAudit).mock.calls[0]![1].payload).toEqual({
+      visitId: VISIT,
+      claimAlreadyResent: true,
+    });
+  });
+
+  it("writes no audit row when the refile is refused", async () => {
+    vi.mocked(markStatus).mockRejectedValueOnce(
+      new ValidationError("This claim has no rendering-provider NPI, so a payer would reject it."),
+    );
+    await expect(markRefiled({ orgId: ORG, id: DENIAL })).rejects.toThrow();
+    expect(writeAudit).not.toHaveBeenCalled();
   });
 });
 

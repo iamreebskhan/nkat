@@ -154,4 +154,42 @@ describe("DiagnosisPicker", () => {
     fireEvent.change(search(), { target: { value: "C34" } });
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Permission denied."));
   });
+
+  // A visit opened again: its codes arrive bare. The wording came only from
+  // that session's searches, and a code typed by hand that the list does not
+  // hold lost its warning, looking like any other right up to signing.
+  describe("codes already saved on the visit", () => {
+    it("shows the list's wording for a saved code, looked up once", async () => {
+      respond = (url) =>
+        url.includes("C34.12") ? { success: true, data: { rows: [LUNG] } } : { success: true, data: { rows: [] } };
+      render(<Host initial={["C34.12"]} />);
+      expect(await screen.findByText(LUNG.description)).toBeTruthy();
+      expect(requested).toEqual(["/api/billing/icd10?query=C34.12&limit=8"]);
+      expect(screen.queryByText(/Not in the ICD-10-CM list/)).toBeNull();
+    });
+
+    it("keeps the warning on a saved code the list does not hold", async () => {
+      respond = () => ({ success: true, data: { rows: [] } });
+      render(<Host initial={["J44.99"]} />);
+      expect(await screen.findByText(/Not in the ICD-10-CM list Pallio holds — check the code before signing/)).toBeTruthy();
+    });
+
+    it("CONTROL: a code whose prefix matches other codes is still not taken for one of them", async () => {
+      // "J44" is a header: the search returns its children, not J44 itself.
+      respond = () => ({
+        success: true,
+        data: { rows: [{ code: "J44.1", description: "Chronic obstructive pulmonary disease with (acute) exacerbation" }] },
+      });
+      render(<Host initial={["J44"]} />);
+      expect(await screen.findByText(/Not in the ICD-10-CM list/)).toBeTruthy();
+      expect(screen.queryByText(/with \(acute\) exacerbation/)).toBeNull();
+    });
+
+    it("on a signed visit, says the code is not in the list without asking for a check before signing", async () => {
+      respond = () => ({ success: true, data: { rows: [] } });
+      render(<Host initial={["J44.99"]} readOnly />);
+      expect(await screen.findByText("Not in the ICD-10-CM list Pallio holds.")).toBeTruthy();
+      expect(screen.queryByText(/before signing/)).toBeNull();
+    });
+  });
 });

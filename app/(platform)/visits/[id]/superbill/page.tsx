@@ -12,6 +12,8 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 
+import { askReason } from "@/components/billing/ask-reason";
+import { ClearinghousePanel } from "@/components/billing/clearinghouse-panel";
 import { CodePicker } from "@/components/billing/code-picker";
 import { CodeUnitsEditor } from "@/components/billing/code-units-editor";
 import { Icd10Picker } from "@/components/billing/icd10-picker";
@@ -27,6 +29,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { EXPORTABLE_STATUSES } from "@/lib/features/billing/claim-export";
 import { unitWarnings, type CodeUnits } from "@/lib/features/billing/code-units";
 import type { PatientView } from "@/lib/features/patients/patient.types";
 import { claimRefFor } from "@/lib/features/remittances/claim-ref";
@@ -85,7 +88,23 @@ interface SavedBill {
   placeOfServiceCode: string;
   billedAmountCents: number;
   pricing?: { lines?: PricedLine[] } | null;
+  /** The payer's rates for the lines (0118); equal to billed without a fee schedule. */
+  expectedAmountCents?: number | null;
+  /** Sent to billing: the last export (0118). */
+  lastExportedAt?: string | null;
 }
+
+/** What the payer's latest 835 said of the bill (0118). */
+interface RemittanceSummary {
+  paymentDate: string | null;
+  traceNumber: string | null;
+  paidCents: number;
+  contractualCents: number | null;
+  patientResponsibilityCents: number | null;
+  otherAdjustmentCents: number | null;
+}
+
+const usd = (c: number) => `$${(c / 100).toFixed(2)}`;
 
 /** The page's view of a saved bill. */
 function savedToDraft(existing: SavedBill): SuperbillDraft {
@@ -107,8 +126,9 @@ function savedToDraft(existing: SavedBill): SuperbillDraft {
     billingNpi: existing.billingNpi ?? "",
     placeOfServiceCode: existing.placeOfServiceCode,
     billedAmountCents: existing.billedAmountCents,
-    ratedCodes: lines.filter((l) => l.source !== "unrated"),
-    unratedCodes: lines.filter((l) => l.source === "unrated").map((l) => l.code),
+    // A line with the practice's fee is priced, rate or no rate (0118).
+    ratedCodes: lines.filter((l) => l.source !== "unrated" || l.feeCents != null),
+    unratedCodes: lines.filter((l) => l.source === "unrated" && l.feeCents == null).map((l) => l.code),
     // The persisted row doesn't carry the per-code rate breakdown. Its
     // warnings are re-derived from what the row does carry — they used to be
     // dropped, so a saved bill with no NPI or no member ID showed nothing to
@@ -145,6 +165,16 @@ function inWords(parts: string[]): string {
   return parts.length < 2 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
+/** "1 likely denial and 2 high-risk lines": what the predictor flagged, for its confirmations. */
+function flaggedText(r: { blockCount: number; highCount: number; mediumCount: number }): string {
+  const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+  return inWords([
+    r.blockCount > 0 ? n(r.blockCount, "likely denial", "likely denials") : null,
+    r.highCount > 0 ? n(r.highCount, "high-risk line", "high-risk lines") : null,
+    r.mediumCount > 0 ? n(r.mediumCount, "medium-risk line", "medium-risk lines") : null,
+  ].filter((p): p is string => p !== null));
+}
+
 export default function SuperbillPage({
   params,
 }: {
@@ -176,6 +206,34 @@ export default function SuperbillPage({
   const [alreadyBilled, setAlreadyBilled] = useState<string[] | null>(null);
   /** Bumped when a saved bill replaces the page's draft, to reset the uncontrolled modifiers field. */
   const [billLoads, setBillLoads] = useState(0);
+  // 0118: what the payer is expected to pay, when the practice bills its own
+  // fees; when the claim was last sent to billing; what the payer's 835 said;
+  // and what a claim still needs from the billing provider.
+  const [expectedCents, setExpectedCents] = useState<number | null>(null);
+  const [lastExportedAt, setLastExportedAt] = useState<string | null>(null);
+  const [remittance, setRemittance] = useState<RemittanceSummary | null>(null);
+  const [billingMissing, setBillingMissing] = useState<string[]>([]);
+  const [canExportClaim, setCanExportClaim] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
+  /** 0122: whether the review has CMS's NCCI files to check this claim against. */
+  const [ncci, setNcci] = useState<{ pairs: boolean; mue: boolean } | null>(null);
+  useEffect(() => {
+    fetch("/api/billing/ncci-status")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) setNcci(d.data);
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        const perms: string[] = d.data?.permissions ?? [];
+        setCanExportClaim(Boolean(d.success) && (perms.includes("billing.superbills.export") || d.data?.role === "platform_admin"));
+      })
+      .catch(() => {});
+  }, []);
 
   interface PredictResult {
     worstBand: RiskBand;
@@ -208,6 +266,20 @@ export default function SuperbillPage({
   const [correctingDate, setCorrectingDate] = useState(false);
   /** Bumped after a change the bill's history records, so it reads it again. */
   const [historyKey, setHistoryKey] = useState(0);
+  /**
+   * After the clearinghouse card sent the claim or the payer answered (0120):
+   * the status may have moved (submitted, or back for correction), and the
+   * history has new lines.
+   */
+  async function reloadStatus() {
+    try {
+      const d = await fetch(`/api/visits/${id}/superbill`).then((r) => r.json());
+      if (d.success && d.data.existing) setStatus((d.data.existing as SavedBill).status ?? null);
+    } catch {
+      // The card's own note says what happened; the status shows on reload.
+    }
+    setHistoryKey((k) => k + 1);
+  }
 
   useEffect(() => {
     let abandoned = false;
@@ -221,11 +293,17 @@ export default function SuperbillPage({
           return;
         }
         if (data.data.existing) {
-          setPersistedId(data.data.existing.id);
-          setStatus(data.data.existing.status ?? null);
-          setDraft(savedToDraft(data.data.existing as SavedBill));
+          const saved = data.data.existing as SavedBill;
+          setPersistedId(saved.id);
+          setStatus(saved.status ?? null);
+          setDraft(savedToDraft(saved));
+          setExpectedCents(saved.expectedAmountCents ?? null);
+          setLastExportedAt(saved.lastExportedAt ?? null);
+          setRemittance((data.data.remittance as RemittanceSummary | null) ?? null);
+          setBillingMissing((data.data.billingProviderMissing as string[] | undefined) ?? []);
         } else {
           setDraft(data.data.draft);
+          setExpectedCents((data.data.draft?.expectedAmountCents as number | null | undefined) ?? null);
         }
         // Fetch patient for rule-check sidebar (need state).
         const patientId = data.data.existing?.patientId ?? data.data.draft?.patientId;
@@ -337,9 +415,13 @@ export default function SuperbillPage({
                 }
               : d,
           );
+          if (data.data?.expectedAmountCents !== undefined) setExpectedCents(data.data.expectedAmountCents);
           setEdits({});
           // An edit to a reviewed bill sends it back to draft (audit R26).
           if (data.data?.status) setStatus(data.data.status);
+          // The edit is now on the bill's history; read it again. The card
+          // kept showing only "created" until a reload.
+          setHistoryKey((k) => k + 1);
           setAutosaveStatus("saved");
           setTimeout(() => setAutosaveStatus("idle"), 1500);
         } else {
@@ -409,7 +491,7 @@ export default function SuperbillPage({
     // require an explicit confirmation so the nurse pauses.
     if (risk && (risk.blockCount > 0 || risk.highCount > 0)) {
       const ok = window.confirm(
-        `Predictor flags ${risk.blockCount} likely denial(s), ${risk.highCount} high-risk, ${risk.mediumCount} medium. Save anyway?`,
+        `The predictor flagged ${flaggedText(risk)} on this bill. Click a line's risk badge to see why.\n\nSave anyway?`,
       );
       if (!ok) return;
     }
@@ -486,8 +568,10 @@ export default function SuperbillPage({
               }
             : d,
         );
+        if (pdata.data?.expectedAmountCents !== undefined) setExpectedCents(pdata.data.expectedAmountCents);
         if (pdata.data?.status) setStatus(pdata.data.status);
         setEdits({});
+        setHistoryKey((k) => k + 1);
       }
     } catch {
       setError("Network error.");
@@ -517,23 +601,37 @@ export default function SuperbillPage({
     if (!persistedId) return;
     if (risk && risk.blockCount > 0) {
       const ok = window.confirm(
-        `Predictor flags ${risk.blockCount} likely denial(s). Mark ready to submit anyway?`,
+        `The predictor flagged ${flaggedText({ blockCount: risk.blockCount, highCount: 0, mediumCount: 0 })} on this bill. Click a line's risk badge to see why.\n\nMark it ready to submit anyway?`,
       );
       if (!ok) return;
     }
     setMarking(true);
     try {
-      const r = await fetch(`/api/superbills/${persistedId}/status`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ to: "ready_to_submit" }),
-      });
-      const d = await r.json();
+      const send = async (extra: Record<string, unknown> = {}) => {
+        const r = await fetch(`/api/superbills/${persistedId}/status`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ to: "ready_to_submit", ...extra }),
+        });
+        return r.json();
+      };
+      let d = await send();
+      // The review's warnings (0118, Mark Q5 default): an NCCI pair, an MUE, a
+      // $0 line, a code the payer does not cover. Marking it ready anyway is
+      // the reviewer's call, with a reason the claim history keeps.
+      if (!d.success && d.data?.reviewWarnings) {
+        const reason = askReason(
+          `${(d.data.reviewWarnings as { detail: string }[]).map((w) => `• ${w.detail}`).join("\n")}\n\nTo mark it ready anyway, enter the reason (at least 10 characters). It is kept on the claim history.`,
+        );
+        if (reason === null) return;
+        d = await send({ reviewOverride: { reason } });
+      }
       if (!d.success) {
         alert(d.error ?? "Could not mark it ready to submit.");
         return;
       }
       setStatus("ready_to_submit");
+      setHistoryKey((k) => k + 1);
     } catch {
       alert("Network error — status not changed.");
     } finally {
@@ -555,6 +653,7 @@ export default function SuperbillPage({
       setDraft((cur) =>
         cur ? { ...cur, dateOfService: d.data.to, billedAmountCents: d.data.billedAmountCents } : cur,
       );
+      setExpectedCents(d.data.expectedAmountCents ?? null);
       setStatus(d.data.status);
       setHistoryKey((k) => k + 1);
     } catch {
@@ -588,6 +687,7 @@ export default function SuperbillPage({
           {status && <span className="ml-1">· {statusLabel(status)}</span>}
           {/* Entered as box 26 on the claim, so the payer's 835 matches back (audit R10). */}
           {persistedId && <span className="ml-1" title="Enter this as the Patient account no. (CMS-1500 box 26) when you submit the claim.">· Claim ref <span className="font-mono">{claimRefFor(persistedId)}</span></span>}
+          {lastExportedAt && <span className="ml-1">· sent to billing {new Date(lastExportedAt).toLocaleDateString()}</span>}
           {autosaveStatus === "saving" && <span className="ml-2 text-slate-500">· saving…</span>}
           {autosaveStatus === "saved" && <span className="ml-2 text-emerald-700">· autosaved ✓</span>}
           {autosaveStatus === "error" && <span className="ml-2 text-red-700">· autosave failed</span>}
@@ -639,7 +739,7 @@ export default function SuperbillPage({
           </Card>
         )}
 
-      {draft.warnings.length > 0 && (
+      {(draft.warnings.length > 0 || billingMissing.length > 0) && (
         <Card severity="warn" className="mb-4">
           <CardHeader>
             <CardTitle>Verify before submission</CardTitle>
@@ -649,6 +749,16 @@ export default function SuperbillPage({
               {draft.warnings.map((w, i) => (
                 <li key={i}>{w}</li>
               ))}
+              {/* Who the claim bills as (0118, doc:67). */}
+              {billingMissing.length > 0 && (
+                <li>
+                  The billing provider still needs: {billingMissing.join(", ")} —{" "}
+                  <Link href="/settings/billing-provider" className="underline">
+                    Settings → Billing provider
+                  </Link>
+                  .
+                </li>
+              )}
             </ul>
           </CardContent>
         </Card>
@@ -707,7 +817,7 @@ export default function SuperbillPage({
                 aria-label="Place of service"
                 value={edits.pos ?? draft.placeOfServiceCode}
                 onChange={(e) => setEdits((eds) => ({ ...eds, pos: e.target.value }))}
-                className="h-8 px-2 border border-slate-300 rounded-md text-sm"
+                className="h-8 min-w-0 max-w-full px-2 border border-slate-300 rounded-md text-sm"
               >
                 {!VISIT_POS_OPTIONS.some((o) => o.code === (edits.pos ?? draft.placeOfServiceCode)) && (
                   <option value={edits.pos ?? draft.placeOfServiceCode}>
@@ -729,9 +839,47 @@ export default function SuperbillPage({
             value={`$${(draft.billedAmountCents / 100).toFixed(2)}`}
             mono
           />
+          {/* Billed at the practice's fees (0118, Mark Q4): what the payer's
+              rates come to, and the difference the contract adjusts away. */}
+          {expectedCents !== null && expectedCents !== draft.billedAmountCents && (
+            <Row
+              label="Expected from the payer"
+              value={`${usd(expectedCents)} (contractual adjustment ${usd(draft.billedAmountCents - expectedCents)})`}
+              mono
+            />
+          )}
           <PricingLines rated={draft.ratedCodes} unrated={draft.unratedCodes} />
         </CardContent>
       </Card>
+
+      {/* What the payer's own 835 said (0118, Mark Q2 default: recorded here;
+          the patient's balance is the billing software's). */}
+      {remittance && (
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>The payer&rsquo;s remittance</CardTitle>
+            <CardDescription>
+              As the latest 835 stated it{remittance.paymentDate ? `, paid ${remittance.paymentDate}` : ""}
+              {remittance.traceNumber ? ` (trace ${remittance.traceNumber})` : ""}. The patient&rsquo;s balance is kept in
+              your billing software.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-slate-700">
+            <Row label="Paid" value={usd(remittance.paidCents)} mono />
+            {remittance.contractualCents === null ? (
+              <p className="text-xs text-slate-500">This remittance was posted before Pallio recorded its adjustments by group.</p>
+            ) : (
+              <>
+                <Row label="Contractual adjustment (CO)" value={usd(remittance.contractualCents)} mono />
+                <Row label="Patient responsibility (PR)" value={usd(remittance.patientResponsibilityCents ?? 0)} mono />
+                {(remittance.otherAdjustmentCents ?? 0) > 0 && (
+                  <Row label="Other adjustments (OA, PI)" value={usd(remittance.otherAdjustmentCents ?? 0)} mono />
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="mb-4">
         <CardHeader>
@@ -859,10 +1007,17 @@ export default function SuperbillPage({
             cptCodes={currentCpts}
             attribute="pos_allowed"
           />
+          {/* No warning would otherwise read as a clean claim (0122). */}
+          {ncci && !(ncci.pairs && ncci.mue) && (
+            <p role="status" className="text-xs text-amber-800 mt-4">
+              {ncci.pairs ? "Units above an MUE are" : ncci.mue ? "NCCI code pairs are" : "NCCI code pairs and units above an MUE are"} not
+              checked on this claim: your practice has not loaded CMS&rsquo;s files (Settings → NCCI edits).
+            </p>
+          )}
         </CardContent>
       </Card>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button onClick={persist} loading={saving}>
           {persistedId ? "Re-save" : "Save superbill"}
         </Button>
@@ -889,7 +1044,7 @@ export default function SuperbillPage({
               const res = await fetch(`/api/superbills/${persistedId}/pdf`);
               if (!res.ok) {
                 const data = await res.json().catch(() => null);
-                alert(data?.error ?? `Export failed (${res.status})`);
+                alert(data?.error ?? `The PDF wasn't created (error ${res.status}). Try again.`);
                 return;
               }
               const blob = await res.blob();
@@ -908,7 +1063,55 @@ export default function SuperbillPage({
         >
           {exporting ? "Generating…" : "Export PDF"}
         </Button>
+        {/* The claim as claim lines for the billing software (0118, Mark Q1
+            default): reviewed claims, marked sent to billing when exported. */}
+        {canExportClaim && persistedId && status && (EXPORTABLE_STATUSES as readonly string[]).includes(status) && (
+          <Button
+            variant="secondary"
+            loading={exportingCsv}
+            disabled={hasPendingEdits}
+            onClick={async () => {
+              setExportingCsv(true);
+              try {
+                const r = await fetch("/api/billing/claim-export", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ superbillIds: [persistedId] }),
+                });
+                const d = await r.json();
+                if (!d.success) {
+                  alert(d.error ?? "The claim lines weren't exported. Try again.");
+                  return;
+                }
+                const url = URL.createObjectURL(new Blob([d.data.csv], { type: "text/csv;charset=utf-8" }));
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = d.data.filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 10_000);
+                setLastExportedAt(new Date().toISOString());
+                setHistoryKey((k) => k + 1);
+                const w = (d.data.warnings as { warnings: string[] }[])[0]?.warnings ?? [];
+                if (w.length > 0) alert(`Exported. The billing software will also want: ${w.join(", ")}.`);
+              } catch {
+                alert("Network error — not exported.");
+              } finally {
+                setExportingCsv(false);
+              }
+            }}
+          >
+            Export for billing (CSV)
+          </Button>
+        )}
       </div>
+
+      {/* Sending it through the clearinghouse, its 837P, and the payer's word
+          on it (0120). Renders nothing until the practice has a connection. */}
+      {persistedId && (
+        <ClearinghousePanel superbillId={persistedId} status={status} disabled={hasPendingEdits} onChanged={() => void reloadStatus()} />
+      )}
 
       <ServicesProvided visitId={id} />
 
@@ -1074,8 +1277,9 @@ function repricedFields(
   if (!res?.pricing || res.billedAmountCents === undefined) return {};
   return {
     billedAmountCents: res.billedAmountCents,
-    ratedCodes: res.pricing.lines.filter((l) => l.source !== "unrated"),
-    unratedCodes: res.pricing.lines.filter((l) => l.source === "unrated").map((l) => l.code),
+    // A line with the practice's fee is priced, rate or no rate (0118).
+    ratedCodes: res.pricing.lines.filter((l) => l.source !== "unrated" || l.feeCents != null),
+    unratedCodes: res.pricing.lines.filter((l) => l.source === "unrated" && l.feeCents == null).map((l) => l.code),
   };
 }
 
@@ -1089,15 +1293,19 @@ function PricingLines({ rated, unrated }: { rated: PricedLine[]; unrated: string
   if (rated.length === 0 && unrated.length === 0) return null;
   return (
     <ul aria-label="How this bill was priced" className="mt-1 space-y-0.5 text-xs text-slate-600">
-      {rated.map((l) => (
-        <li key={l.code} className="tabular">
-          <span className="font-mono">{l.code}</span>
-          {(l.units ?? 1) > 1
-            ? ` × ${l.units} · $${(l.rateCents / 100).toFixed(2)} = $${(lineChargeCents(l) / 100).toFixed(2)}`
-            : ` · $${(l.rateCents / 100).toFixed(2)}`}{" "}
-          · {describePriceSource(l)}
-        </li>
-      ))}
+      {rated.map((l) => {
+        // What one unit charges: the practice's fee where it has one (0118).
+        const unit = l.feeCents ?? l.rateCents;
+        return (
+          <li key={l.code} className="tabular">
+            <span className="font-mono">{l.code}</span>
+            {(l.units ?? 1) > 1
+              ? ` × ${l.units} · $${(unit / 100).toFixed(2)} = $${(lineChargeCents(l) / 100).toFixed(2)}`
+              : ` · $${(unit / 100).toFixed(2)}`}{" "}
+            · {describePriceSource(l)}
+          </li>
+        );
+      })}
       {unrated.map((c) => (
         <li key={c} className="tabular text-amber-800">
           <span className="font-mono">{c}</span> · no rate on file — set the charge

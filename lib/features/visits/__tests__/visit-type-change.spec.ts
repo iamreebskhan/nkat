@@ -88,6 +88,7 @@ function visitRow(over: Partial<SqlRow> = {}): SqlRow {
     is_telehealth: false,
     telehealth_modality: null,
     telehealth_consent_documented: false,
+    series_id: null,
     document_text: null,
     cpt_codes_assigned: ["99349"],
     cpt_units: {},
@@ -159,7 +160,9 @@ const change = (visitType: string) => changeVisitType({ orgId: ORG, id: VISIT, v
 
 async function codesFor(minutes: number): Promise<string[]> {
   const v = (await getVisit({ orgId: ORG, id: VISIT }))!;
-  const s = suggestCodes({ bands: BANDS, visitType: v.codingBasis, totalMinutes: minutes, payerCategory: "medicare" });
+  // No visit here is a PCM/CCM month (0117), whose codes are never suggested.
+  const basis = v.codingBasis as Exclude<typeof v.codingBasis, "care_management">;
+  const s = suggestCodes({ bands: BANDS, visitType: basis, totalMinutes: minutes, payerCategory: "medicare" });
   return s.base.map((c) => c.code);
 }
 

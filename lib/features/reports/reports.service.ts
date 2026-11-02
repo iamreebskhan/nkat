@@ -4,9 +4,12 @@
  * All reads are tenant-scoped via withOrgContext. Each report is a
  * thin Prisma query → handed to the pure aggregator.
  */
+import { ValidationError } from "@/lib/api";
 import { withOrgContext } from "@/lib/db";
 import { addDaysIso, orgToday } from "@/lib/features/org/org-date";
 import { readOrgTimeZone } from "@/lib/features/org/org-time-zone";
+import { CARE_MANAGEMENT_VISIT_TYPE } from "@/lib/features/visits/visit.types";
+import { rangeProblem, trendBucket, type TrendBucket } from "./report-range";
 import {
   denialRateTrend,
   denialsByPayer,
@@ -21,6 +24,10 @@ import {
 
 export interface ReportsOverview {
   range: { fromDate: string; toDate: string };
+  /** The practice's today, which the page's presets count back from. */
+  today: string;
+  /** A bar a day, or a bar a month for a window longer than 92 days. */
+  trendBucket: TrendBucket;
   denialRateTrend: DailyDataPoint[];
   denialsByPayer: (DenialByPayer & { payerName: string | null })[];
   revenue: RevenueSummary;
@@ -48,11 +55,17 @@ export async function getOverview(args: {
 }): Promise<ReportsOverview> {
   return withOrgContext(args.orgId, async (tx) => {
     const tz = await readOrgTimeZone(tx, args.orgId);
-    const toDay = args.toDay ?? orgToday(tz, args.now);
+    const today = orgToday(tz, args.now);
+    const toDay = args.toDay ?? today;
     // 29, not 30: enumerateUtcDays is inclusive of both endpoints, so a 30-day
     // offset produced 31 points and the card rendered "31 days" under a "(30d)"
     // heading. Today plus the 29 before it is 30 days.
     const fromDay = args.fromDay ?? addDaysIso(toDay, -29);
+    // Checked once both ends are known: a lone fromDate after today is a
+    // backwards window too.
+    const problem = rangeProblem({ fromDate: fromDay, toDate: toDay });
+    if (problem) throw new ValidationError(problem);
+    const bucket = trendBucket({ fromDate: fromDay, toDate: toDay });
 
     const denials = await tx.$queryRaw<
       {
@@ -130,6 +143,8 @@ export async function getOverview(args: {
       WHERE org_id = ${args.orgId}::uuid
         AND (COALESCE(start_time, scheduled_start, created_at) AT TIME ZONE ${tz})::date
             BETWEEN ${fromDay}::date AND ${toDay}::date
+        -- A PCM/CCM month (0117) is a bill's carrier, not a visit made.
+        AND visit_type <> ${CARE_MANAGEMENT_VISIT_TYPE}
     `;
     const visitRows = visits.map((v) => ({
       visitType: v.visit_type,
@@ -172,6 +187,8 @@ export async function getOverview(args: {
 
     return {
       range: { fromDate: fromDay, toDate: toDay },
+      today,
+      trendBucket: bucket,
       // The pure helper keys days by UTC midnight, the same Date a DATE
       // column comes back as, so the days are handed over at UTC midnight.
       denialRateTrend: denialRateTrend({
@@ -179,6 +196,7 @@ export async function getOverview(args: {
         denials: denialRows,
         fromDate: new Date(`${fromDay}T00:00:00Z`),
         toDate: new Date(`${toDay}T00:00:00Z`),
+        bucket,
       }),
       denialsByPayer: byPayer.map((p) => ({
         ...p,

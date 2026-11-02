@@ -73,7 +73,18 @@ export interface PhiExportParams {
     | "rule_lookup_pdf"
     // The signed note and its superbill in one document. Kept in step with the
     // CHECK constraint on phi_export_log.export_type — see 0090.
-    | "visit_audit_packet";
+    | "visit_audit_packet"
+    // Claims as claim lines for the billing software (0118).
+    | "claim_csv"
+    // A clinician's caseload saved to their device for offline use (0119).
+    | "offline_snapshot"
+    // An 837P file downloaded or sent to a clearinghouse, and the two
+    // real-time questions asked of one: eligibility and claim status (0120).
+    | "claim_837"
+    | "eligibility_270"
+    | "claim_status_276"
+    // A patient's record as a C-CDA document (0128).
+    | "patient_ccda";
   patientIds?: string[];
   targetUri?: string;
   byteSize?: number;

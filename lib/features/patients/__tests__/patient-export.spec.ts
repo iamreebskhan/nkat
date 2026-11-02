@@ -171,6 +171,127 @@ describe("renderPatientRecordHtml", () => {
     expect(html).toContain("Outside providers (0)");
     expect(html).toContain("None on file.");
   });
+
+  it("carries the problem, medication and allergy lists with their history, escaped (0114)", () => {
+    const html = renderPatientRecordHtml(
+      META, patient, [visit(SIGNED_ID, "billed")], [bill], null, notes(), undefined,
+      {
+        problems: [{ icd10: "C34.12", description: "Malignant neoplasm of upper lobe, left bronchus or lung", status: "active", onset_on: "2026-06-01", resolved_on: null }],
+        medications: [
+          { name: "Morphine IR", dose: "5 mg", route: "PO", frequency: "every 4 hours", prn: true, indication: "dyspnea", status: "active", started_on: null, stopped_on: null, stop_reason: null },
+          { name: "Morphine <i>ER</i>", dose: "15 mg", route: "PO", frequency: null, prn: false, indication: null, status: "stopped", started_on: "2026-10-01", stopped_on: "2026-10-27", stop_reason: "Switched to patch" },
+        ],
+        allergies: [{ substance: "Penicillin", kind: "drug", reaction: "Hives", severity: "moderate", status: "active" }],
+        no_known_allergies_at: null,
+      },
+    );
+    expect(html).toContain("Problems (1)");
+    expect(html).toContain("C34.12");
+    expect(html).toContain("Medications (2)");
+    expect(html).toContain("Morphine IR 5 mg PO every 4 hours PRN");
+    expect(html).toContain("2026-10-27 — Switched to patch");
+    expect(html).toContain("Morphine &lt;i&gt;ER&lt;/i&gt;");
+    expect(html).not.toContain("<i>ER</i>");
+    expect(html).toContain("Allergies (1)");
+    expect(html).toContain("<td>Penicillin</td>");
+  });
+
+  it("says 'no known allergies' only when it was recorded, and 'not recorded' otherwise", () => {
+    const lists = (at: Date | null) => ({ problems: [], medications: [], allergies: [], no_known_allergies_at: at });
+    const recorded = renderPatientRecordHtml(META, patient, [], [], null, notes(), undefined, lists(new Date("2026-10-28T01:00:00Z")));
+    expect(recorded).toContain("No known allergies (recorded 2026-10-27)");
+    // CONTROL: an empty list is not an answer.
+    const unknown = renderPatientRecordHtml(META, patient, [], [], null, notes(), undefined, lists(null));
+    expect(unknown).toContain("Not recorded.");
+    expect(unknown).not.toContain("No known allergies");
+  });
+
+  it("carries the course of care, keeping what was undone, escaped (0115)", () => {
+    const admission = { facility: null, injury: null, description: null, voided_at: null, void_reason: null };
+    const html = renderPatientRecordHtml(META, patient, [], [], null, notes(), undefined, undefined, {
+      admitted_on: "2026-10-31",
+      discharges: [
+        {
+          admitted_on: "2026-10-27", discharged_on: "2026-10-28", code: "01", label: "Hospice - partner hospice",
+          note: "Family <b>chose</b> hospice", hospice_name: "Partner Hospice", hospice_admitted_on: "2026-10-28",
+          hospice_ended_on: "2026-10-30", hospice_end_reason: "death", died_on: "2026-10-30",
+          reversed_at: new Date("2026-10-31T15:00:00Z"), reversed_reason: "Recorded in error",
+        },
+      ],
+      acuity: [
+        { acuity: "high", source: "on_file", recorded_on: "2026-10-27", visit_day: null },
+        { acuity: "critical", source: "visit", recorded_on: "2026-10-28", visit_day: "2026-10-28" },
+      ],
+      hospice: [{ eligible: true, assessed_on: "2026-10-27", basis: "PPS 30%" }],
+      events: [
+        { ...admission, kind: "hospital_admission", occurred_on: "2026-10-01", ended_on: "2026-10-05", facility: "Mercy" },
+        { ...admission, kind: "hospital_admission", occurred_on: "2026-10-20", ended_on: null },
+        {
+          kind: "fall", occurred_on: "2026-10-25", ended_on: null, facility: null, injury: true, description: "Skin tear",
+          voided_at: new Date("2026-10-26T12:00:00Z"), void_reason: "Wrong patient",
+        },
+        { ...admission, kind: "hospice_referral", occurred_on: "2026-10-27", ended_on: null, facility: "Partner Hospice" },
+      ],
+    });
+    expect(html).toContain("Current episode began 2026-10-31.");
+    expect(html).toContain("01 Hospice - partner hospice");
+    expect(html).toContain("Partner Hospice, admitted 2026-10-28, died in hospice 2026-10-30");
+    expect(html).toContain("Reversed 2026-10-31: Recorded in error");
+    expect(html).toContain("Family &lt;b&gt;chose&lt;/b&gt; hospice");
+    expect(html).not.toContain("<b>chose</b>");
+    expect(html).toContain("On file when the history began");
+    expect(html).toContain("NP visit (visit of 2026-10-28)");
+    expect(html).toContain("Hospital admission, readmission");
+    expect(html.match(/readmission/g)).toHaveLength(1);
+    expect(html).toContain("Fall, with injury");
+    expect(html).toContain("Voided as recorded in error: Wrong patient");
+    // A hospice referral is listed with the hospice measures (doc:92), not as a significant event.
+    expect(html).toContain("Falls, ED visits and hospital admissions (3)");
+    expect(html).toContain("Hospice discussions and referrals (1)");
+    expect(html).toMatch(/<td>Hospice referral<\/td>\s*<td class="mono">2026-10-27<\/td>\s*<td>Partner Hospice<\/td>/);
+  });
+
+  it("CONTROL: says what is missing rather than leaving the course of care out", () => {
+    const html = renderPatientRecordHtml(META, patient, [], [], null, notes());
+    expect(html).toContain("<h2>Course of care</h2>");
+    expect(html).toContain("No discharge recorded.");
+    expect(html).toContain("Not assessed.");
+  });
+
+  it("carries PCM/CCM: the consent, every minute of the time log with voided ones marked, and the charges (0117)", () => {
+    const time = {
+      program: "ccm", service_on: "2026-10-03", minutes: 15, performer_kind: "clinical_staff", performed_by_name: "Lena Park",
+      activity: "care_coordination", note: "Pharmacy <i>refill</i>", from_call: false, voided_at: null, void_reason: null,
+    };
+    const html = renderPatientRecordHtml(META, patient, [], [], null, notes(), undefined, undefined, undefined, {
+      enrollments: [
+        { program: "ccm", enrolled_on: "2026-10-01", consent_on: "2026-09-30", consent_method: "verbal", ended_on: null, end_reason: null },
+      ],
+      time: [
+        time,
+        { ...time, service_on: "2026-10-09", minutes: 10, performer_kind: "qhp", performed_by_name: "Helen Okafor", from_call: true, note: null },
+        { ...time, service_on: "2026-10-10", minutes: 30, voided_at: new Date("2026-10-11T12:00:00Z"), void_reason: "Wrong patient" },
+      ],
+      charges: [
+        { program: "ccm", month: "2026-10", codes: ["99490", "99439"], units: { "99439": 2 }, date_of_service: "2026-10-20", basis: "staff", raised_by_name: "Helen Okafor" },
+      ],
+    });
+    expect(html).toContain("<h2>PCM/CCM care management</h2>");
+    expect(html).toContain("verbal on 2026-09-30");
+    expect(html).toContain("Time log (3)");
+    expect(html).toContain("Lena Park (clinical staff)");
+    expect(html).toContain("Helen Okafor (practitioner)");
+    expect(html).toContain("Phone call (from the call record)");
+    expect(html).toContain("Voided as recorded in error: Wrong patient");
+    expect(html).toContain("Pharmacy &lt;i&gt;refill&lt;/i&gt;");
+    expect(html).not.toContain("<i>refill</i>");
+    expect(html).toContain("99490, 99439 ×2");
+    expect(html).toContain("clinical staff time");
+    // CONTROL: a patient never enrolled is said to be, not left out.
+    const never = renderPatientRecordHtml(META, patient, [], [], null, notes());
+    expect(never).toContain("Never enrolled.");
+    expect(never).toContain("Time log (0)");
+  });
 });
 
 /**
@@ -515,5 +636,15 @@ describe("exportPatientRecord reads each note under the version it was written",
     // Whitespace collapses; nothing else may differ between the two.
     const squash = (s: string) => s.replace(/\s+/g, " ").replace(/\(\s+/g, "(");
     expect(squash(ours!)).toBe(squash(guard!));
+  });
+
+  it("reads the course of care by patient and org, as every read of the record does", async () => {
+    await run();
+    for (const table of ["FROM patient_discharge d", "FROM patient_acuity_event e", "FROM hospice_eligibility_assessment", "FROM patient_event"]) {
+      const sql = calls.find((s) => s.includes(table));
+      expect(sql, table).toBeDefined();
+      expect(sql).toMatch(/patient_id = ¶::uuid AND \w*\.?org_id = ¶::uuid/);
+    }
+    expect(exportedHtml()).toContain("<h2>Course of care</h2>");
   });
 });

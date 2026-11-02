@@ -10,7 +10,7 @@
  * handlers stay terse.
  */
 import { type NextRequest, NextResponse } from "next/server";
-import { ZodError, type ZodSchema } from "zod";
+import { type z, ZodError, type ZodSchema, type ZodTypeAny } from "zod";
 
 import { reportError } from "@/lib/observability/sentry";
 
@@ -139,6 +139,41 @@ export async function parseJson<T>(
     return fail(formatZodError(result.error), { status: 422 });
   }
   return result.data;
+}
+
+/**
+ * parseJson for a schema whose output is not its input — one with defaults
+ * or transforms (an empty field read as null, a list split from a string).
+ * ZodSchema<T> pins input to output, so parseJson cannot take those; this is
+ * typed by what the schema produces. Same 400/422 envelopes.
+ */
+export async function parseJsonAs<S extends ZodTypeAny>(
+  req: NextRequest,
+  schema: S,
+): Promise<z.output<S> | NextResponse<ApiResponse<null>>> {
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return fail("Request body must be valid JSON.", { status: 400 });
+  }
+  const result = schema.safeParse(raw);
+  if (!result.success) {
+    return fail(formatZodError(result.error), { status: 422 });
+  }
+  return result.data as z.output<S>;
+}
+
+/** parseSearchParams for a schema whose output is not its input (see parseJsonAs). */
+export function parseSearchParamsAs<S extends ZodTypeAny>(
+  url: URL,
+  schema: S,
+): z.output<S> | NextResponse<ApiResponse<null>> {
+  const result = schema.safeParse(Object.fromEntries(url.searchParams.entries()));
+  if (!result.success) {
+    return fail(formatZodError(result.error), { status: 422 });
+  }
+  return result.data as z.output<S>;
 }
 
 function formatZodError(err: ZodError): string {

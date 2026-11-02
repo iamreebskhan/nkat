@@ -183,6 +183,7 @@ describe("getBillingOverview — 'there are more' is answered by the data", () =
     paid: BigInt(0),
     denied: BigInt(0),
     billed_cents: BigInt(100),
+    paid_cents: BigInt(0),
   });
 
   it("claims nothing is hidden when the list is exactly the page size", async () => {
@@ -248,13 +249,23 @@ describe("getBillingOverview — per client and per nurse", () => {
       {
         clinician_user_id: "u1", clinician_name: null, bills: BigInt(9),
         submitted: BigInt(6), paid: BigInt(4), denied: BigInt(2), billed_cents: BigInt(88_000),
+        paid_cents: BigInt(51_250),
       },
     ];
     const o = await getBillingOverview({ orgId: ORG });
     expect(o.byNurse[0]).toEqual({
       clinicianUserId: "u1", clinicianName: null, bills: 9,
-      submitted: 6, paid: 4, denied: 2, billedCents: 88_000,
+      submitted: 6, paid: 4, denied: 2, billedCents: 88_000, paidCents: 51_250,
     });
+  });
+
+  // Revenue per provider (Level-1 doc:106) is money, so it follows the totals:
+  // a draft was never raised and a voided bill was cancelled.
+  it("sums each clinician's billed and collected money without drafts or voided bills", async () => {
+    await getBillingOverview({ orgId: ORG });
+    const sql = find("JOIN visit v ON v.id = s.visit_id")!.sql.replace(/\s+/g, " ");
+    expect(sql).toContain("SUM(s.billed_amount_cents) FILTER (WHERE s.status NOT IN ('draft', 'voided'))");
+    expect(sql).toContain("SUM(s.paid_amount_cents) FILTER (WHERE s.status NOT IN ('draft', 'voided'))");
   });
 
   it("attributes a bill to the visit's clinician, not the bill's creator", async () => {

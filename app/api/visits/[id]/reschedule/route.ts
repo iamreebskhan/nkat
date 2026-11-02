@@ -47,8 +47,10 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
   // ... AND status = 'scheduled'), never on clinician. Without this line a
   // clinician holding another clinician's scheduled visit id could drag that
   // visit to a different day, on a colleague's calendar, and the colleague's
-  // next 9am would just have moved. See visit-access.ts.
-  const denied = await requireVisitAccess({ session, visitId: id });
+  // next 9am would just have moved. See visit-access.ts. The one exception is
+  // the practice's scheduler (schedule.manage.all): moving anyone's booked
+  // visit is that job, and it opens nothing else.
+  const denied = await requireVisitAccess({ session, visitId: id, access: "schedule" });
   if (denied) return denied;
   // Before parseJson deliberately: a refused caller learns nothing about the
   // body either, not even whether the timestamp they sent was well formed.

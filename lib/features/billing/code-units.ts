@@ -27,10 +27,20 @@ export type CodeUnits = Record<string, number>;
  *   - G0318 (HCPCS): Medicare prolonged home/residence E/M, per 15 minutes.
  *   - 99417 (CPT): prolonged outpatient/home E/M, per 15 minutes.
  *   - 99498 (CPT): each additional 30 minutes of advance care planning.
+ *   - 99439 (CPT): each additional 20 minutes of CCM clinical staff time.
+ *   - 99427 / 99425 (CPT): each additional 30 minutes of PCM, clinical staff /
+ *     the practitioner's own (0117).
  * A home E/M (99341–99350) is reported once per date of service, and 99497 is
  * reported once (more time is 99498), so units on any other code are refused.
  */
-export const PER_INCREMENT_CODES: ReadonlySet<string> = new Set(["G0318", "99417", "99498"]);
+export const PER_INCREMENT_CODES: ReadonlySet<string> = new Set([
+  "G0318", "99417", "99498", "99439", "99427", "99425",
+]);
+/** "G0318, 99417, 99498, 99439, 99427 and 99425": what unitErrors names. */
+const PER_INCREMENT_LIST = (() => {
+  const all = [...PER_INCREMENT_CODES];
+  return `${all.slice(0, -1).join(", ")} and ${all.at(-1)}`;
+})();
 
 /**
  * Pallio's cap on G0318 units per visit — vision §18.8. It is Pallio's policy,
@@ -85,7 +95,7 @@ export function unitErrors(codes: readonly string[], u: CodeUnits | null | undef
     if (!isUnitCount(n)) {
       out.push(`${code} units must be a whole number from 1 to ${MAX_UNITS_PER_LINE}.`);
     } else if (n > 1 && !PER_INCREMENT_CODES.has(code)) {
-      out.push(`${code} is billed once per visit; units apply only to G0318, 99417 and 99498.`);
+      out.push(`${code} is billed once per visit; units apply only to ${PER_INCREMENT_LIST}.`);
     }
   }
   return out;

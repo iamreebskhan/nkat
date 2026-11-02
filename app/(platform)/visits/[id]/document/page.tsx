@@ -18,7 +18,7 @@
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { use, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { JSONContent } from "@tiptap/react";
 
 import type { PacketFinding } from "@/lib/features/visits/audit-packet.service";
@@ -26,8 +26,12 @@ import type { PacketFinding } from "@/lib/features/visits/audit-packet.service";
 import { RuleSidebar } from "@/components/billing/rule-sidebar";
 import { TipTapEditor } from "@/components/editor/tiptap-editor";
 import { DiagnosisPicker } from "@/components/visits/diagnosis-picker";
+import { NewVisitComposer } from "@/components/visits/new-visit-composer";
+import { SeriesActions } from "@/components/visits/series-actions";
 import { NotePreview } from "@/components/visits/note-preview";
 import { SectionedNote } from "@/components/visits/sectioned-note";
+import { VisitTaskCard } from "@/components/care/tasks";
+import { VisitAcuityCard } from "@/components/visits/visit-acuity-card";
 import { VisitAddenda } from "@/components/visits/visit-addenda";
 import { VisitServicesPanel } from "@/components/visits/visit-services-panel";
 import { Button } from "@/components/ui/button";
@@ -54,6 +58,7 @@ import {
 import {
   computeTotalMinutes,
   daysRemainingInMedicareWindow,
+  hintDayLabel,
   isInsideMedicareWindow,
   visitTypeHistoryWarning,
 } from "@/lib/features/visits/visit-pure";
@@ -82,6 +87,22 @@ interface VisitTypeOption {
 /** The home E/M codes: the base code among a signed visit's codes. */
 const HOME_EM_CODES = new Set<string>([...NEW_PATIENT_HOME_CODES, ...ESTABLISHED_PATIENT_HOME_CODES]);
 
+/**
+ * Where the next visit starts by default: two weeks after this one at the
+ * same time of day, or two weeks from now, on the hour, when that is already
+ * past. Calendar days, so a clock change between the two keeps the time.
+ */
+function nextVisitDefault(v: VisitView, now: Date): string {
+  const base = new Date(v.startTime ?? v.scheduledStart ?? now);
+  const next = new Date(base);
+  next.setDate(next.getDate() + 14);
+  if (next.getTime() > now.getTime()) return next.toISOString();
+  const later = new Date(now);
+  later.setDate(later.getDate() + 14);
+  later.setMinutes(0, 0, 0);
+  return later.toISOString();
+}
+
 export default function VisitDocumentPage({
   params,
 }: {
@@ -96,6 +117,14 @@ export default function VisitDocumentPage({
   // failed save/submit doesn't unmount the editor and eat unsaved work.
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Booking the next visit from here, while still with the patient (Level-1
+  // doc:42); it was only possible from the schedule page.
+  const [schedulingNext, setSchedulingNext] = useState(false);
+  // Its default start, worked out when the form opens (never during render).
+  const [nextDefault, setNextDefault] = useState<string | undefined>(undefined);
+  const [nextBooked, setNextBooked] = useState<
+    { id: string; scheduledStart: string; clinicianName: string | null } | null
+  >(null);
 
   // Local form state
   const [doc, setDoc] = useState<Doc>(null);
@@ -159,6 +188,10 @@ export default function VisitDocumentPage({
   const [canSignAddendum, setCanSignAddendum] = useState(false);
   /** Whoever may read the audit log gets a link to this visit's trail (audit R24). */
   const [canViewAudit, setCanViewAudit] = useState(false);
+  /** May give the acuity at this visit (patient.acuity.edit, 0115). */
+  const [canJudgeAcuity, setCanJudgeAcuity] = useState(false);
+  /** May give the team a task from this visit (patients.edit, 0116). */
+  const [canGiveTasks, setCanGiveTasks] = useState(false);
   /** This visit's diagnoses (ICD-10), first = primary. Saved with the visit. */
   const [diagnoses, setDiagnoses] = useState<string[]>([]);
   /** Note-vs-superbill findings. Null until loaded, [] when there is nothing to say. */
@@ -176,6 +209,9 @@ export default function VisitDocumentPage({
    */
   const [visitTypes, setVisitTypes] = useState<VisitTypeOption[] | null>(null);
   const [canEditType, setCanEditType] = useState(false);
+  /** May cancel the visit or mark it a no-show (visits.submit). */
+  const [canCloseVisit, setCanCloseVisit] = useState(false);
+  const [closingVisit, setClosingVisit] = useState(false);
   /** Pallio's own history for this patient before this visit, the visit left out. */
   const [typeHint, setTypeHint] = useState<VisitTypeHint | null>(null);
   /** The type picked in the card, not yet applied. */
@@ -235,6 +271,12 @@ export default function VisitDocumentPage({
           return;
         }
         const v = data.data as VisitView;
+        // A PCM/CCM month's charge has no note to write (0117): its record is
+        // the time log, which the read page shows.
+        if (v.codingBasis === "care_management") {
+          window.location.replace(`/visits/${id}/view`);
+          return;
+        }
         // Whether the Visit type card below may offer a change; set from the
         // signed-in user's permissions further down.
         let mayChangeType = false;
@@ -278,12 +320,23 @@ export default function VisitDocumentPage({
           const md = await mr.json();
           if (md.success && !abandoned) {
             const perms: string[] = md.data?.permissions ?? [];
+            // A care-team member may read a colleague's visit and document
+            // none of it (visit-access.ts mayReadVisit): the read-only page.
+            // Only when who is asking is known: no id is no evidence either way.
+            const me: string | undefined = md.data?.userId;
+            if (me && !perms.includes("visits.view.all") && me !== v.clinicianUserId) {
+              window.location.replace(`/visits/${id}/view`);
+              return;
+            }
             // PATCH /visit-type needs visits.edit. A billing agent holds
             // visits.view.all without it, and would get a control that 403s.
             mayChangeType = perms.includes("visits.edit");
             setCanEditType(mayChangeType);
             setCanSignAddendum(perms.includes("visits.submit"));
+            setCanCloseVisit(perms.includes("visits.submit"));
             setCanViewAudit(perms.includes("audit.view"));
+            setCanJudgeAcuity(perms.includes("patient.acuity.edit"));
+            setCanGiveTasks(perms.includes("patients.edit"));
             setCanExportPacket(
               perms.includes("billing.superbills.export") ||
                 md.data?.role === "platform_admin",
@@ -375,6 +428,10 @@ export default function VisitDocumentPage({
   // Live CPT suggestion — pure, client-side.
   const suggestion = useMemo(() => {
     if (!visit) return null;
+    // A visit that did not happen bills nothing, so nothing is suggested.
+    if (visit.status === "cancelled" || visit.status === "no_show") return null;
+    // A PCM/CCM month is coded from its time log (0117), never from a ladder.
+    if (visit.codingBasis === "care_management") return null;
     // No ladder, no suggestion. The time bands come from code.typical_minutes
     // via /api/billing/code-bands; suggesting a billable code from a fallback
     // baked into the client is exactly the drift this replaced.
@@ -400,11 +457,20 @@ export default function VisitDocumentPage({
 
   // Signed = attested. Past this point the note is frozen and the server
   // rejects edits; the UI has to agree with it.
-  const locked =
+  const signed =
     visit !== null &&
     (["documented", "pending_billing", "billed"] as const).includes(
       visit.status as "documented" | "pending_billing" | "billed",
     );
+  // Cancelled or a no-show: the visit did not happen. Its note still takes a
+  // correction (why it did not happen is worth writing down), but it can be
+  // neither signed — the status machine has no move out of either — nor coded.
+  const closed = visit?.status === "cancelled" || visit?.status === "no_show";
+  const locked = signed;
+  // Cancelling and marking a no-show are status moves (visits.submit, the
+  // transition route's grant), offered only while the visit is still open.
+  const closable =
+    canCloseVisit && (visit?.status === "scheduled" || visit?.status === "in_progress");
 
   // More ACP minutes than the visit lasted: said beside the input, and Sign
   // refuses it, as the server does. Not on a signed visit, whose times can no
@@ -423,6 +489,46 @@ export default function VisitDocumentPage({
   const typeEditable =
     canEditType && (visit?.status === "scheduled" || visit?.status === "in_progress");
   const typeWarning = visit ? visitTypeHistoryWarning(visit.codingBasis, typeHint) : null;
+
+  // The panel beside the note — times, diagnoses, place of service, ACP
+  // minutes, telehealth — was saved only by Save draft or Sign, while every
+  // note section saved itself on blur. A diagnosis picked and left on screen
+  // was lost on navigating away, with no warning. It now saves itself shortly
+  // after a change, and leaving with a change not yet saved asks first.
+  const panelState = JSON.stringify([
+    startTime, stopTime, acpMinutes, diagnoses, placeOfService,
+    isTelehealth, telehealthModality, telehealthConsent,
+  ]);
+  /** The panel as last saved, in panelState's form. Null until the visit has loaded. */
+  const [savedPanel, setSavedPanel] = useState<string | null>(null);
+  // The baseline is the first render after loading finishes — after the
+  // patient read, which can pre-tick the intake consent — so nothing the page
+  // filled in by itself is saved without the clinician changing something.
+  // Set during render, the way React adjusts state that follows other state,
+  // rather than from an effect that would render twice.
+  if (!loading && visit && savedPanel === null) setSavedPanel(panelState);
+  const panelDirty = !locked && savedPanel !== null && savedPanel !== panelState;
+  /** The save as it stands when the timer fires: this render's codes and fields. */
+  const autosavePanel = useEffectEvent(async (snapshot: string) => {
+    if (await save()) setSavedPanel(snapshot);
+  });
+  useEffect(() => {
+    if (!panelDirty) return;
+    // Every change restarts the wait, so the save comes once typing stops.
+    // Save draft and Sign move the baseline themselves, which ends it.
+    const snapshot = panelState;
+    const t = setTimeout(() => void autosavePanel(snapshot), 1500);
+    return () => clearTimeout(t);
+  }, [panelDirty, panelState]);
+  useEffect(() => {
+    if (!panelDirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [panelDirty]);
 
   if (loading) return <div className="px-8 py-8 text-slate-500">Loading…</div>;
   if (loadError || !visit)
@@ -515,6 +621,12 @@ export default function VisitDocumentPage({
     }
   }
 
+  /** Save draft: the same save, and what it saved is now the baseline. */
+  async function saveDraft() {
+    const snapshot = panelState;
+    if (await save()) setSavedPanel(snapshot);
+  }
+
   async function submitForBilling() {
     // Said before the missing-code line: with the minutes in conflict nothing
     // is coded, and "need a code" would send the clinician the wrong way.
@@ -550,7 +662,11 @@ export default function VisitDocumentPage({
       }
       // A failed save must block the sign-off — otherwise the visit
       // transitions to billing with stale/unsaved documentation.
+      const snapshot = panelState;
       if (!(await save())) return;
+      // Saved, so a waiting autosave has nothing left to do — and must not
+      // PATCH the visit while it is being signed.
+      setSavedPanel(snapshot);
       const t1 = await fetch(`/api/visits/${id}/transition`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -722,20 +838,81 @@ export default function VisitDocumentPage({
     }
   }
 
+  /**
+   * Cancel the visit, or record that the patient was not there. There was no
+   * way to do either: a cancelled visit stayed "scheduled" for good and kept
+   * counting against the clinician's daily cap.
+   */
+  async function closeVisit(to: "cancelled" | "no_show") {
+    const question =
+      to === "cancelled"
+        ? "Cancel this visit? It is kept on the record as cancelled, frees its place in the day, and can no longer be signed or billed."
+        : "Mark this visit a no-show? It is kept on the record as a no-show, frees its place in the day, and can no longer be signed or billed.";
+    if (!window.confirm(question)) return;
+    setClosingVisit(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/visits/${id}/transition`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to }),
+      });
+      const d = await r.json();
+      if (!d.success) {
+        setError(d.error ?? "The visit could not be closed.");
+        return;
+      }
+      setVisit((v) => (v ? { ...v, status: to } : v));
+      void loadFindings();
+    } catch {
+      setError("Network error. Reload the page to see whether the visit was closed.");
+    } finally {
+      setClosingVisit(false);
+    }
+  }
+
   return (
     <div className="px-8 py-6 max-w-5xl">
       <header className="mb-5">
-        <Link
-          href={`/patients/${visit.patientId}`}
-          className="text-xs text-slate-500 hover:underline"
-        >
-          ← Patient
-        </Link>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <Link
+            href={`/patients/${visit.patientId}`}
+            className="text-xs text-slate-500 hover:underline"
+          >
+            ← Patient
+          </Link>
+          {/* The follow-up visit updates the care plan (Level-1 doc:59). From
+              an open visit the plan's edits are recorded against it, and
+              signing freezes the plan as it then stands. */}
+          <Link
+            href={`/patients/${visit.patientId}/care-plan${
+              visit.status === "scheduled" || visit.status === "in_progress" ? `?visitId=${id}` : ""
+            }`}
+            className="text-xs text-[var(--color-brand-700)] hover:underline"
+          >
+            {visit.status === "scheduled" || visit.status === "in_progress"
+              ? "Update the care plan for this visit →"
+              : "Care plan →"}
+          </Link>
+          {!schedulingNext && (
+            <button
+              type="button"
+              onClick={() => {
+                setNextBooked(null);
+                setNextDefault(nextVisitDefault(visit, new Date()));
+                setSchedulingNext(true);
+              }}
+              className="text-xs text-[var(--color-brand-700)] hover:underline"
+            >
+              Schedule the next visit
+            </button>
+          )}
+        </div>
         <h1 className="font-display text-2xl tracking-tight mt-1">
           Document visit · {visit.visitTypeLabel}
         </h1>
         <p className="text-slate-600 mt-1 tabular text-sm">
-          {visit.status} · {totalMinutes} min documented
+          {visit.status.replace(/_/g, " ")} · {totalMinutes} min documented
         </p>
         {/* Whose note this is, on the screen that attests it (audit R32). */}
         {patient && (
@@ -744,7 +921,83 @@ export default function VisitDocumentPage({
             {patient.primaryMemberId ?? "—"}
           </p>
         )}
+        {closable && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => closeVisit("cancelled")}
+              loading={closingVisit}
+            >
+              Cancel visit
+            </Button>
+            {/* A no-show is a booked visit the patient missed: only before it starts. */}
+            {visit.status === "scheduled" && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => closeVisit("no_show")}
+                loading={closingVisit}
+              >
+                Mark no-show
+              </Button>
+            )}
+          </div>
+        )}
+        {visit.seriesId && visit.status === "scheduled" && visit.scheduledStart && (
+          <SeriesActions
+            visitId={id}
+            scheduledStart={visit.scheduledStart}
+            onCancelled={() => setVisit((v) => (v ? { ...v, status: "cancelled" } : v))}
+            onMoved={(start) => setVisit((v) => (v ? { ...v, scheduledStart: start } : v))}
+          />
+        )}
       </header>
+
+      {schedulingNext && (
+        <NewVisitComposer
+          title="Schedule the next visit"
+          description="Booked for this patient. The clinician and a time two weeks on are filled in; choose the visit type."
+          lockedPatient={{
+            id: visit.patientId,
+            name: patient ? `${patient.firstName} ${patient.lastName}` : "This patient",
+          }}
+          defaultClinicianUserId={visit.clinicianUserId}
+          defaultStartAt={nextDefault}
+          onCreated={(nextId, at) => {
+            setSchedulingNext(false);
+            setNextBooked({ id: nextId, ...at });
+          }}
+          onCancel={() => setSchedulingNext(false)}
+        />
+      )}
+      {nextBooked && (
+        <div
+          role="status"
+          className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-600/30"
+        >
+          <span>
+            Next visit booked for {new Date(nextBooked.scheduledStart).toLocaleString()}
+            {nextBooked.clinicianName && ` with ${nextBooked.clinicianName}`}.
+          </span>
+          <Link href={`/visits/${nextBooked.id}/document`} className="text-xs font-medium underline">
+            Open it
+          </Link>
+        </div>
+      )}
+
+      {closed && (
+        <div
+          role="status"
+          className="mb-4 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700 ring-1 ring-inset ring-slate-300"
+        >
+          {visit.status === "cancelled"
+            ? "This visit was cancelled."
+            : "This visit was marked a no-show."}{" "}
+          It stays on the record and can&rsquo;t be signed or billed. The note stays open for
+          writing down why.
+        </div>
+      )}
 
       <MedicareWindowBanner visit={visit} />
 
@@ -800,7 +1053,7 @@ export default function VisitDocumentPage({
         </div>
       )}
 
-      {locked && (
+      {signed && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700 ring-1 ring-inset ring-slate-300">
           <span>
             Signed{visit.signerName ? ` by ${visit.signerName}` : ""}
@@ -882,7 +1135,9 @@ export default function VisitDocumentPage({
                   // the type, and it reads them only on mount.
                   key={noteKey}
                   visitId={id}
+                  patientId={visit.patientId}
                   readOnly={locked}
+                  signable={!closed}
                   onSaved={loadFindings}
                   registerFlush={(fn) => {
                     flushNote.current = fn;
@@ -979,7 +1234,7 @@ export default function VisitDocumentPage({
           )}
 
           {/* Corrections to the attested note (audit R15). */}
-          {locked && <VisitAddenda visitId={id} canSign={canSignAddendum} />}
+          {signed && <VisitAddenda visitId={id} canSign={canSignAddendum} />}
           <VisitServicesPanel visitId={id} visitType={visit.visitType} readOnly={locked} />
         </div>
 
@@ -1229,6 +1484,16 @@ export default function VisitDocumentPage({
             </CardContent>
           </Card>
 
+          <VisitAcuityCard
+            visitId={id}
+            open={visit.status === "scheduled" || visit.status === "in_progress"}
+            canEdit={canJudgeAcuity}
+            patientAcuity={patient?.acuity ?? null}
+          />
+
+          {/* Tasks to the team from this visit (0116, doc:40). */}
+          {canGiveTasks && <VisitTaskCard visitId={id} patientId={visit.patientId} />}
+
           {/*
             A signed visit shows the codes it was signed with, read from the
             visit. The live suggestion used to stay here, re-run on whatever
@@ -1239,7 +1504,7 @@ export default function VisitDocumentPage({
             and with it the "codes are unavailable" message, which is
             addressed to someone who has not signed yet.
           */}
-          {locked && (
+          {signed && (
             <Card>
               <CardHeader>
                 <CardTitle>Signed codes</CardTitle>
@@ -1388,7 +1653,17 @@ export default function VisitDocumentPage({
 
       <div className="mt-6 flex items-center justify-between gap-3">
         <p className="text-xs text-slate-500" aria-live="polite">
-          {saving ? "Saving…" : saved ? saved : ""}
+          {/* A failed save is not retried until the next change, so "saving
+              shortly" is not promised beside an error. */}
+          {saving
+            ? "Saving…"
+            : panelDirty
+              ? error
+                ? "Unsaved changes"
+                : "Unsaved changes — saving shortly"
+              : saved
+                ? saved
+                : ""}
         </p>
         {error && (
           <p role="alert" className="text-sm text-red-700">
@@ -1396,10 +1671,10 @@ export default function VisitDocumentPage({
           </p>
         )}
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={save} loading={saving} disabled={locked}>
+          <Button variant="secondary" onClick={saveDraft} loading={saving} disabled={locked}>
             Save draft
           </Button>
-          <Button onClick={submitForBilling} loading={submitting} disabled={locked}>
+          <Button onClick={submitForBilling} loading={submitting} disabled={locked || closed}>
             {/* Nothing goes to billing for a Not billed visit type (audit R18). */}
             {nonBillable ? "Sign" : "Sign + submit for billing"}
           </Button>
@@ -1447,8 +1722,16 @@ function CodeRow({
 
 function MedicareWindowBanner({ visit }: { visit: VisitView }) {
   const dosIso = visit.startTime ?? visit.scheduledStart;
-  // A Not billed visit type has no claim to file, so no filing window (audit R18).
-  if (!dosIso || visit.status === "billed" || visit.codingBasis === "non_billable") return null;
+  // A Not billed visit type has no claim to file, so no filing window (audit
+  // R18); nor does a visit that did not happen.
+  if (
+    !dosIso ||
+    visit.status === "billed" ||
+    visit.status === "cancelled" ||
+    visit.status === "no_show" ||
+    visit.codingBasis === "non_billable"
+  )
+    return null;
   const dos = new Date(dosIso);
   if (!isInsideMedicareWindow(dos)) {
     // Past the window — only relevant if visit isn't billed yet.
@@ -1485,11 +1768,8 @@ function typeWarningLine(kind: "looks_new" | "looks_established", h: VisitTypeHi
   if (kind === "looks_new" || !h.lastVisitAt) {
     return `Pallio has no visit for this patient in the ${NEW_PATIENT_LOOKBACK_YEARS} years before this visit. If your practice has not seen them in that time either, this is a New patient visit.`;
   }
-  const on = new Date(h.lastVisitAt).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  // The practice's day, not the viewer's (0107).
+  const on = hintDayLabel(h);
   return `${h.lastVisitStatus === "scheduled" ? "Booked for" : "Seen on"} ${on}: payers treat a new-patient code within ${NEW_PATIENT_LOOKBACK_YEARS} years of a visit by this practice as established.`;
 }
 

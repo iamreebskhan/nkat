@@ -37,7 +37,7 @@ export interface VisitRowLike {
 }
 
 export interface DailyDataPoint {
-  date: string; // YYYY-MM-DD
+  date: string; // YYYY-MM-DD, or YYYY-MM on a monthly trend
   value: number;
 }
 
@@ -53,8 +53,18 @@ export function denialRateTrend(args: {
   denials: DenialRowLike[];
   fromDate: Date;
   toDate: Date;
+  /**
+   * "month" draws a point per calendar month ('YYYY-MM'), each the month's
+   * denied $ over its billed $, for a window too long for a bar a day
+   * (report-range.ts trendBucket). Days by default.
+   */
+  bucket?: "day" | "month";
 }): DailyDataPoint[] {
-  const days = enumerateUtcDays(args.fromDate, args.toDate);
+  const monthly = args.bucket === "month";
+  const keyOf = (d: Date | string) => (monthly ? isoDay(d).slice(0, 7) : isoDay(d));
+  const days = monthly
+    ? enumerateUtcMonths(args.fromDate, args.toDate)
+    : enumerateUtcDays(args.fromDate, args.toDate);
   const billedByDay = new Map<string, number>();
   const deniedByDay = new Map<string, number>();
 
@@ -62,11 +72,11 @@ export function denialRateTrend(args: {
     // Same exclusion as revenueSummary: a draft is not a charge and a voided
     // bill was cancelled, so neither belongs in the rate's denominator.
     if (sb.status === "draft" || sb.status === "voided") continue;
-    const k = isoDay(sb.dateOfService);
+    const k = keyOf(sb.dateOfService);
     billedByDay.set(k, (billedByDay.get(k) ?? 0) + sb.billedAmountCents);
   }
   for (const d of args.denials) {
-    const k = isoDay(d.claimDateOfService ?? d.deniedAt);
+    const k = keyOf(d.claimDateOfService ?? d.deniedAt);
     deniedByDay.set(k, (deniedByDay.get(k) ?? 0) + d.deniedAmountCents);
   }
 
@@ -236,6 +246,24 @@ function enumerateUtcDays(from: Date, to: Date): string[] {
   end.setUTCHours(0, 0, 0, 0);
   for (let t = start.getTime(); t <= end.getTime(); t += 86_400_000) {
     out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/** 'YYYY-MM' for every month the window touches, both ends included. */
+function enumerateUtcMonths(from: Date, to: Date): string[] {
+  const out: string[] = [];
+  let y = from.getUTCFullYear();
+  let m = from.getUTCMonth();
+  const endY = to.getUTCFullYear();
+  const endM = to.getUTCMonth();
+  while (y < endY || (y === endY && m <= endM)) {
+    out.push(`${y}-${String(m + 1).padStart(2, "0")}`);
+    m += 1;
+    if (m === 12) {
+      m = 0;
+      y += 1;
+    }
   }
   return out;
 }

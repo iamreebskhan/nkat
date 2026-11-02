@@ -15,6 +15,7 @@ import {
   CreatePatientSchema,
   PATIENT_STATUSES,
 } from "@/lib/features/patients/patient.types";
+import { referralTriageAcuity } from "@/lib/features/referrals/referral.service";
 
 const ListSchema = z.object({
   search: z.string().min(1).max(100).optional(),
@@ -69,6 +70,19 @@ export async function POST(req: NextRequest): Promise<Response> {
     session.role !== "platform_admin"
   ) {
     return fail("patients.careteam.edit permission required to assign the care team.", { status: 403 });
+  }
+
+  // Same gate as PATCH: an acuity is a clinical judgment (Level-1 doc:26). The
+  // one a triage gave, carried over as its referral is admitted, is the nurse's,
+  // so intake may bring that across and may not give its own.
+  const acuity = body.clinical.acuity;
+  if (acuity && !session.permissions.includes("patient.acuity.edit") && session.role !== "platform_admin") {
+    const triaged = body.referralId
+      ? await referralTriageAcuity({ orgId: session.orgId, referralId: body.referralId })
+      : null;
+    if (triaged !== acuity) {
+      return fail("patient.acuity.edit permission required to give an acuity.", { status: 403 });
+    }
   }
 
   try {

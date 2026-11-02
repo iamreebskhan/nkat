@@ -112,6 +112,10 @@ export async function logDenial(args: {
     if (!sb[0]) throw new NotFoundError("Superbill not found.");
     const payerId = sb[0].payer_id ?? null;
 
+    // One open denial per claim, code and reason (superbill_denial_pending_unique_idx).
+    // A second one used to hit that index as a raw unique violation, which
+    // reached the biller as a 500 and "Something went wrong" with nothing to
+    // act on. ON CONFLICT leaves the open one alone and says so instead.
     const rows = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO superbill_denial (
         org_id, superbill_id, payer_id, cpt_code,
@@ -128,8 +132,15 @@ export async function logDenial(args: {
         ${payload.deniedAmountCents ?? 0},
         ${payload.deniedAt}::timestamptz
       )
+      ON CONFLICT (superbill_id, cpt_code, carc_code) WHERE decision = 'pending' DO NOTHING
       RETURNING id
     `;
+    if (!rows[0]) {
+      throw new ValidationError(
+        `This claim already has an open denial for CPT ${payload.cptCode} with CARC ${payload.carcCode}. ` +
+          "Open it from the denials list and work it there, rather than logging it twice.",
+      );
+    }
 
     // Keep the superbill's own status machine in sync: a logged denial moves
     // a submitted/partially-paid superbill to 'denied'. Opportunistic — a
@@ -202,7 +213,21 @@ export async function getDenial(args: {
        WHERE id = ${args.id}::uuid AND org_id = ${args.orgId}::uuid
        LIMIT 1
     `;
-    return rows[0] ? rowToView(rows[0]) : null;
+    if (!rows[0]) return null;
+    // The claim went back out after this denial was raised — from another
+    // denial on the same claim, or from the queue. A corrected claim covers
+    // every line, so this denial's page has to say so: on the live test the
+    // G0318 denial asked for a refile of a claim the 99350 denial had already
+    // resubmitted, and nothing on it said that had happened.
+    const resent = await tx.$queryRaw<{ at: Date | null }[]>`
+      SELECT max(a.at) AS at
+        FROM superbill_activity a
+       WHERE a.superbill_id = ${rows[0].superbill_id}::uuid
+         AND a.org_id = ${args.orgId}::uuid
+         AND a.kind = 'resubmitted'
+         AND a.at >= ${rows[0].created_at}::timestamptz
+    `;
+    return { ...rowToView(rows[0]), claimResubmittedAt: resent[0]?.at?.toISOString() ?? null };
   });
 }
 
@@ -326,9 +351,11 @@ export async function summarizeDenials(args: {
         payer_id: string | null;
         denied_amount_cents: bigint | number;
         decision: string;
+        outcome?: string | null;
+        outcome_amount_cents?: bigint | number | null;
       }[]
     >`
-      SELECT carc_code, payer_id, denied_amount_cents, decision
+      SELECT carc_code, payer_id, denied_amount_cents, decision, outcome, outcome_amount_cents
         FROM superbill_denial
        WHERE org_id = ${args.orgId}::uuid
          AND (${args.decision ?? null}::text IS NULL OR decision = ${args.decision ?? null})
@@ -341,6 +368,8 @@ export async function summarizeDenials(args: {
         payerId: r.payer_id,
         deniedAmountCents: Number(r.denied_amount_cents),
         decision: r.decision,
+        outcome: r.outcome ?? null,
+        outcomeAmountCents: r.outcome_amount_cents == null ? null : Number(r.outcome_amount_cents),
       })),
     );
     // Names for the by-payer rows and the payer filter, read from payer
@@ -486,6 +515,7 @@ export async function markRefiled(args: {
   // denied → submitted is already a legal move ("refiled claims go out
   // again"). Tolerate a claim that is not currently denied: the claims queue
   // may have sent it first, and then the refile record is still true.
+  let claimAlreadyResent = false;
   try {
     await markStatus({
       orgId: args.orgId,
@@ -522,17 +552,34 @@ export async function markRefiled(args: {
         `This claim is ${status ?? "not denied"}, so it cannot be refiled from here. Check its status on the claims queue.`,
       );
     }
+    claimAlreadyResent = true;
   }
 
   await withOrgContext(args.orgId, async (tx) => {
-    await tx.$executeRaw`
+    const stamped = await tx.$queryRaw<{ visit_id: string | null }[]>`
       UPDATE superbill_denial SET
         refiled_at = COALESCE(${args.refiledAt ?? null}::timestamptz, now()),
         decision_notes = COALESCE(${args.notes ?? null}, decision_notes),
         updated_at = now()
       WHERE id = ${args.id}::uuid AND decision = 'refile'
         AND org_id = ${args.orgId}::uuid
+      RETURNING (SELECT s.visit_id FROM superbill s
+                  WHERE s.id = superbill_denial.superbill_id AND s.org_id = superbill_denial.org_id) AS visit_id
     `;
+    const row = Array.isArray(stamped) ? stamped[0] : undefined;
+    if (!row) return;
+    // The refile itself, in the audit log. Only the claim's move to submitted
+    // was recorded (by markStatus), so a refile on a claim that had already
+    // gone back out — the queue's, or another denial's on the same claim —
+    // left no trace there at all. Ids and a flag only.
+    await writeAudit(tx, {
+      orgId: args.orgId,
+      userId: args.actorUserId ?? null,
+      action: "denial_refile",
+      targetType: "denial",
+      targetId: args.id,
+      payload: { visitId: row.visit_id, claimAlreadyResent },
+    });
   });
 }
 

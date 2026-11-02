@@ -2,12 +2,15 @@
  * MFA enrollment + verification.
  *
  * Flow:
- *   1. POST /api/auth/mfa/setup → server mints secret, stores it
- *      *unconfirmed* (mfa_enrolled_at NULL), returns base32 + otpauth URI.
+ *   1. POST /api/auth/mfa/setup → server mints secret, stores it as the
+ *      PENDING secret (0121), returns base32 + otpauth URI. An authenticator
+ *      already enrolled stays in force meanwhile: setup used to overwrite it
+ *      and clear mfa_enrolled_at, so an abandoned setup — or a stolen session
+ *      starting one — left the account with no second factor.
  *   2. User adds to authenticator app, enters first code.
  *   3. POST /api/auth/mfa/verify { code } → on first valid code, server
- *      flips mfa_enrolled_at = now() and mints 10 recovery codes
- *      (returned exactly once).
+ *      makes the pending secret THE secret, flips mfa_enrolled_at = now() and
+ *      mints 10 recovery codes (returned exactly once).
  *
  * Login challenge:
  *   - login() (Phase 9) returns the session cookie *only* if the user
@@ -45,8 +48,7 @@ export async function setupMfa(args: {
 
   await prisma.$executeRaw`
     UPDATE app_user
-       SET mfa_secret = ${base32},
-           mfa_enrolled_at = NULL
+       SET mfa_pending_secret = ${base32}
      WHERE id = ${args.userId}::uuid
   `;
 
@@ -76,13 +78,16 @@ export async function confirmMfaSetup(args: {
   code: string;
 }): Promise<VerifyMfaResult> {
   const rows = await prisma.$queryRaw<
-    { mfa_secret: string | null; mfa_enrolled_at: Date | null }[]
+    { mfa_secret: string | null; mfa_enrolled_at: Date | null; mfa_pending_secret: string | null }[]
   >`
-    SELECT mfa_secret, mfa_enrolled_at FROM app_user WHERE id = ${args.userId}::uuid LIMIT 1
+    SELECT mfa_secret, mfa_enrolled_at, mfa_pending_secret FROM app_user WHERE id = ${args.userId}::uuid LIMIT 1
   `;
   const row = rows[0];
-  if (!row || !row.mfa_secret) return { error: "no_pending_setup" };
-  if (!verifyTotp(row.mfa_secret, args.code)) return { error: "bad_code" };
+  // The pending secret; or, for a setup started before 0121, the secret it
+  // wrote with no enrolment date.
+  const pending = row?.mfa_pending_secret ?? (row && !row.mfa_enrolled_at ? row.mfa_secret : null);
+  if (!pending) return { error: "no_pending_setup" };
+  if (!verifyTotp(pending, args.code)) return { error: "bad_code" };
 
   const recoveryCodes = Array.from({ length: RECOVERY_CODE_COUNT }, () =>
     randomBytes(RECOVERY_CODE_BYTES).toString("hex"),
@@ -93,7 +98,9 @@ export async function confirmMfaSetup(args: {
 
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`
-      UPDATE app_user SET mfa_enrolled_at = now() WHERE id = ${args.userId}::uuid
+      UPDATE app_user
+         SET mfa_secret = ${pending}, mfa_pending_secret = NULL, mfa_enrolled_at = now()
+       WHERE id = ${args.userId}::uuid
     `;
     // Replace any old recovery codes from a previous enrollment.
     await tx.$executeRaw`
@@ -151,7 +158,7 @@ export async function verifyMfaChallenge(args: {
 export async function disableMfa(userId: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`
-      UPDATE app_user SET mfa_secret = NULL, mfa_enrolled_at = NULL WHERE id = ${userId}::uuid
+      UPDATE app_user SET mfa_secret = NULL, mfa_pending_secret = NULL, mfa_enrolled_at = NULL WHERE id = ${userId}::uuid
     `;
     await tx.$executeRaw`
       DELETE FROM mfa_recovery_code WHERE user_id = ${userId}::uuid

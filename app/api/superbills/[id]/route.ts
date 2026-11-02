@@ -34,6 +34,8 @@ const PatchSchema = z.object({
     modifiers: z.array(z.string().min(1).max(4)).max(20).optional(),
     /** Where the visit took place (audit R23): a two-digit CMS code. */
     placeOfServiceCode: z.string().regex(/^\d{2}$/).optional(),
+    /** Take the plan and member ID from the chart as they are now (0120). */
+    refreshInsurance: z.literal(true).optional(),
   }),
   overrides: z
     .array(

@@ -25,6 +25,7 @@ import { z } from "zod";
 import { env } from "@/lib/env";
 import { getSettingValue, isClaudeModel } from "@/lib/features/admin/runtime-settings";
 import { assertNoPhi } from "./phi-guard";
+import { visitTimeQuestionCode } from "./visit-time-question";
 
 /**
  * Defaults, overridable from /admin/settings without a deploy.
@@ -200,7 +201,13 @@ export async function parseRuleQuery(query: string): Promise<ParsedQuery> {
     throw new Error("parseRuleQuery: unexpected response shape from Anthropic");
   }
   const text = block.text.trim();
-  return ParsedQuery.parse(extractJsonObject(text));
+  const parsed = ParsedQuery.parse(extractJsonObject(text));
+  // A question that states a home visit's time names the code that visit
+  // bills, as the CPT suggester codes it: the model was given the G0318
+  // thresholds and still answered 145 minutes, new patient, Medicare with
+  // 99345 (cp-07). See visit-time-question.ts.
+  const byVisit = visitTimeQuestionCode(query, parsed.payer);
+  return byVisit ? { ...parsed, cptCode: byVisit } : parsed;
 }
 
 /**
@@ -309,7 +316,12 @@ export async function synthesizeRuleAnswer(args: {
     .filter(Boolean)
     .join("\n\n---\n\n");
 
-  assertNoPhi([query, context], "synthesizeRuleAnswer");
+  // The question and the structured rule are held to the prompt bar. The
+  // chunks are payer documents, which are made of dates ("revised
+  // 01/01/2026"), and are held to the document bar they passed at ingestion
+  // (phi-guard.ts): read as a prompt, one dated chunk refused the synthesis.
+  assertNoPhi(structuredRule ? [query, structuredRule] : query, "synthesizeRuleAnswer");
+  if (chunks.length > 0) assertNoPhi(chunks, "synthesizeRuleAnswer.chunks", "document");
   const model = await synthesizerModel();
   const response = await withTransientRetry(() =>
     client().messages.create({

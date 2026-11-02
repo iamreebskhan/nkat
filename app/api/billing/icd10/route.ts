@@ -24,6 +24,10 @@ const READ_ANY = [
   "visits.edit",
   "visits.view.own",
   "visits.view.all",
+  // The chart's problem list (0114) and a referral's diagnosis are coded
+  // too, by whoever edits the chart or takes the referral.
+  "patients.edit",
+  "patients.create",
 ];
 
 export async function GET(req: NextRequest): Promise<Response> {

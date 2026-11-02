@@ -10,13 +10,19 @@
  *
  * On finish: POST /api/patients with the full `CreatePatient`
  * payload. Redirects to /patients/[id] on success.
+ *
+ * ?referralId= admits a referral (Level-1 doc:25, 0111): the wizard opens with
+ * what intake took down on it, and the patient is created with the referral's
+ * id, which marks the referral admitted in the same transaction.
  */
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { use, useEffect, useState } from "react";
 
 import { Field, Select, TextArea, TextInput } from "@/components/forms/field";
+import { EthnicityField, LanguageField, RacePicker } from "@/components/patients/demographic-fields";
 import { InfoTip } from "@/components/ui/info-tip";
 import { Wizard, type WizardStep } from "@/components/wizard/wizard";
 import {
@@ -30,7 +36,10 @@ import {
   CreatePatientSchema,
   type CreatePatient,
 } from "@/lib/features/patients/patient.types";
+import { isOpenStage, type ReferralView } from "@/lib/features/referrals/referral.types";
 import { isValidNpi } from "@/lib/features/team/clinician";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const EMPTY: CreatePatient = {
   demographics: {
@@ -48,9 +57,94 @@ const EMPTY: CreatePatient = {
   careTeam: {},
 };
 
-export default function NewPatientPage() {
+/**
+ * The intake a referral starts: what was taken down on it. The plan and member
+ * ID are the referral's; the coverage start comes from its latest active check
+ * of that same plan. A plan sold in one state fills the coverage state, as
+ * picking it does.
+ */
+function fromReferral(r: ReferralView, payers: { id: string; states: string[] }[]): CreatePatient {
+  const opt = (s: string | null) => s ?? undefined;
+  const check = r.verifications.find((v) => v.result === "active" && (!r.payerId || v.payerId === r.payerId));
+  const payerId = r.payerId ?? check?.payerId ?? null;
+  const payer = payers.find((p) => p.id === payerId);
+  return {
+    ...EMPTY,
+    demographics: {
+      ...EMPTY.demographics,
+      firstName: r.firstName,
+      lastName: r.lastName,
+      dateOfBirth: r.dateOfBirth ?? "",
+      phone: opt(r.phone),
+    },
+    insurance: {
+      primaryPayerId: opt(payerId),
+      insuranceState: payer && payer.states.length === 1 ? payer.states[0] : undefined,
+      primaryMemberId: opt(r.memberId ?? check?.memberId ?? null),
+      insuranceEffectiveDate: opt(check?.coverageEffectiveOn ?? null),
+    },
+    clinical: {
+      primaryDiagnosisIcd10: opt(r.primaryDiagnosisIcd10),
+      referringPhysicianName: opt(r.referringProviderName),
+      referringPhysicianNpi: opt(r.referringProviderNpi),
+      palliativeReferralReason: opt(r.reason),
+      // The triage's preliminary acuity, until the NP's visit sets its own.
+      acuity: r.latestAcuity ?? undefined,
+    },
+    referralId: r.id,
+  };
+}
+
+export default function NewPatientPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ referralId?: string | string[] }>;
+}) {
   const router = useRouter();
+  const asked = use(searchParams).referralId;
+  const referralId = typeof asked === "string" && UUID.test(asked) ? asked : null;
   const [data, setData] = useState<CreatePatient>(EMPTY);
+  // The referral this intake admits, once read.
+  const [referral, setReferral] = useState<ReferralView | null>(null);
+  const [referralProblem, setReferralProblem] = useState<string | null>(null);
+  const [referralLoading, setReferralLoading] = useState(referralId !== null);
+  useEffect(() => {
+    if (!referralId) return;
+    let abandoned = false;
+    Promise.all([
+      fetch(`/api/referrals/${referralId}`).then((r) => r.json()),
+      fetch("/api/billing/payers")
+        .then((r) => r.json())
+        .catch(() => null),
+    ])
+      .then(([d, p]) => {
+        if (abandoned) return;
+        if (!d.success) {
+          setReferralProblem(d.error ?? "Referral not found.");
+          return;
+        }
+        const r: ReferralView = d.data;
+        setReferral(r);
+        if (r.stage === "admitted") {
+          setReferralProblem("This referral was already admitted.");
+          return;
+        }
+        if (!isOpenStage(r.stage)) {
+          setReferralProblem("This referral is closed. Reopen it before admitting.");
+          return;
+        }
+        setData(fromReferral(r, p?.success ? (p.data?.payers ?? []) : []));
+      })
+      .catch(() => {
+        if (!abandoned) setReferralProblem("Network error — the referral did not load.");
+      })
+      .finally(() => {
+        if (!abandoned) setReferralLoading(false);
+      });
+    return () => {
+      abandoned = true;
+    };
+  }, [referralId]);
 
   function setDemographics<K extends keyof CreatePatient["demographics"]>(
     key: K,
@@ -91,6 +185,9 @@ export default function NewPatientPage() {
   const [payers, setPayers] = useState<
     { id: string; name: string; states: string[]; ruleStates?: string[] }[]
   >([]);
+  // The payers this practice picked at onboarding, offered first. The list
+  // held every payer in OH, NC and SC, the practice's own among 19 others.
+  const [orgPayerIds, setOrgPayerIds] = useState<string[]>([]);
   useEffect(() => {
     fetch("/api/billing/payers")
       .then((r) => r.json())
@@ -98,6 +195,7 @@ export default function NewPatientPage() {
         if (!d.success) return;
         const list = d.data?.payers ?? d.data?.rows ?? [];
         setPayers(Array.isArray(list) ? list : []);
+        setOrgPayerIds(Array.isArray(d.data?.orgPayerIds) ? d.data.orgPayerIds : []);
       })
       .catch(() => undefined);
   }, []);
@@ -109,10 +207,17 @@ export default function NewPatientPage() {
   // hard-fail the whole intake at the final step. ?active=1 keeps the picker
   // consistent with what the service accepts.
   const [roster, setRoster] = useState<{ userId: string; fullName: string | null; email: string }[] | null>(null);
+  // An acuity is a clinical judgment, gated as the POST gates it. A triage's,
+  // carried over from the referral, shows here without being theirs to change.
+  const [canGiveAcuity, setCanGiveAcuity] = useState(false);
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
       .then((me) => {
+        setCanGiveAcuity(
+          me.success &&
+            ((me.data?.permissions ?? []).includes("patient.acuity.edit") || me.data?.role === "platform_admin"),
+        );
         const can =
           me.success &&
           ((me.data?.permissions ?? []).includes("patients.careteam.edit") ||
@@ -196,6 +301,23 @@ export default function NewPatientPage() {
                 <option value="unknown">Unknown</option>
               </Select>
             </Field>
+            <div className="md:col-span-2">
+              <RacePicker
+                idPrefix="race"
+                value={data.demographics.raceCodes ?? []}
+                onChange={(codes) => setDemographics("raceCodes", codes.length > 0 ? codes : undefined)}
+              />
+            </div>
+            <EthnicityField
+              id="ethnicity"
+              value={data.demographics.ethnicity ?? ""}
+              onChange={(e) => setDemographics("ethnicity", e.target.value || undefined)}
+            />
+            <LanguageField
+              id="language"
+              value={data.demographics.preferredLanguage ?? ""}
+              onChange={(e) => setDemographics("preferredLanguage", e.target.value || undefined)}
+            />
             <Field id="addr" label="Address" optional>
               <TextInput
                 id="addr"
@@ -394,12 +516,24 @@ export default function NewPatientPage() {
                 }}
               >
                 <option value="">Select…</option>
-                {payers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {p.states.length > 0 ? ` · ${p.states.join("/")}` : ""}
-                  </option>
-                ))}
+                {(() => {
+                  const option = (p: (typeof payers)[number]) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                      {p.states.length > 0 ? ` · ${p.states.join("/")}` : ""}
+                    </option>
+                  );
+                  const ours = payers.filter((p) => orgPayerIds.includes(p.id));
+                  if (ours.length === 0) return payers.map(option);
+                  return (
+                    <>
+                      <optgroup label="Your practice's payers">{ours.map(option)}</optgroup>
+                      <optgroup label="Other payers">
+                        {payers.filter((p) => !orgPayerIds.includes(p.id)).map(option)}
+                      </optgroup>
+                    </>
+                  );
+                })()}
               </Select>
             </Field>
             <Field
@@ -549,6 +683,7 @@ export default function NewPatientPage() {
               <Field id="acuity" label="Acuity" optional>
                 <select
                   id="acuity"
+                  disabled={!canGiveAcuity}
                   value={data.clinical.acuity ?? ""}
                   onChange={(e) =>
                     setClinical(
@@ -556,7 +691,7 @@ export default function NewPatientPage() {
                       (e.target.value || undefined) as CreatePatient["clinical"]["acuity"],
                     )
                   }
-                  className="h-10 w-full px-3 rounded-md border border-slate-300 bg-white text-sm"
+                  className="h-10 w-full px-3 rounded-md border border-slate-300 bg-white text-sm disabled:bg-slate-50 disabled:text-slate-600"
                 >
                   <option value="">— unassigned —</option>
                   <option value="low">Low</option>
@@ -564,6 +699,9 @@ export default function NewPatientPage() {
                   <option value="high">High</option>
                   <option value="critical">Critical</option>
                 </select>
+                {!canGiveAcuity && (
+                  <p className="text-xs text-slate-500 mt-1">A nurse or clinician gives the acuity.</p>
+                )}
               </Field>
             </div>
             <Field id="reason" label="Reason for palliative referral" optional>
@@ -637,6 +775,7 @@ export default function NewPatientPage() {
           ["Primary NP", "primaryNpUserId"],
           ["RN", "rnUserId"],
           ["Social worker", "socialWorkerUserId"],
+          ["Chaplain", "chaplainUserId"],
           ["Billing agent", "billingAgentUserId"],
         ] as const;
         return (
@@ -683,13 +822,57 @@ export default function NewPatientPage() {
     router.push(`/patients/${body.data.id}`);
   }
 
+  if (referralId && referralLoading) {
+    return <div className="px-8 py-8 text-slate-500">Loading the referral…</div>;
+  }
+  // Admitting a referral that is not open would fail at the last step; it is
+  // said now, with the way back, rather than after five steps of typing.
+  if (referralId && (referralProblem || !referral)) {
+    return (
+      <div className="px-8 py-8 max-w-2xl">
+        <p role="alert" className="text-red-700">
+          {referralProblem ?? "Referral not found."}
+        </p>
+        <div className="mt-4 flex gap-4 text-sm">
+          {referral?.patientId && (
+            <Link href={`/patients/${referral.patientId}`} className="text-[var(--color-brand-700)] underline">
+              Open the chart
+            </Link>
+          )}
+          {referral && (
+            <Link href={`/referrals/${referral.id}`} className="text-[var(--color-brand-700)] underline">
+              Back to the referral
+            </Link>
+          )}
+          <Link href="/referrals" className="text-[var(--color-brand-700)] underline">
+            Referrals
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="px-8 py-8">
+      {referral && (
+        <div className="mb-4 rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          Admitting the referral for{" "}
+          <strong>
+            {referral.firstName} {referral.lastName}
+          </strong>
+          , received {referral.receivedOn}
+          {referral.sourceName ? ` from ${referral.sourceName}` : ""}. What intake took down is filled in; creating
+          the patient marks the referral admitted.{" "}
+          <Link href={`/referrals/${referral.id}`} className="underline">
+            Back to the referral
+          </Link>
+        </div>
+      )}
       <Wizard
         steps={steps}
-        onCancel={() => router.push("/patients")}
+        onCancel={() => router.push(referral ? `/referrals/${referral.id}` : "/patients")}
         onComplete={complete}
-        finishLabel="Create patient"
+        finishLabel={referral ? "Create patient and admit" : "Create patient"}
       />
     </div>
   );

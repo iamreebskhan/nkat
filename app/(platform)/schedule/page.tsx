@@ -18,21 +18,15 @@ import { FieldMarker } from "@/components/forms/field-marker";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { NewVisitComposer } from "@/components/visits/new-visit-composer";
+import { orgClockTime, orgInstant, orgLocalDate, orgLocalInput } from "@/lib/features/org/org-date";
 import { loadClinicianOptions } from "@/lib/features/schedule/clinician-options";
-import { visitTypeHistoryWarning } from "@/lib/features/visits/visit-pure";
-import {
-  NEW_PATIENT_LOOKBACK_YEARS,
-  TELEHEALTH_MODALITIES,
-  type VisitType,
-  type VisitTypeHint,
-  type VisitView,
-} from "@/lib/features/visits/visit.types";
+import { usePracticeZone } from "@/lib/features/schedule/use-practice-zone";
+import { type VisitView } from "@/lib/features/visits/visit.types";
 
-interface PatientOption { id: string; firstName: string; lastName: string }
 interface MemberOption  { userId: string; email: string; fullName: string | null }
 
 interface ExternalBusy { summary: string; start: string; end: string; userId: string | null }
@@ -52,8 +46,17 @@ export default function SchedulePage() {
   const [error, setError] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
   const [addingPto, setAddingPto] = useState(false);
-  // Monday of the displayed week (local).
-  const [weekStart, setWeekStart] = useState<Date>(() => mondayOf(new Date()));
+  // The board runs on the practice's clock, wherever the person using it is: a
+  // visit happens where the practice is.
+  const zone = usePracticeZone();
+  const tz = zone?.timeZone;
+  const practiceToday = zone?.today;
+  // Weeks from this one; the Monday shown follows the practice's calendar.
+  const [weekShift, setWeekShift] = useState(0);
+  const weekStart = useMemo(
+    () => addDays(mondayOf(practiceToday ? new Date(`${practiceToday}T00:00:00`) : new Date()), weekShift * 7),
+    [practiceToday, weekShift],
+  );
 
   const router = useRouter();
   const [preselectPatientId, setPreselectPatientId] = useState("");
@@ -135,13 +138,13 @@ export default function SchedulePage() {
       abandoned = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekStart]);
+  }, [weekStart.getTime()]);
 
   async function reschedule(visitId: string, dayIso: string, originalIso: string | null) {
-    // Keep the original time-of-day, move to the dropped day.
-    const orig = originalIso ? new Date(originalIso) : new Date();
-    const target = new Date(`${dayIso}T00:00:00`);
-    target.setHours(orig.getHours(), orig.getMinutes(), 0, 0);
+    if (!tz) return;
+    // Keep the original time-of-day on the practice's clock, move to the dropped day.
+    const time = orgLocalInput(originalIso ?? new Date(), tz).slice(11);
+    const target = orgInstant(`${dayIso}T${time}`, tz);
     const send = (confirmDoubleBook: boolean) =>
       fetch(`/api/visits/${visitId}/reschedule`, {
         method: "PATCH",
@@ -151,19 +154,25 @@ export default function SchedulePage() {
           ...(confirmDoubleBook ? { confirmDoubleBook: true } : {}),
         }),
       });
-    let r = await send(false);
-    let d = await r.json();
-    // 409: the clinician's day is at capacity, or Google Calendar has
-    // something there — the checks booking makes. Offer to move it anyway,
-    // as the booking form offers to schedule anyway.
-    if (r.status === 409) {
-      if (!window.confirm(`${d.error ?? "That slot is taken."}\n\nMove it anyway?`)) return;
-      r = await send(true);
-      d = await r.json();
-    }
-    if (!d.success) {
-      alert(d.error ?? "Reschedule failed.");
-      return;
+    try {
+      let r = await send(false);
+      let d = await r.json();
+      // 409: the clinician's day is at capacity, or Google Calendar has
+      // something there — the checks booking makes. Offer to move it anyway,
+      // as the booking form offers to schedule anyway.
+      if (r.status === 409) {
+        if (!window.confirm(`${d.error ?? "That slot is taken."}\n\nMove it anyway?`)) return;
+        r = await send(true);
+        d = await r.json();
+      }
+      if (!d.success) {
+        alert(d.error ?? "Reschedule failed.");
+        return;
+      }
+    } catch {
+      // Without this a dropped connection ended the move silently. Reload
+      // either way, so the week shows where the visit actually is.
+      alert("Network error — the visit may not have moved. The week is reloaded to show where it is.");
     }
     void reload();
   }
@@ -172,18 +181,20 @@ export default function SchedulePage() {
     const map = new Map<string, VisitView[]>();
     for (const v of visits) {
       const ts = v.scheduledStart ?? v.startTime;
-      if (!ts) continue;
-      // The day in the viewer's own zone, which is what the columns and the
+      if (!ts || !tz) continue;
+      // The day on the practice's clock, which is what the columns and the
       // times on the chips are in, and what the printed route sheet files it
       // under. ts.slice(0, 10) was the UTC day: a 3 pm Ohio visit seen from
-      // Karachi sat under Wednesday showing "0:00", which is Thursday there.
-      const day = isoDay(new Date(ts));
+      // Karachi sat under Wednesday showing "0:00".
+      const day = orgLocalDate(ts, tz);
       const arr = map.get(day) ?? [];
       arr.push(v);
       map.set(day, arr);
     }
     return map;
-  }, [visits]);
+  }, [visits, tz]);
+
+  const timeOf = (iso: string | null) => (iso && tz ? orgClockTime(iso, tz) : "—");
 
   return (
     <div className="px-8 py-8">
@@ -200,12 +211,13 @@ export default function SchedulePage() {
             {moving
               ? " Now tap the day to move it to."
               : " Tap a visit to move it, or drag it to another day."}
+            {zone?.differs && ` Times are on the practice's clock (${zone.zoneName}), not this computer's.`}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>← Prev</Button>
-          <Button variant="secondary" onClick={() => setWeekStart(mondayOf(new Date()))}>This week</Button>
-          <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, 7))}>Next →</Button>
+          <Button variant="secondary" onClick={() => setWeekShift((w) => w - 1)}>← Prev</Button>
+          <Button variant="secondary" onClick={() => setWeekShift(0)}>This week</Button>
+          <Button variant="secondary" onClick={() => setWeekShift((w) => w + 1)}>Next →</Button>
           <Link
             href={`/schedule/print?date=${isoDay(days[0]!)}`}
             target="_blank"
@@ -225,10 +237,11 @@ export default function SchedulePage() {
       {composing && (
         <NewVisitComposer
           defaultPatientId={preselectPatientId}
-          onCreated={(visitId) => {
+          onCreated={(visitId, at) => {
             setComposing(false);
             void reload();
-            if (confirm("Visit scheduled. Open documentation now?")) {
+            // One visit may be documented now; a series is for the weeks ahead.
+            if (at.visits === 1 && confirm("Visit scheduled. Open documentation now?")) {
               router.push(`/visits/${visitId}/document`);
             }
           }}
@@ -274,12 +287,12 @@ export default function SchedulePage() {
             (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? ""),
           );
           const dayPto = timeOff.filter((t) => dayIso >= t.startDate && dayIso <= t.endDate);
-          // As the visits: the viewer's day, not the UTC one. An all-day event
+          // As the visits: the practice's day, not the UTC one. An all-day event
           // can arrive as a bare date, which is already the day.
           const dayBusy = externalBusy.filter(
-            (b) => (/^\d{4}-\d{2}-\d{2}$/.test(b.start) ? b.start : isoDay(new Date(b.start))) === dayIso,
+            (b) => (/^\d{4}-\d{2}-\d{2}$/.test(b.start) ? b.start : tz ? orgLocalDate(b.start, tz) : null) === dayIso,
           );
-          const isToday = dayIso === isoDay(new Date());
+          const isToday = dayIso === (practiceToday ?? isoDay(new Date()));
           return (
             <div
               key={dayIso}
@@ -364,7 +377,10 @@ export default function SchedulePage() {
                       >
                         <span className="flex items-center justify-between gap-1">
                           <span className="tabular font-medium">{timeOf(v.scheduledStart ?? v.startTime)}</span>
-                          {v.isTelehealth && <span className="text-[9px]">📹</span>}
+                          <span className="flex items-center gap-1">
+                            {v.seriesId && <span title="Part of a repeating series" className="text-[9px]">↻</span>}
+                            {v.isTelehealth && <span className="text-[9px]">📹</span>}
+                          </span>
                         </span>
                         <span className="block truncate">{v.patientName ?? v.visitType.replace(/_/g, " ")}</span>
                         {v.patientCity && (
@@ -462,14 +478,22 @@ function PtoComposer({ onCreated, onCancel }: { onCreated: () => void; onCancel:
     e.preventDefault();
     setSubmitting(true);
     setError(null);
-    const r = await fetch("/api/time-off", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(form),
-    });
-    const d = await r.json();
-    setSubmitting(false);
-    if (!d.success) { setError(d.error ?? "Failed."); return; }
+    // As the visit form above: a thrown fetch must not leave the button
+    // spinning with no word on whether the time off was saved.
+    try {
+      const r = await fetch("/api/time-off", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const d = await r.json();
+      if (!d.success) { setError(d.error ?? "Failed."); return; }
+    } catch {
+      setError("Network error — the time off may not have been saved. Check the week before trying again.");
+      return;
+    } finally {
+      setSubmitting(false);
+    }
     onCreated();
   }
   return (
@@ -513,275 +537,6 @@ function PtoComposer({ onCreated, onCancel }: { onCreated: () => void; onCancel:
   );
 }
 
-function NewVisitComposer({
-  defaultPatientId,
-  onCreated,
-  onCancel,
-}: {
-  defaultPatientId: string;
-  onCreated: (visitId: string) => void;
-  onCancel: () => void;
-}) {
-  const [patients, setPatients] = useState<PatientOption[]>([]);
-  const [members, setMembers] = useState<MemberOption[]>([]);
-  // The org's own types, not the five built-in coding bands (client
-  // walkthrough 02:30 — "agar koi visit type ho raha hai jo hum ne add karna hai").
-  // isTelehealth: the type forces telehealth (audit R22). codingBasis: the CPT
-  // band it bills as, which the history note below is judged against.
-  const [visitTypes, setVisitTypes] = useState<
-    { slug: string; label: string; codingBasis: VisitType; isTelehealth?: boolean }[]
-  >([]);
-  // No visit type is chosen for the scheduler. This started on
-  // "established_patient_home" and kept it whenever the org had that slug —
-  // every seeded org does — so from a chart's "Schedule visit" link, with the
-  // patient and the clinician's own name filled in, one click booked an
-  // established visit, and a first visit was coded on the established ladder.
-  const [form, setForm] = useState({
-    patientId: defaultPatientId,
-    clinicianUserId: "",
-    visitType: "",
-    scheduledStart: defaultDateTimeLocal(),
-    isTelehealth: false,
-    telehealthModality: "audio_video" as (typeof TELEHEALTH_MODALITIES)[number],
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  /**
-   * Pallio's own history for this patient before the time being booked, and
-   * the patient + time it was asked for — a hint for another patient or date
-   * is never shown against this one.
-   */
-  const [history, setHistory] = useState<{ key: string; hint: VisitTypeHint } | null>(null);
-
-  useEffect(() => {
-    void Promise.all([
-      // 200 is the API's max limit — 500 was rejected with a 400, leaving the
-      // patient dropdown empty and the composer unusable.
-      fetch("/api/patients?limit=200").then((r) => r.json()),
-      // active=1: scheduleVisit refuses a clinician who is not an active
-      // member of this org, so the picker offers exactly who the server will
-      // take. Before either existed, a visit could be assigned to a member who
-      // was no longer active and then belonged to someone who could not open it.
-      // Falls back to the signed-in clinician alone when they cannot see the
-      // roster — see loadClinicianOptions.
-      loadClinicianOptions(),
-      fetch("/api/settings/visit-types").then((r) => r.json()),
-    ]).then(([p, opts, t]) => {
-      if (p.success) setPatients(p.data?.rows ?? []);
-      setMembers(opts);
-      if (opts.length === 1) setForm((f) => ({ ...f, clinicianUserId: opts[0]!.userId }));
-      // The types only. None is picked: which one is right depends on whether
-      // the practice has seen this patient, which is the scheduler's call.
-      if (t.success) setVisitTypes(t.data?.types ?? []);
-    });
-  }, []);
-
-  // What Pallio has on this patient before the time being booked. Debounced,
-  // because every answer is a read of the patient's history and is logged as
-  // PHI access; a refusal or a failure shows nothing rather than an error.
-  const historyKey = `${form.patientId}|${form.scheduledStart}`;
-  useEffect(() => {
-    const at = new Date(form.scheduledStart);
-    if (!form.patientId || Number.isNaN(at.getTime())) return;
-    let abandoned = false;
-    const timer = setTimeout(() => {
-      fetch(
-        `/api/patients/${form.patientId}/visit-type-hint?at=${encodeURIComponent(at.toISOString())}`,
-      )
-        .then((r) => r.json())
-        .then((d) => {
-          if (!abandoned && d?.success) setHistory({ key: historyKey, hint: d.data as VisitTypeHint });
-        })
-        .catch(() => {
-          /* no hint is a safe answer: nothing is chosen for them either way */
-        });
-    }, 300);
-    return () => {
-      abandoned = true;
-      clearTimeout(timer);
-    };
-  }, [form.patientId, form.scheduledStart, historyKey]);
-  const hint = history?.key === historyKey ? history.hint : null;
-  const chosenBasis = visitTypes.find((t) => t.slug === form.visitType)?.codingBasis;
-  const mismatch = chosenBasis ? visitTypeHistoryWarning(chosenBasis, hint) : null;
-
-  // A telehealth visit type forces the box on (audit R22); scheduleVisit does
-  // the same server-side. Derived rather than written into form, so picking
-  // an in-person type again restores whatever the clinician had chosen.
-  const typeForcesTelehealth = visitTypes.some(
-    (t) => t.slug === form.visitType && t.isTelehealth === true,
-  );
-  const telehealth = form.isTelehealth || typeForcesTelehealth;
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    const body = {
-      patientId: form.patientId,
-      clinicianUserId: form.clinicianUserId,
-      visitType: form.visitType,
-      scheduledStart: new Date(form.scheduledStart).toISOString(),
-      isTelehealth: telehealth,
-      ...(telehealth ? { telehealthModality: form.telehealthModality } : {}),
-    };
-    const res = await fetch("/api/visits", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    // Phase E — 409 means Google Calendar reports overlap. Offer to
-    // override and resubmit with confirmDoubleBook=true.
-    if (res.status === 409) {
-      const ok = window.confirm(
-        `${data.error ?? "Conflict with existing Google Calendar events."}\n\nSchedule anyway?`,
-      );
-      if (ok) {
-        const res2 = await fetch("/api/visits", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ...body, confirmDoubleBook: true }),
-        });
-        const data2 = await res2.json();
-        setSubmitting(false);
-        if (!data2.success) {
-          setError(data2.error ?? "Schedule failed.");
-          return;
-        }
-        onCreated(data2.data.id);
-        return;
-      }
-      setSubmitting(false);
-      return;
-    }
-    setSubmitting(false);
-    if (!data.success) {
-      setError(data.error ?? "Schedule failed.");
-      return;
-    }
-    onCreated(data.data.id);
-  }
-
-  return (
-    <Card className="mb-6 border-[var(--color-brand-600)]">
-      <CardHeader>
-        <CardTitle>New visit</CardTitle>
-        <CardDescription>
-          Pick a patient + clinician + visit type + time. Toggle telehealth to add modality.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={submit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Patient" required>
-              <select
-                required
-                value={form.patientId}
-                onChange={(e) => setForm({ ...form, patientId: e.target.value })}
-                className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white"
-              >
-                <option value="">Select…</option>
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>{p.firstName} {p.lastName}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Clinician" required>
-              <select
-                required
-                value={form.clinicianUserId}
-                onChange={(e) => setForm({ ...form, clinicianUserId: e.target.value })}
-                className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white"
-              >
-                <option value="">Select…</option>
-                {members.map((m) => (
-                  <option key={m.userId} value={m.userId}>{m.fullName ?? m.email}</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Field label="Visit type" required>
-                <select
-                  required
-                  value={form.visitType}
-                  onChange={(e) => setForm({ ...form, visitType: e.target.value })}
-                  className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white"
-                >
-                  <option value="" disabled>Choose a visit type…</option>
-                  {visitTypes.map((t) => (
-                    <option key={t.slug} value={t.slug}>{t.label}</option>
-                  ))}
-                </select>
-              </Field>
-              {/* Advisory only: Pallio cannot see visits from before the
-                  practice used it, so this never picks or blocks a type. */}
-              {hint && <p className="mt-1 text-xs text-slate-600">{historyLine(hint)}</p>}
-              {hint && mismatch && (
-                <p className="mt-1 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-900 ring-1 ring-inset ring-amber-600/30">
-                  {mismatchLine(mismatch, hint)}
-                </p>
-              )}
-            </div>
-            <Field label="Scheduled start" required>
-              <input
-                required
-                type="datetime-local"
-                value={form.scheduledStart}
-                onChange={(e) => setForm({ ...form, scheduledStart: e.target.value })}
-                className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
-              />
-            </Field>
-          </div>
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={telehealth}
-                disabled={typeForcesTelehealth}
-                onChange={(e) => setForm({ ...form, isTelehealth: e.target.checked })}
-              />
-              <span>Telehealth</span>
-              {typeForcesTelehealth && (
-                <span className="text-xs text-slate-500">Set by the visit type</span>
-              )}
-            </label>
-            {telehealth && (
-              <select
-                value={form.telehealthModality}
-                onChange={(e) => setForm({ ...form, telehealthModality: e.target.value as typeof form.telehealthModality })}
-                className="border border-slate-300 rounded px-3 py-1.5 text-sm bg-white"
-              >
-                {TELEHEALTH_MODALITIES.map((m) => (
-                  <option key={m} value={m}>{m.replace(/_/g, " ")}</option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          {error && (
-            <div role="alert" className="text-sm text-red-700 bg-red-50 px-3 py-2 rounded">
-              {error}
-            </div>
-          )}
-
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-            <Button
-              type="submit"
-              disabled={submitting || !form.patientId || !form.clinicianUserId || !form.visitType}
-            >
-              {submitting ? "Scheduling…" : "Schedule visit"}
-            </Button>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
-  );
-}
-
 function Field({
   label,
   required,
@@ -804,47 +559,4 @@ function Field({
   );
 }
 
-function defaultDateTimeLocal(): string {
-  const d = new Date();
-  d.setMinutes(0, 0, 0);
-  d.setHours(d.getHours() + 1);
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
-/** The date of an earlier visit, as the history lines name it. */
-function hintDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-/**
- * What Pallio's history says, in one line under the Visit type select. The
- * no-history line names outside records on purpose: a patient the practice saw
- * in its previous EHR is established, and Pallio cannot see that.
- */
-function historyLine(h: VisitTypeHint): string {
-  if (!h.lastVisitAt) {
-    return `No visit for this patient in Pallio in the ${NEW_PATIENT_LOOKBACK_YEARS} years before this date — a New patient type fits. If your practice saw them outside Pallio (e.g. the previous EHR) in that time, choose an Established type.`;
-  }
-  if (h.lastVisitStatus === "scheduled") {
-    return `Booked in this practice for ${hintDate(h.lastVisitAt)} — if that visit takes place, this one is Established.`;
-  }
-  return `Seen in this practice on ${hintDate(h.lastVisitAt)} — an Established type fits.`;
-}
-
-/** The amber note when the chosen type's band and Pallio's history disagree. */
-function mismatchLine(kind: "looks_new" | "looks_established", h: VisitTypeHint): string {
-  if (kind === "looks_new" || !h.lastVisitAt) {
-    return `Pallio has no visit for this patient in the ${NEW_PATIENT_LOOKBACK_YEARS} years before this date. If your practice has not seen them in that time either, this is a New patient visit.`;
-  }
-  return `${h.lastVisitStatus === "scheduled" ? "Booked for" : "Seen on"} ${hintDate(h.lastVisitAt)}: payers treat a new-patient code within ${NEW_PATIENT_LOOKBACK_YEARS} years of a visit by this practice as established.`;
-}
-
-function timeOf(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}

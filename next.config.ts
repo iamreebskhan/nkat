@@ -48,9 +48,17 @@ const nextConfig: NextConfig = {
   // pdf.js is loaded at runtime by the ingestion PHI screen and must be
   // required from node_modules, not bundled: it ships its own worker and
   // resolves font/cmap assets by path, both of which the bundler rewrites.
-  serverExternalPackages: ["pdfjs-dist"],
+  // ssh2 (the clearinghouse SFTP channel, 0120) loads optional native crypto
+  // bindings with a guarded require, which bundling would turn into a hard
+  // failure; it only ever runs in route handlers.
+  serverExternalPackages: ["pdfjs-dist", "ssh2"],
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // The service worker (public/sw.js) is checked for a new version on every
+      // load, so a fix reaches a clinician's iPad the next time it is online.
+      { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }] },
+    ];
   },
 };
 

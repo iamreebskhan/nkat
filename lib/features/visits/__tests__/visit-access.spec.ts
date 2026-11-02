@@ -123,7 +123,12 @@ import {
 } from "@/app/api/visits/[id]/superbill/route";
 import { GET as vitalsGet } from "@/app/api/patients/[id]/vitals/route";
 
-import { mayAccessVisit, requireVisitAccess, VIEW_ANY_VISIT } from "../visit-access";
+import {
+  mayAccessVisit,
+  requireVisitAccess,
+  SCHEDULE_ANY_VISIT,
+  VIEW_ANY_VISIT,
+} from "../visit-access";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const ME = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -205,6 +210,22 @@ const OWNER_QUERY = new RegExp(
 /** Whose visit the fake database holds, or null for "no such row". */
 let visitOwner: string | null;
 
+/**
+ * Who sits in the patient's clinical care-team seats (primary NP, RN, social
+ * worker). Empty unless a test seats someone, so every refusal in this file
+ * is a refusal to a caller who is not on the team.
+ */
+let careTeam: string[];
+
+/**
+ * "Is this user in the patient's clinical seats?" — asked by the read guard
+ * through the visit, and by the visit routes through the patient. Bindings
+ * are (user, id, org) either way. Matched whole, like OWNER_QUERY, so a seat
+ * dropped from or added to the IN list is a query this fake refuses.
+ */
+const CARE_TEAM_QUERY =
+  /^\s*SELECT\s+¶::uuid\s+IN\s+\(p\.primary_np_user_id,\s*p\.rn_user_id,\s*p\.social_worker_user_id,\s*p\.chaplain_user_id\)\s+AS\s+ok\s+FROM\s+(?:visit\s+v\s+JOIN\s+patient\s+p\s+ON\s+p\.id\s*=\s*v\.patient_id\s+AND\s+p\.org_id\s*=\s*v\.org_id\s+WHERE\s+v\.id\s*=\s*¶::uuid\s+AND\s+v\.org_id|patient\s+p\s+WHERE\s+p\.id\s*=\s*¶::uuid\s+AND\s+p\.org_id)\s*=\s*¶::uuid\s+LIMIT\s+1\s*$/i;
+
 /** A second org. The fake's visit is ORG's, so a session here must not find it. */
 const OTHER_ORG = "22222222-2222-4222-8222-222222222222";
 
@@ -215,6 +236,11 @@ function fakeTx() {
       // Bindings are (id, org): the one visit the fake holds belongs to ORG.
       return Promise.resolve(
         visitOwner && values[1] === ORG ? [{ [SCHEMA.column]: visitOwner }] : [],
+      );
+    }
+    if (CARE_TEAM_QUERY.test(sql)) {
+      return Promise.resolve(
+        visitOwner && values[2] === ORG ? [{ ok: careTeam.includes(values[0] as string) }] : [],
       );
     }
     // Loud rather than empty. An unrecognised query answered with [] reads as
@@ -248,6 +274,7 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 beforeEach(() => {
   vi.clearAllMocks();
   visitOwner = ME;
+  careTeam = [];
   vi.mocked(withOrgContext).mockImplementation(async (_o, fn) =>
     (fn as (tx: unknown) => Promise<unknown>)(fakeTx()),
   );
@@ -453,6 +480,92 @@ describe.each(PER_VISIT_ROUTES)("GET /api/visits/[id]/$name", ({ run, service, e
 });
 
 /**
+ * Level-1 doc:49: between visits, the RN or LPN needs "immediate access to the
+ * current care plan and relevant findings from prior visits". The clinician
+ * template cannot open another clinician's visit, so an RN on that template
+ * could not read the NP's note on their own patient. A member in one of the
+ * patient's clinical seats now READS the patient's visits; nothing they could
+ * not write before is writable now.
+ */
+describe("the patient's clinical care team (mayReadVisit)", () => {
+  const READS = [
+    { name: "note", run: noteGet, service: getVisitNote },
+    { name: "note-preview", run: notePreviewGet, service: getNotePreviewHtml },
+    { name: "addenda", run: addendaGet, service: listVisitAddenda },
+  ];
+
+  it.each(READS)("lets a care-team member read another clinician's visit: $name", async ({ run, service }) => {
+    visitOwner = OTHER_CLINICIAN;
+    careTeam = [ME];
+    expect((await run(req, ctx(VISIT))).status).toBe(200);
+    expect(service).toHaveBeenCalled();
+  });
+
+  it("lets a care-team member open the visit record itself", async () => {
+    visitOwner = OTHER_CLINICIAN;
+    careTeam = [ME];
+    expect((await visitGet(req, ctx(VISIT))).status).toBe(200);
+  });
+
+  it("CONTROL: never a write — section edits, addenda, carry-forward and the bill stay the clinician's", async () => {
+    visitOwner = OTHER_CLINICIAN;
+    careTeam = [ME];
+    vi.mocked(requireAuth).mockResolvedValue(
+      session([...CLINICIAN, "billing.superbills.view", "billing.superbills.create"]) as never,
+    );
+    for (const [name, write] of [
+      ["note PATCH", () => notePatch(jsonReq({ sectionKey: "hpi", content: {} }), ctx(VISIT))],
+      ["addenda POST", () => addendaPost(jsonReq({ body: "correction" }), ctx(VISIT))],
+      ["carry-forward POST", () => carryForwardPost(jsonReq({ sourceVisitId: SOURCE_VISIT }), ctx(VISIT))],
+      ["superbill GET", () => superbillGet(req, ctx(VISIT))],
+      ["superbill POST", () => superbillPost(jsonReq({}), ctx(VISIT))],
+    ] as const) {
+      expect((await write()).status, name).toBe(403);
+    }
+    expect(saveNoteSection).not.toHaveBeenCalled();
+    expect(addVisitAddendum).not.toHaveBeenCalled();
+    expect(carryForwardSections).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL: the guard's default is the write rule, care team or not", async () => {
+    visitOwner = OTHER_CLINICIAN;
+    careTeam = [ME];
+    expect((await requireVisitAccess({ session: session(CLINICIAN), visitId: VISIT }))?.status).toBe(403);
+    expect(
+      await requireVisitAccess({ session: session(CLINICIAN), visitId: VISIT, access: "read" }),
+    ).toBeNull();
+  });
+
+  it("CONTROL: a member off the team, or a care team in another org, reads nothing", async () => {
+    visitOwner = OTHER_CLINICIAN;
+    careTeam = [OTHER_CLINICIAN];
+    expect((await noteGet(req, ctx(VISIT))).status).toBe(403);
+    careTeam = [ME];
+    const elsewhere = await requireVisitAccess({
+      session: { ...session(CLINICIAN), orgId: OTHER_ORG },
+      visitId: VISIT,
+      access: "read",
+    });
+    expect(elsewhere?.status).toBe(404);
+  });
+
+  it("asks about the care team only for a read the write rule refused", async () => {
+    const queries: string[] = [];
+    vi.mocked(withOrgContext).mockImplementation(async (_o, fn) => {
+      const tx = fakeTx();
+      const spy = (strings: TemplateStringsArray, ...values: unknown[]) => {
+        queries.push(strings.join("¶"));
+        return tx.$queryRaw(strings, ...values);
+      };
+      return (fn as (t: unknown) => Promise<unknown>)({ $queryRaw: spy, $executeRaw: spy });
+    });
+    await requireVisitAccess({ session: session(CLINICIAN), visitId: VISIT, access: "read" });
+    await requireVisitAccess({ session: session(BILLING_AGENT), visitId: VISIT, access: "read" });
+    expect(queries.some((q) => CARE_TEAM_QUERY.test(q))).toBe(false);
+  });
+});
+
+/**
  * Per-visit handlers that a caller without visits.view.all can still reach on
  * another clinician's visit. Each was in that state when this list was written
  * and none is in this package. Naming them means a NEW one fails the sweep
@@ -486,13 +599,15 @@ const KNOWN_REACHABLE = new Set(["transition POST"]);
 
 /**
  * The widest caller the ownership rule constrains: every permission a shipped
- * template grants, minus the one that lifts the rule. Permission sets are
- * edited per member (PUT /api/team/members/[userId]), so a handler that only a
- * combination of permissions opens is still one somebody can be given.
+ * template grants, minus the ones that lift the rule — visits.view.all, and
+ * the scheduler's schedule.manage.all, which lifts it for rescheduling only
+ * and is held to that below. Permission sets are edited per member
+ * (PUT /api/team/members/[userId]), so a handler that only a combination of
+ * permissions opens is still one somebody can be given.
  */
 const WIDEST_WITHOUT_VIEW_ALL = [
   ...new Set(Object.values(ROLE_DEFAULT_PERMISSIONS).flat()),
-].filter((p) => p !== VIEW_ANY_VISIT);
+].filter((p) => p !== VIEW_ANY_VISIT && p !== SCHEDULE_ANY_VISIT);
 
 const PER_VISIT_DIR = path.join(REPO_ROOT, "app", "api", "visits", "[id]");
 const ROUTE_METHODS = ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] as const;
@@ -523,15 +638,18 @@ type HandlerAnswer = number | "threw";
  * gets past the point where it should have refused reaches a service and
  * comes back 500 or throws. Either counts as reached.
  */
-async function sweepPerVisitHandlers(owner: string): Promise<Map<string, HandlerAnswer>> {
+async function sweepPerVisitHandlers(
+  owner: string,
+  permissions: string[] = WIDEST_WITHOUT_VIEW_ALL,
+): Promise<Map<string, HandlerAnswer>> {
   visitOwner = owner;
   vi.mocked(requireAuth).mockImplementation(async (required: string[] = []) => {
     // lib/auth.ts's own rule: the caller needs every listed permission.
-    const missing = required.filter((p) => !WIDEST_WITHOUT_VIEW_ALL.includes(p));
+    const missing = required.filter((p) => !permissions.includes(p));
     return (
       missing.length > 0
         ? fail(`Permission denied: missing ${missing.join(", ")}.`, { status: 403 })
-        : session(WIDEST_WITHOUT_VIEW_ALL)
+        : session(permissions)
     ) as never;
   });
 
@@ -645,6 +763,28 @@ describe("the routes on disk", () => {
     expect(guardedHere).toHaveLength(13);
     expect(refusedForOwnership).toEqual(expect.arrayContaining(guardedHere));
   }, 30_000);
+
+  // The intake coordinator keeps every clinician's calendar (Level-1 audit,
+  // 27 Oct): schedule.manage.all lets them move anyone's booked visit, and
+  // opens nothing else of it — no note, no sign-off, no bill.
+  it("lets schedule.manage.all move another clinician's booked visit, and reach nothing else of it", async () => {
+    const onTheirs = await sweepPerVisitHandlers(OTHER_CLINICIAN, [
+      ...WIDEST_WITHOUT_VIEW_ALL,
+      SCHEDULE_ANY_VISIT,
+    ]);
+    const reached = [...onTheirs]
+      .filter(([, answer]) => answer !== 403)
+      .map(([key]) => key)
+      .filter((key) => !KNOWN_REACHABLE.has(key));
+    // Moving a booked visit is the scheduler's job, and a repeating series is
+    // moved the same way (0126).
+    expect(reached).toEqual(["reschedule PATCH", "series POST"]);
+  }, 30_000);
+
+  it("CONTROL: the scheduler's grant is in no template beside visits.view.all, or it would hide a gap", () => {
+    expect(ROLE_DEFAULT_PERMISSIONS.intake_coordinator).toContain(SCHEDULE_ANY_VISIT);
+    expect(ROLE_DEFAULT_PERMISSIONS.intake_coordinator).not.toContain(VIEW_ANY_VISIT);
+  });
 
   it("gives no shipped template billing.superbills.* without visits.view.all", () => {
     // This used to be what the superbill entries in KNOWN_REACHABLE rested on.

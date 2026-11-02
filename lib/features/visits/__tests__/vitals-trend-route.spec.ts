@@ -58,6 +58,8 @@ const row = (weightKg: number) => ({
   spo2Percent: null,
   ppsPercent: null,
   painScore: null,
+  dyspneaScore: null,
+  nauseaScore: null,
   notes: null,
 });
 

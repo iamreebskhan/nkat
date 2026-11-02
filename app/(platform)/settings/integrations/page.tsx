@@ -1,7 +1,10 @@
 /**
  * /settings/integrations — third-party connections (Phase E).
  *
- * Today: Google Calendar (per-clinician two-way sync). One row per
+ * Clearinghouses (0120): the practice's connections to Availity, Waystar,
+ * TriZetto and Inovalon, for org admins (settings.integrations).
+ *
+ * Google Calendar (per-clinician two-way sync). One row per
  * clinician — each user connects their own Google account. The org
  * admin doesn't connect on behalf of others (that's a different
  * consent model entirely).
@@ -11,6 +14,7 @@
 import { CheckCircle2, AlertTriangle } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { ClearinghouseSection } from "@/components/integrations/clearinghouse-section";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -26,6 +30,18 @@ export default function IntegrationsPage() {
   const [google, setGoogle] = useState<GoogleStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Clearinghouses are the practice's, set up by whoever holds
+  // settings.integrations; everyone keeps their own Google card.
+  const [canClearinghouse, setCanClearinghouse] = useState(false);
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        const perms: string[] = d.data?.permissions ?? [];
+        setCanClearinghouse(Boolean(d.success) && (perms.includes("settings.integrations") || d.data?.role === "platform_admin"));
+      })
+      .catch(() => {});
+  }, []);
 
   async function refresh() {
     const r = await fetch("/api/integrations/google");
@@ -60,7 +76,7 @@ export default function IntegrationsPage() {
   }
 
   return (
-    <div className="px-8 py-8 max-w-3xl">
+    <div className="px-8 py-8 max-w-5xl">
       <header className="mb-6">
         <h1 className="font-display text-3xl tracking-tight">Integrations</h1>
         <p className="text-slate-600 mt-1 text-sm">
@@ -68,6 +84,9 @@ export default function IntegrationsPage() {
         </p>
       </header>
 
+      {canClearinghouse && <ClearinghouseSection />}
+
+      <h2 className="font-display text-xl mb-3">Calendar</h2>
       <Card>
         <CardHeader>
           <CardTitle>Google Calendar</CardTitle>

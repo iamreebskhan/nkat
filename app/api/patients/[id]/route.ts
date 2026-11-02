@@ -50,6 +50,11 @@ export async function PATCH(req: NextRequest, ctx: Params): Promise<Response> {
     });
   }
 
+  // Archiving a chart, or bringing it back, is the archive grant's.
+  if (body.status && !session.permissions.includes("patients.archive")) {
+    return fail("patients.archive permission required to archive or unarchive a patient.", { status: 403 });
+  }
+
   // Care-team assignment gates on a PERMISSION (roles are display-only per
   // lib/auth.ts); org_admin templates carry patients.careteam.edit (0055
   // backfills existing admins). platform_admin is the operator override —

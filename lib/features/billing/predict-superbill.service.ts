@@ -16,6 +16,7 @@
  */
 import { withOrgContext } from "@/lib/db";
 import { addDaysIso } from "@/lib/features/org/org-date";
+import { readActiveAuths } from "@/lib/features/patients/prior-auth.service";
 import { loadDocumentationGaps } from "@/lib/features/visits/documentation-check.service";
 
 import { getDenialRuleMetrics } from "./denial-feedback.service";
@@ -27,6 +28,7 @@ import {
   type RiskBand,
   type RiskReason,
 } from "./denial-risk.service";
+import { uncoveredCodes } from "./prior-auth";
 
 export interface PredictInput {
   orgId: string;
@@ -148,6 +150,18 @@ export async function predictSuperbill(args: PredictInput): Promise<PredictedRis
           frequencyLimit: freq,
           payerRuleId: r.payer_rule_id,
         });
+      }
+
+      // A prior authorization on the chart (0124) answers the rule for what it
+      // covers. The predictor could only ever say none was on file: nothing
+      // recorded one, so a claim with its approval in hand still scored as
+      // missing it.
+      if (args.patientId && rows.some((r) => r.prior_auth_required)) {
+        const auths = (await readActiveAuths(tx, args.orgId, [args.patientId])).get(args.patientId) ?? [];
+        const stillNeeded = new Set(uncoveredCodes(auths, { payerId: args.payerId, codes: lines.map((l) => l.code), dos: args.dos }));
+        for (const [code, rule] of rulesByCode) {
+          if (rule.priorAuthRequired && !stillNeeded.has(code)) rulesByCode.set(code, { ...rule, priorAuthRequired: false });
+        }
       }
 
       // The payer's documentation standard against the note (audit R19):

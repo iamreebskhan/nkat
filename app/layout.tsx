@@ -12,9 +12,12 @@ export const metadata: Metadata = {
   title: "Pallio",
   description:
     "Palliative-care EMR + billing intelligence. Document the visit, suggest the code, verify the rule, get paid.",
-  icons: {
-    icon: "/favicon.svg",
-  },
+  // The icons are the file conventions: app/favicon.ico and app/apple-icon.tsx.
+  // This pointed at /favicon.svg, which no file serves, so every page asked
+  // for a 404.
+  // Added to an iPad's home screen (app/manifest.ts), Pallio opens full screen
+  // under its own name, as the field app the offline copy is for (doc:33).
+  appleWebApp: { capable: true, title: "Pallio", statusBarStyle: "default" },
 };
 
 export default function RootLayout({

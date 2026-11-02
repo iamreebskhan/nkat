@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { PasswordInput } from "@/components/forms/password-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -91,9 +92,8 @@ export default function ResetPasswordPage() {
           <form onSubmit={submit} className="space-y-4 mt-5">
             <label className="block">
               <span className="block text-xs font-medium text-slate-700 mb-1">New password (min 12 chars)</span>
-              <input
+              <PasswordInput
                 required
-                type="password"
                 minLength={12}
                 value={pw}
                 onChange={(e) => setPw(e.target.value)}
@@ -102,9 +102,8 @@ export default function ResetPasswordPage() {
             </label>
             <label className="block">
               <span className="block text-xs font-medium text-slate-700 mb-1">Confirm</span>
-              <input
+              <PasswordInput
                 required
-                type="password"
                 minLength={12}
                 value={pw2}
                 onChange={(e) => setPw2(e.target.value)}

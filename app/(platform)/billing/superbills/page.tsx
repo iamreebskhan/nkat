@@ -4,13 +4,29 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { askReason } from "@/components/billing/ask-reason";
+import {
+  connectionName,
+  defaultConnection,
+  downloadClaimFile,
+  fetchClaimStatuses,
+  fetchConnections,
+  sendClaims,
+  sendQuestion,
+  type ClaimClearinghouseStatus,
+  type ConnectionChoice,
+} from "@/components/billing/clearinghouse-client";
 import { CodeList } from "@/components/billing/code-list";
 import { SubmissionDisclosure } from "@/components/billing/submission-disclosure";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pager } from "@/components/ui/pager";
+import { EXPORTABLE_STATUSES } from "@/lib/features/billing/claim-export";
 import {
+  FURTHER_PAYMENT_LABEL,
   QUEUE_ACTIONS,
   QUEUE_STATUSES,
+  furtherPaymentTotal,
   paidInFullConfirmText,
   parseStatusParam,
   statusLabel,
@@ -41,6 +57,20 @@ interface SuperbillRow {
   cptCodes: string[];
   /** From the rulebook-fed code table; null for a code not in it. */
   codeDescriptors?: Record<string, string | null>;
+  /** Sent to billing: the claim's last export (0118). */
+  lastExportedAt?: string | null;
+}
+
+const exportable = (status: string) => (EXPORTABLE_STATUSES as readonly string[]).includes(status);
+
+/** Hands the browser the exported file. */
+function saveCsv(filename: string, csv: string) {
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 type Filter = QueueFilter;
@@ -69,6 +99,97 @@ export default function SuperbillsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Claims picked for export to the billing software (0118, Mark Q1 default),
+  // offered to whoever holds the export grant the route enforces.
+  const [canExport, setCanExport] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState<{ ok: boolean; text: string } | null>(null);
+  // Clearinghouse connections (0120): the picked claims can be sent through
+  // one, or built into its 837P to upload by hand. What each claim's
+  // clearinghouse said last shows under its status.
+  const [connections, setConnections] = useState<ConnectionChoice[]>([]);
+  const [connectionId, setConnectionId] = useState<string>("");
+  const [sending, setSending] = useState<"send" | "download" | null>(null);
+  const [chStatus, setChStatus] = useState<Record<string, ClaimClearinghouseStatus>>({});
+  const connection = connections.find((c) => c.id === connectionId) ?? null;
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        const perms: string[] = d.data?.permissions ?? [];
+        const can = Boolean(d.success) && (perms.includes("billing.superbills.export") || d.data?.role === "platform_admin");
+        setCanExport(can);
+        if (can) {
+          void fetchConnections().then((cs) => {
+            setConnections(cs);
+            setConnectionId(defaultConnection(cs)?.id ?? "");
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    let abandoned = false;
+    void fetchClaimStatuses(rows.map((r) => r.id)).then((s) => {
+      if (!abandoned) setChStatus(s);
+    });
+    return () => {
+      abandoned = true;
+    };
+  }, [rows]);
+
+  async function clearinghouse(kind: "send" | "download") {
+    if (!connection) return;
+    if (kind === "send" && !confirm(sendQuestion(connection, rows.filter((r) => picked.includes(r.id)).map((r) => r.claimRef)))) return;
+    setSending(kind);
+    setExportNote(null);
+    const out = kind === "send" ? await sendClaims(connection, picked) : await downloadClaimFile(connection, picked);
+    setExportNote(out);
+    if (out.ok) setPicked([]);
+    try {
+      const fresh = await fetchPage(filter, page);
+      setRows(fresh.rows);
+      setTotal(fresh.total);
+    } catch {
+      // The note above stands; the list refreshes on the next load.
+    } finally {
+      setSending(null);
+    }
+  }
+
+  async function exportPicked() {
+    setExporting(true);
+    setExportNote(null);
+    try {
+      const r = await fetch("/api/billing/claim-export", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ superbillIds: picked }),
+      });
+      const d = await r.json();
+      if (!d.success) {
+        setExportNote({ ok: false, text: d.error ?? "Not exported." });
+        return;
+      }
+      saveCsv(d.data.filename, d.data.csv);
+      const warned = (d.data.warnings as { claimRef: string; warnings: string[] }[])
+        .map((w) => `${w.claimRef}: ${w.warnings.join(", ")}`)
+        .join("; ");
+      setExportNote({
+        ok: true,
+        text: `Exported ${d.data.claims} claim${d.data.claims === 1 ? "" : "s"} (${d.data.lines} line${d.data.lines === 1 ? "" : "s"}) as ${d.data.filename}, and marked sent to billing.${warned ? ` Still missing — ${warned}.` : ""}`,
+      });
+      setPicked([]);
+      const fresh = await fetchPage(filter, page);
+      setRows(fresh.rows);
+      setTotal(fresh.total);
+    } catch {
+      setExportNote({ ok: false, text: "Network error — not exported." });
+    } finally {
+      setExporting(false);
+    }
+  }
   // The pipeline chips on /billing link here with ?status=… (audit R26); the
   // filter used to start at "all" whatever the link said. Read once, from a
   // timer rather than synchronously in the effect body, and hold the first
@@ -198,12 +319,11 @@ export default function SuperbillsPage() {
       // (audit R19). Submitting anyway is the biller's call, with a reason the
       // claim history keeps; cancelling leaves the claim where it was.
       if (!d.success && d.data?.documentationIncomplete) {
-        const reason = prompt(
+        const reason = askReason(
           `${d.error}\n\nTo record it as submitted anyway, enter the reason (at least 10 characters). It is recorded on the claim history.`,
-          "",
         );
-        if (reason === null || reason.trim() === "") return;
-        d = await send({ documentationOverride: { reason: reason.trim() } });
+        if (reason === null) return;
+        d = await send({ documentationOverride: { reason } });
       }
       if (!d.success) {
         alert(d.error ?? "Transition failed.");
@@ -219,6 +339,69 @@ export default function SuperbillsPage() {
       }
     } catch {
       alert("Network error — status not changed.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /**
+   * Another payment on a partially paid claim (D9): added to what is recorded.
+   * Below the bill it asks whether the claim closes there, because most do: the
+   * rest is a contractual adjustment or the patient's, and left open it would
+   * show a balance nobody owes.
+   */
+  async function furtherPayment(row: SuperbillRow) {
+    const usd = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+    const paidCents = row.paidAmountCents ?? 0;
+    const billed = usd(row.billedAmountCents);
+    const v = prompt(
+      `Amount of this payment, from the EOB or remittance — in dollars and cents, so $50.00 is 50.00.\n\n${usd(paidCents)} of the ${billed} billed is recorded so far.`,
+      "",
+    );
+    if (v === null || v.trim() === "") return;
+    const entered = Number(v.replace(/[$,\s]/g, ""));
+    if (!Number.isFinite(entered) || entered <= 0) {
+      alert("Enter a valid dollar amount — in dollars and cents, for example 50.00.");
+      return;
+    }
+    const amountCents = Math.round(entered * 100);
+    const { totalCents, above, covers } = furtherPaymentTotal({ paidCents, billedCents: row.billedAmountCents, amountCents });
+    const added = `${usd(amountCents)} on top of the ${usd(paidCents)} recorded makes ${usd(totalCents)}`;
+    if (
+      !confirm(
+        above
+          ? `${added}, more than the ${billed} billed on this claim.\n\nRecord it anyway, as paid with the overpayment confirmed? Cancel if you meant to type dollars and cents — $50.00 is 50.00, not 5000.`
+          : covers
+            ? `${added}, the whole ${billed} billed, so it is recorded as paid in full.\n\nRecord it?`
+            : `${added} of the ${billed} billed.\n\nRecord it?`,
+      )
+    ) {
+      return;
+    }
+    const last =
+      !covers &&
+      confirm(
+        `Is this the last payment on this claim?\n\nOK closes it as paid at ${usd(totalCents)}: the rest is a contractual adjustment or the patient's.\n\nCancel keeps it partially paid, open for another payment. The ${usd(amountCents)} is recorded either way.`,
+      );
+    setBusyId(row.id);
+    try {
+      const d = await fetch(`/api/superbills/${row.id}/payments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ amountCents, ...(last ? { last: true } : {}), ...(above ? { overpaymentAcknowledged: true } : {}) }),
+      }).then((r) => r.json());
+      if (!d.success) {
+        alert(d.error ?? "The payment was not recorded.");
+        return;
+      }
+      const fresh = await fetchPage(filter, page);
+      if (fresh.rows.length === 0 && page > 0) setPage(page - 1);
+      else {
+        setRows(fresh.rows);
+        setTotal(fresh.total);
+      }
+    } catch {
+      alert("Network error — the payment was not recorded.");
     } finally {
       setBusyId(null);
     }
@@ -270,6 +453,56 @@ export default function SuperbillsPage() {
               ? "No superbills"
               : `Showing ${from}–${to} of ${total} superbill${total === 1 ? "" : "s"}`}
           </CardDescription>
+          {canExport && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Button size="sm" variant="secondary" disabled={picked.length === 0} loading={exporting} onClick={() => void exportPicked()}>
+                Export {picked.length > 0 ? `${picked.length} ` : ""}for billing (CSV)
+              </Button>
+              <span className="text-xs text-slate-500">
+                Reviewed claims only. Each one exported is marked sent to billing; its status does not change.
+              </span>
+            </div>
+          )}
+          {canExport && connections.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {connections.length > 1 ? (
+                <select
+                  aria-label="Clearinghouse"
+                  value={connectionId}
+                  onChange={(e) => setConnectionId(e.target.value)}
+                  className="h-8 min-w-0 max-w-full rounded-md border border-slate-300 bg-white px-2 text-xs"
+                >
+                  {connections.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {connectionName(c)}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-xs text-slate-700">{connection ? connectionName(connection) : null}</span>
+              )}
+              {connection?.batchChannel === "sftp" && (
+                <Button size="sm" disabled={picked.length === 0 || sending !== null} loading={sending === "send"} onClick={() => void clearinghouse("send")}>
+                  Send {picked.length > 0 ? `${picked.length} ` : ""}to {connection.vendorName}
+                </Button>
+              )}
+              <Button size="sm" variant="secondary" disabled={picked.length === 0 || sending !== null} loading={sending === "download"} onClick={() => void clearinghouse("download")}>
+                Download 837P{picked.length > 0 ? ` (${picked.length})` : ""}
+              </Button>
+              <span className="text-xs text-slate-500">
+                {connection?.batchChannel === "sftp"
+                  ? connection.environment === "test"
+                    ? `Test connection: ${connection.vendorName} checks the file but never passes it to a payer, so nothing is marked Submitted.`
+                    : `Send uploads the picked claims to ${connection.vendorName} and marks them Submitted. Only claims that are ready to submit, or denied and corrected, can be sent.`
+                  : `Download creates the 837P file for you to upload in ${connection?.vendorName ?? "the clearinghouse"} yourself.`}
+              </span>
+            </div>
+          )}
+          {exportNote && (
+            <p role={exportNote.ok ? "status" : "alert"} className={`whitespace-pre-line break-words text-sm ${exportNote.ok ? "text-emerald-800" : "text-red-700"}`}>
+              {exportNote.text}
+            </p>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           {error && (
@@ -286,6 +519,11 @@ export default function SuperbillsPage() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
                   <tr>
+                    {canExport && (
+                      <th className="px-2 py-2.5">
+                        <span className="sr-only">Select claims to export or send</span>
+                      </th>
+                    )}
                     <th className="text-left font-semibold px-4 py-2.5">DOS</th>
                     {/* The short ref a payer's 835 echoes back (audit R10). */}
                     <th className="text-left font-semibold px-4 py-2.5">Claim ref</th>
@@ -301,6 +539,20 @@ export default function SuperbillsPage() {
                 <tbody className="divide-y divide-slate-100">
                   {rows.map((s) => (
                     <tr key={s.id} className="hover:bg-slate-50 align-top">
+                      {canExport && (
+                        <td className="px-2 py-2">
+                          {exportable(s.status) && (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select claim ${s.claimRef}`}
+                              checked={picked.includes(s.id)}
+                              onChange={(e) =>
+                                setPicked((cur) => (e.target.checked ? [...cur, s.id] : cur.filter((x) => x !== s.id)))
+                              }
+                            />
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-2 tabular text-slate-700">{s.dateOfService.slice(0, 10)}</td>
                       <td
                         className="px-4 py-2 font-mono text-xs text-slate-700"
@@ -320,7 +572,21 @@ export default function SuperbillsPage() {
                       <td className="px-4 py-2">
                         <CodeList codes={s.cptCodes} descriptors={s.codeDescriptors} />
                       </td>
-                      <td className="px-4 py-2 text-xs">{statusLabel(s.status)}</td>
+                      <td className="px-4 py-2 text-xs">
+                        {statusLabel(s.status)}
+                        {s.lastExportedAt && (
+                          <span className="block text-slate-500">
+                            sent to billing {new Date(s.lastExportedAt).toLocaleDateString()}
+                          </span>
+                        )}
+                        {chStatus[s.id] && (
+                          <span
+                            className={`block max-w-xs ${chStatus[s.id]!.payerState === "rejected" || chStatus[s.id]!.ackState === "rejected" ? "text-red-700" : "text-slate-500"}`}
+                          >
+                            {chStatus[s.id]!.summary}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-right tabular">${(s.billedAmountCents / 100).toFixed(2)}</td>
                       <td className="px-4 py-2 text-right tabular">
                         {s.paidAmountCents == null ? "—" : `$${(s.paidAmountCents / 100).toFixed(2)}`}
@@ -366,6 +632,16 @@ export default function SuperbillsPage() {
                               {a.label}
                             </button>
                           ))}
+                          {s.status === "partially_paid" && (
+                            <button
+                              type="button"
+                              disabled={busyId === s.id}
+                              onClick={() => void furtherPayment(s)}
+                              className="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-50"
+                            >
+                              {FURTHER_PAYMENT_LABEL}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

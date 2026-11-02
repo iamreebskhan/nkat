@@ -16,8 +16,12 @@
  */
 import type { ProviderTier } from "@/lib/features/superbills/superbill-pure";
 
+/**
+ * Kept in step with clinician_profile_credential_check. LPN since 0109: the
+ * practice's between-visit clinician is an LPN (Level-1 audit, 27 Oct).
+ */
 export const CLINICIAN_CREDENTIALS = [
-  "MD", "DO", "NP", "PA", "CNS", "RN", "LCSW", "OTHER",
+  "MD", "DO", "NP", "PA", "CNS", "RN", "LPN", "LCSW", "OTHER",
 ] as const;
 export type ClinicianCredential = (typeof CLINICIAN_CREDENTIALS)[number];
 
@@ -28,6 +32,7 @@ export const CREDENTIAL_LABEL: Record<ClinicianCredential, string> = {
   PA: "Physician assistant",
   CNS: "Clinical nurse specialist",
   RN: "Registered nurse",
+  LPN: "Licensed practical nurse",
   LCSW: "Social worker (LCSW)",
   OTHER: "Other",
 };
@@ -58,8 +63,8 @@ export function isValidNpi(npi: string): boolean {
  * credential does not bill home E/M services at all.
  *
  * Physicians bill at 100% of the fee schedule; NPs, PAs and CNSs at 85%.
- * RNs and social workers do not bill E/M codes — null tells the caller to
- * warn rather than silently price them.
+ * RNs, LPNs and social workers do not bill E/M codes — null tells the caller
+ * to warn rather than silently price them.
  */
 export function tierForCredential(
   credential: ClinicianCredential | string | null | undefined,
@@ -76,6 +81,17 @@ export function tierForCredential(
       return null;
   }
 }
+
+/**
+ * The between-visit clinicians (Mark 11f default): an RN or LPN reads the
+ * notes and care plans of their caseload, documents calls and logs PCM/CCM
+ * time, and signs no billed visit. A billed visit's claim names a practitioner,
+ * so a nurse's attestation is not one it can rest on. A "Not billed" visit type
+ * is theirs to sign.
+ */
+export const BETWEEN_VISIT_CREDENTIALS = ["RN", "LPN"] as const;
+export const signsOnlyUnbilledVisits = (credential: string | null | undefined): boolean =>
+  (BETWEEN_VISIT_CREDENTIALS as readonly string[]).includes(credential ?? "");
 
 /** Where a claim's rendering NPI came from. */
 export type NpiSource = "clinician" | "organization" | "none";

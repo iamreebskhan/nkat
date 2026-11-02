@@ -100,11 +100,28 @@ export interface PricedLine {
   payerRuleId: string | null;
   rateBasis: string | null;
   effectiveDate: string | null;
+  /**
+   * The practice's own fee for ONE unit (0118, Mark Q4 default), when it has
+   * one: the line then charges the fee, and rateCents is what the payer is
+   * expected to allow. Absent on lines priced before 0118 or without a fee.
+   */
+  feeCents?: number | null;
 }
 
 /** What a line charges: its stored charge, else one rate per unit (one unit on lines saved before 0106). */
 export function lineChargeCents(l: PricedLine): number {
   return l.chargeCents ?? l.rateCents * (l.units ?? 1);
+}
+
+/** What the payer is expected to allow for a line: its rate per unit, times the units. */
+export function lineExpectedCents(l: PricedLine): number {
+  return l.rateCents * (l.units ?? 1);
+}
+
+/** The practice's fee in force for a code on the date of service (0118). */
+export interface PracticeFee {
+  code: string;
+  feeCents: number;
 }
 
 /** Stored on the bill as superbill.pricing. */
@@ -132,22 +149,42 @@ export interface SuperbillPricing {
  * everywhere they are printed or compared (formatCodes, the packet's
  * reconcile), but a code sent twice through the API was priced twice: with
  * units that billed G0318 × 8 beside a bill that printed "G0318 ×4".
+ *
+ * A practice that bills its own fees (0118, Mark Q4 default) charges its fee
+ * on a line that has one; the rate found above is then what the payer is
+ * expected to allow, and the two totals differ by the contractual adjustment.
+ * Without a fee schedule the two totals are the same, as they always were.
+ * `unrated` lists the codes with no price at all: neither a rate nor a fee.
  */
 export function priceCodes(
   codes: string[],
   tier: ProviderTier,
   payerRates: PayerRate[] = [],
-  opts: { facility?: boolean; units?: CodeUnits | null } = {},
-): { lines: PricedLine[]; totalCents: number; unrated: string[]; fromReference: string[] } {
+  opts: { facility?: boolean; units?: CodeUnits | null; fees?: PracticeFee[] } = {},
+): {
+  lines: PricedLine[];
+  totalCents: number;
+  /** What the payer's rates come to; null when a line has no rate to expect. */
+  expectedCents: number | null;
+  unrated: string[];
+  fromReference: string[];
+  /** Codes billed at the practice's fee with no rate to expect against. */
+  feeWithoutRate: string[];
+} {
   const byCode = new Map(payerRates.map((r) => [r.code, r]));
+  const feeByCode = new Map((opts.fees ?? []).map((f) => [f.code, f.feeCents]));
   const perCode = normalizeUnits(codes, opts.units);
   const lines: PricedLine[] = [];
   const unrated: string[] = [];
   const fromReference: string[] = [];
+  const feeWithoutRate: string[] = [];
   let totalCents = 0;
+  let expectedCents: number | null = 0;
   for (const code of new Set(codes)) {
     const units = unitsOf(perCode, code);
+    const fee = feeByCode.get(code) ?? null;
     const pr = byCode.get(code);
+    let line: Omit<PricedLine, "chargeCents" | "feeCents">;
     if (pr) {
       const cents =
         opts.facility && pr.facilityRateCents !== null
@@ -155,48 +192,27 @@ export function priceCodes(
           : tier === "NP_PA" && pr.npPaRateCents !== null
             ? pr.npPaRateCents
             : pr.rateCents;
-      lines.push({
-        code,
-        rateCents: cents,
-        units,
-        chargeCents: cents * units,
-        source: "payer_fee_schedule",
-        payerRuleId: pr.payerRuleId,
-        rateBasis: pr.rateBasis,
-        effectiveDate: pr.effectiveDate,
-      });
-      totalCents += cents * units;
-      continue;
+      line = {
+        code, rateCents: cents, units, source: "payer_fee_schedule",
+        payerRuleId: pr.payerRuleId, rateBasis: pr.rateBasis, effectiveDate: pr.effectiveDate,
+      };
+    } else {
+      const ref = estimateRateCents(code, tier);
+      line = {
+        code, rateCents: ref, units, source: ref > 0 ? "reference_table" : "unrated",
+        payerRuleId: null, rateBasis: null, effectiveDate: null,
+      };
+      if (ref > 0) fromReference.push(code);
+      else if (fee === null) unrated.push(code);
+      else feeWithoutRate.push(code);
     }
-    const ref = estimateRateCents(code, tier);
-    if (ref > 0) {
-      lines.push({
-        code,
-        rateCents: ref,
-        units,
-        chargeCents: ref * units,
-        source: "reference_table",
-        payerRuleId: null,
-        rateBasis: null,
-        effectiveDate: null,
-      });
-      totalCents += ref * units;
-      fromReference.push(code);
-      continue;
-    }
-    lines.push({
-      code,
-      rateCents: 0,
-      units,
-      chargeCents: 0,
-      source: "unrated",
-      payerRuleId: null,
-      rateBasis: null,
-      effectiveDate: null,
-    });
-    unrated.push(code);
+    const charge = (fee ?? line.rateCents) * units;
+    lines.push({ ...line, chargeCents: charge, ...(fee !== null ? { feeCents: fee } : {}) });
+    totalCents += charge;
+    // A line with no rate leaves the expected payment unknown, not $0.
+    expectedCents = expectedCents === null || line.rateCents === 0 ? null : expectedCents + line.rateCents * units;
   }
-  return { lines, totalCents, unrated, fromReference };
+  return { lines, totalCents, expectedCents, unrated, fromReference, feeWithoutRate };
 }
 
 const RATE_BASIS_LABEL: Record<string, string> = {
@@ -207,14 +223,23 @@ const RATE_BASIS_LABEL: Record<string, string> = {
 
 /** Where a line's price came from, in words for the bill page. */
 export function describePriceSource(line: PricedLine): string {
+  let rate: string;
   if (line.source === "payer_fee_schedule") {
     const basis = line.rateBasis ? (RATE_BASIS_LABEL[line.rateBasis] ?? line.rateBasis) : "fee schedule";
-    return `payer rate — ${basis}${line.effectiveDate ? `, effective ${line.effectiveDate}` : ""}`;
+    rate = `payer rate — ${basis}${line.effectiveDate ? `, effective ${line.effectiveDate}` : ""}`;
+  } else if (line.source === "reference_table") {
+    rate = "Pallio's 2025 Medicare reference table — verify with the payer";
+  } else {
+    rate = line.feeCents != null ? "no payer rate on file" : "no rate on file — set the charge";
   }
-  if (line.source === "reference_table") {
-    return "Pallio's 2025 Medicare reference table — verify with the payer";
+  // The practice's own fee (0118): billed at it, and the payer's rate is what
+  // it is expected to allow.
+  if (line.feeCents != null) {
+    return `the practice's fee $${(line.feeCents / 100).toFixed(2)}; expected from the payer: ${
+      line.rateCents > 0 ? `$${(line.rateCents / 100).toFixed(2)} (${rate})` : `unknown (${rate})`
+    }`;
   }
-  return "no rate on file — set the charge";
+  return rate;
 }
 
 export interface BuildSuperbillInput {
@@ -256,6 +281,8 @@ export interface BuildSuperbillInput {
   placeOfServiceCode?: string | null;
   /** The payer's rates on file for the date of service (audit R33). */
   payerRates?: PayerRate[];
+  /** The practice's own fees in force on the date of service (0118). */
+  practiceFees?: PracticeFee[];
   /** The place of service is a facility (POS table), for the facility rate. */
   posFacility?: boolean;
 }
@@ -276,8 +303,10 @@ export interface DraftSuperbill {
   /** Billing provider NPI (box 33a). */
   billingNpi: string;
   placeOfServiceCode: string;
-  /** Sum of the priced lines, units × rate each. */
+  /** Sum of the priced lines, units × rate each (units × the practice's fee where it has one). */
   billedAmountCents: number;
+  /** What the payer's rates come to for the same lines (0118); null when a line has none. */
+  expectedAmountCents: number | null;
   /** Codes with a price, and where each price came from. */
   ratedCodes: PricedLine[];
   /** Codes the platform doesn't have a rate for (org rulebook may set them). */
@@ -306,8 +335,10 @@ export function buildSuperbill(input: BuildSuperbillInput): DraftSuperbill {
   const priced = priceCodes(visit.cptCodesAssigned, provider.tier, input.payerRates ?? [], {
     facility: input.posFacility,
     units: cptUnits,
+    fees: input.practiceFees,
   });
-  const rated = priced.lines.filter((l) => l.source !== "unrated");
+  // A line with the practice's fee is priced, rate or no rate (0118).
+  const rated = priced.lines.filter((l) => l.source !== "unrated" || l.feeCents != null);
   const unrated = priced.unrated;
   const total = priced.totalCents;
 
@@ -328,6 +359,11 @@ export function buildSuperbill(input: BuildSuperbillInput): DraftSuperbill {
   if (unrated.length > 0) {
     warnings.push(
       `No rate for ${unrated.join(", ")} with this payer or in Pallio's reference table — set the charge before submitting.`,
+    );
+  }
+  if (priced.feeWithoutRate.length > 0) {
+    warnings.push(
+      `No payer rate on file for ${priced.feeWithoutRate.join(", ")}: billed at the practice's fee, with no expected payment to compare the remittance against.`,
     );
   }
   // Where the visit took place is never silently inferred (audit R23).
@@ -359,6 +395,7 @@ export function buildSuperbill(input: BuildSuperbillInput): DraftSuperbill {
     billingNpi: provider.billingNpi ?? "",
     placeOfServiceCode,
     billedAmountCents: total,
+    expectedAmountCents: priced.expectedCents,
     ratedCodes: rated,
     unratedCodes: unrated,
     warnings,

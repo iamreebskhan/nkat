@@ -55,6 +55,7 @@ const TYPES: SqlRow[] = [
   { org_id: ORG, slug: "established_patient_home", coding_basis: "established_patient_home" },
   { org_id: ORG, slug: "bereavement_follow_up", coding_basis: "non_billable" },
   { org_id: OTHER_ORG, slug: "established_patient_home", coding_basis: "established_patient_home" },
+  { org_id: ORG, slug: "pcm_ccm_month", coding_basis: "care_management" },
 ];
 
 let db: FakeDb;
@@ -69,6 +70,14 @@ function withVisits(rows: SqlRow[]): void {
       rows,
     },
     org_visit_type: { columns: ["org_id", "slug", "coding_basis"], rows: TYPES },
+    // The practice's zone, for the day the hint names (0107).
+    org: {
+      columns: ["id", "timezone"],
+      rows: [
+        { id: ORG, timezone: "America/New_York" },
+        { id: OTHER_ORG, timezone: "America/Los_Angeles" },
+      ],
+    },
   };
 }
 
@@ -95,6 +104,7 @@ describe("findPriorVisit", () => {
     withVisits([visit({ at })]);
     expect(await hint()).toEqual({
       lastVisitAt: at.toISOString(),
+      lastVisitDay: "2025-09-25",
       lastVisitStatus: "documented",
       windowStart: WINDOW_START.toISOString(),
       suggestedBasis: "established_patient_home",
@@ -105,10 +115,18 @@ describe("findPriorVisit", () => {
     withVisits([visit({ at: yearsBefore(4) })]);
     expect(await hint()).toEqual({
       lastVisitAt: null,
+      lastVisitDay: null,
       lastVisitStatus: null,
       windowStart: WINDOW_START.toISOString(),
       suggestedBasis: "new_patient_home",
     });
+  });
+
+  it("names the practice's day of the prior visit, not UTC's (0107)", async () => {
+    // 8:30 pm in Ohio on 21 Oct 2025 is 00:30 UTC on the 22nd.
+    const at = new Date("2025-10-22T00:30:00.000Z");
+    withVisits([visit({ at })]);
+    expect((await hint()).lastVisitDay).toBe("2025-10-21");
   });
 
   it("counts a visit exactly at the start of the window", async () => {
@@ -142,6 +160,14 @@ describe("findPriorVisit", () => {
     // bills as established. Only the visit's own org's row may decide.
     withVisits([visit({ at: yearsBefore(1), visit_type: "bereavement_follow_up" })]);
     expect((await hint()).lastVisitAt).toBeNull();
+  });
+
+  it("ignores a PCM/CCM month's charge, which saw no one (0117)", async () => {
+    withVisits([visit({ at: yearsBefore(0, -86_400_000), visit_type: "pcm_ccm_month", status: "pending_billing" })]);
+    expect((await hint()).suggestedBasis).toBe("new_patient_home");
+    // CONTROL: the same day's home visit does count.
+    withVisits([visit({ at: yearsBefore(0, -86_400_000), status: "pending_billing" })]);
+    expect((await hint()).suggestedBasis).toBe("established_patient_home");
   });
 
   it("counts a visit whose slug has no type row, so an unknown case leans established", async () => {

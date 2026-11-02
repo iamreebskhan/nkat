@@ -166,6 +166,25 @@ describe("listVisitTypes", () => {
   });
 });
 
+describe("the PCM/CCM month type (0117)", () => {
+  it("is never listed, even with inactive types, and never edited", async () => {
+    await listVisitTypes({ orgId: ORG, includeInactive: true });
+    expect(calls[0]!.sql).toContain("AND t.slug <> ");
+    expect(calls[0]!.values).toContain("pcm_ccm_month");
+    calls = [];
+    await updateVisitType({ orgId: ORG, id: TYPE_ID, payload: { active: true } });
+    const upd = calls.find((c) => c.sql.includes("UPDATE org_visit_type SET"))!;
+    expect(upd.sql).toContain("AND slug <> ");
+    expect(upd.values).toContain("pcm_ccm_month");
+  });
+
+  it("is a slug no practice's own type can take", () => {
+    expect(slugifyVisitType("PCM CCM month")).toBe("pcm_ccm_month_custom");
+    // CONTROL: an ordinary label keeps its slug.
+    expect(slugifyVisitType("PCM review")).toBe("pcm_review");
+  });
+});
+
 describe("DEFAULT_VISIT_TYPES — what signup seeds", () => {
   it("declares only bands the CHECK accepts — the signup regression guard", () => {
     // Signup inserts each entry's codingBasis. One the 0099 CHECK refuses

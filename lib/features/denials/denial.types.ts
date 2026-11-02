@@ -110,6 +110,12 @@ export interface DenialView {
    */
   source: "recorded" | "remittance";
 
+  /**
+   * When the claim last went back to the payer after this denial was raised,
+   * from any denial on it or from the queue. getDenial only; absent on lists.
+   */
+  claimResubmittedAt?: string | null;
+
   createdAt: string;
   updatedAt: string;
 }

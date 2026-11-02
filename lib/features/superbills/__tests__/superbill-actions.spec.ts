@@ -147,8 +147,8 @@ describe("QUEUE_ACTIONS against STATUS_TRANSITIONS", () => {
 });
 
 describe("SUBMISSION_DISCLOSURE (audit R35)", () => {
-  it("says Pallio does not send claims, where to send them, and whose figures these are", () => {
-    expect(SUBMISSION_DISCLOSURE).toContain("does not send claims");
+  it("says when Pallio sends a claim (0120), where else claims go, and whose figures these are", () => {
+    expect(SUBMISSION_DISCLOSURE).toContain("sends a claim only when you send it through a connected clearinghouse");
     expect(SUBMISSION_DISCLOSURE).toMatch(/clearinghouse or the payer's portal/);
     expect(SUBMISSION_DISCLOSURE).toMatch(/what your team recorded/);
   });
