@@ -72,8 +72,8 @@
 #        enumerate several sibling codes ("99341-99350, 99497/99498, ...") are
 #        normal policy prose, not defects -- that wider population is reported
 #        as an INFO number in Section C rather than failed here.
-#    B4  RETIRED CODE.  99343 was deleted from CPT for 2023.  No live rule may
-#        say it is covered.
+#    B4  RETIRED CODES.  99343 and every other code CPT or HCPCS deleted (the
+#        list is at B4 below).  No live rule may say one is covered.
 #    B5  HOME-HEALTH-AGENCY MIS-MAPPING.  A physician home-visit E/M row
 #        (99341-99350, 99417, G0318) whose prior-auth answer repeats a home
 #        health AGENCY benefit trigger -- "18 combined visits", "home health
@@ -522,14 +522,18 @@ check B3 "Answer never substitutes a different single code" \
    from substitutions order by payer, code, attribute limit $MAX_ROWS_SHOWN;" \
 record
 
-# --- B4: retired code ---------------------------------------------------------
-check B4 "Retired code 99343 is never marked covered" \
-"$LIVE select count(*) from live where code = '99343' and coverage_status = 'covered';" \
-"$LIVE select '* 99343  ' || state || '  ' || payer || '  [' || attribute
+# --- B4: retired codes --------------------------------------------------------
+# CPT deleted 99201 for 2021 and, for 2023, 99343 with the observation,
+# consult-level-1, domiciliary and direct-contact prolonged codes; HCPCS
+# retired G2058 (2021) and G2064/G2065 (2022). 99319 is no code at all.
+RETIRED_CODES="'99201','99217','99218','99219','99220','99224','99225','99226','99241','99251','99318','99319','99324','99325','99326','99327','99328','99334','99335','99336','99337','99339','99340','99343','99354','99355','99356','99357','G2058','G2064','G2065'"
+check B4 "Retired codes (99343, 99201, the 2023 E/M deletions, G2058/G2064/G2065) are never marked covered" \
+"$LIVE select count(*) from live where code in ($RETIRED_CODES) and coverage_status = 'covered';" \
+"$LIVE select '* ' || code || '  ' || state || '  ' || payer || '  [' || attribute
           || ', effective ' || effective_date || ']' || chr(10)
           || '    ANSWER: ' || left(ans, 400) || chr(10)
-   from live where code = '99343' and coverage_status = 'covered'
-   order by payer, attribute limit $MAX_ROWS_SHOWN;" \
+   from live where code in ($RETIRED_CODES) and coverage_status = 'covered'
+   order by code, payer, attribute limit $MAX_ROWS_SHOWN;" \
 record
 
 # --- B5: home health AGENCY trigger leaking onto a physician home visit --------

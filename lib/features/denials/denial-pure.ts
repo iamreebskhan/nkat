@@ -40,10 +40,12 @@ export interface CarcEntry {
  */
 const CARC_CATALOG: CarcEntry[] = [
   // Auth + missing-info
-  { code: "197", text: "Precertification/authorization/notification absent.", category: "auth_required", defaultRecommendation: "appeal" },
-  { code: "198", text: "Precertification/authorization exceeded.", category: "auth_required", defaultRecommendation: "appeal" },
-  { code: "16", text: "Claim/service lacks information needed for adjudication.", category: "missing_info", defaultRecommendation: "refile" },
-  { code: "227", text: "Information requested from the patient/insured/responsible party was not provided.", category: "missing_info", defaultRecommendation: "refile" },
+  // Wording as the X12 CARC list publishes it today (checked 3 Nov 2026);
+  // 16, 197, 198 and 227 were older or shortened versions.
+  { code: "197", text: "Precertification/authorization/notification/pre-treatment absent.", category: "auth_required", defaultRecommendation: "appeal" },
+  { code: "198", text: "Precertification/notification/authorization/pre-treatment exceeded.", category: "auth_required", defaultRecommendation: "appeal" },
+  { code: "16", text: "Claim/service lacks information or has submission/billing error(s).", category: "missing_info", defaultRecommendation: "refile" },
+  { code: "227", text: "Information requested from the patient/insured/responsible party was not provided or was insufficient/incomplete.", category: "missing_info", defaultRecommendation: "refile" },
   // A payer asking for the note or another record before it pays; showed as
   // "Unknown CARC 252" on the denial page (localhost, 2026-10-27).
   { code: "252", text: "An attachment/other documentation is required to adjudicate this claim/service.", category: "missing_info", defaultRecommendation: "refile" },

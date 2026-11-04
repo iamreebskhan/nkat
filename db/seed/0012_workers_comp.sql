@@ -18,11 +18,22 @@ ON CONFLICT (state, year, effective_date) DO UPDATE
       notes = EXCLUDED.notes,
       source_url = EXCLUDED.source_url;
 
--- WC-relevant HCPCS T-codes
+-- Three HCPCS T-codes this seed has always carried. They are NOT workers'
+-- comp codes: T2010 is the Medicaid preadmission screening and resident
+-- review (PASRR) level I screen, and T2025/T2027 are Medicaid home and
+-- community-based waiver services. They stay in the catalog, filed as what
+-- they are, with the HCPCS file's dates. The primary key is
+-- (code, effective_date), so the old 2003-01-01 rows are re-keyed in place
+-- first rather than gaining a second row (see 0007 on G0318).
+UPDATE code c SET effective_date = v.new_date
+  FROM (VALUES ('T2010', DATE '2003-04-01'), ('T2025', DATE '2003-10-01'), ('T2027', DATE '2003-10-01')) AS v(code, new_date)
+ WHERE c.code = v.code AND c.effective_date = DATE '2003-01-01'
+   AND NOT EXISTS (SELECT 1 FROM code k WHERE k.code = v.code AND k.effective_date = v.new_date);
+
 INSERT INTO code (code, code_system, short_descriptor, category, specialty, effective_date) VALUES
-  ('T2010', 'HCPCS2', 'Preadmission screening / resident review',          'WC',           'workers_comp', '2003-01-01'),
-  ('T2025', 'HCPCS2', 'Waiver services, NOS',                              'WC',           'workers_comp', '2003-01-01'),
-  ('T2027', 'HCPCS2', 'Specialized childcare, waiver',                     'WC',           'workers_comp', '2003-01-01')
+  ('T2010', 'HCPCS2', 'PASRR level I identification screen',              'PASRR',           NULL, '2003-04-01'),
+  ('T2025', 'HCPCS2', 'Waiver services, NOS',                              'Medicaid Waiver', NULL, '2003-10-01'),
+  ('T2027', 'HCPCS2', 'Specialized childcare, waiver, per 15 min',         'Medicaid Waiver', NULL, '2003-10-01')
 ON CONFLICT (code, effective_date) DO UPDATE
   SET short_descriptor = EXCLUDED.short_descriptor,
       category = EXCLUDED.category,

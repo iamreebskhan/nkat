@@ -5,7 +5,7 @@ import {
 } from '../services/dmepos.service';
 
 const entry = (over: Partial<DmeMasterListEntry> = {}): DmeMasterListEntry => ({
-  code: 'E0470',
+  code: 'K0823',
   requires_face_to_face: true,
   requires_prior_auth: true,
   requires_cmn: false,
@@ -17,7 +17,7 @@ const entry = (over: Partial<DmeMasterListEntry> = {}): DmeMasterListEntry => ({
 
 const line = (over: Partial<DmepostLine> = {}): DmepostLine => ({
   index: 0,
-  code: 'E0470',
+  code: 'K0823',
   modifiers: [],
   ...over,
 });

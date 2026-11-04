@@ -32,13 +32,15 @@ UPDATE code SET effective_date = DATE '2023-01-01'
 DELETE FROM code WHERE code = 'G0318' AND effective_date = DATE '2024-01-01';
 
 INSERT INTO code (code, code_system, short_descriptor, category, effective_date) VALUES
-  -- Home visit E/M (new patient)
-  ('99341', 'CPT',    'Home visit, new pt, low MDM/15min',                      'E/M Home Visit',  '2023-01-01'),
+  -- Home visit E/M (new patient). The lowest level of each ladder is
+  -- STRAIGHTFORWARD MDM, not low: CMS's own RVU file reads "Home/res vst new
+  -- sf mdm 15" and "... est sf mdm 20" (sf = straightforward).
+  ('99341', 'CPT',    'Home visit, new pt, straightforward MDM/15min',          'E/M Home Visit',  '2023-01-01'),
   ('99342', 'CPT',    'Home visit, new pt, low MDM/30min',                      'E/M Home Visit',  '2023-01-01'),
   ('99344', 'CPT',    'Home visit, new pt, mod MDM/60min',                      'E/M Home Visit',  '2023-01-01'),
   ('99345', 'CPT',    'Home visit, new pt, high MDM/75min',                     'E/M Home Visit',  '2023-01-01'),
   -- Home visit E/M (established)
-  ('99347', 'CPT',    'Home visit, est pt, low MDM/20min',                      'E/M Home Visit',  '2023-01-01'),
+  ('99347', 'CPT',    'Home visit, est pt, straightforward MDM/20min',          'E/M Home Visit',  '2023-01-01'),
   ('99348', 'CPT',    'Home visit, est pt, low MDM/30min',                      'E/M Home Visit',  '2023-01-01'),
   ('99349', 'CPT',    'Home visit, est pt, mod MDM/40min',                      'E/M Home Visit',  '2023-01-01'),
   ('99350', 'CPT',    'Home visit, est pt, high MDM/60min',                     'E/M Home Visit',  '2023-01-01'),
@@ -49,27 +51,36 @@ INSERT INTO code (code, code_system, short_descriptor, category, effective_date)
   -- 15 min past the CMS total time of 99345/99350. Ohio Medicaid lists it too
   -- (Appendix DD, 01/01/2023), so the wording names no payer.
   ('G0318', 'HCPCS2', 'Prolonged home/residence E/M, each addl 15 min',         'Prolonged',       '2023-01-01'),
-  -- 2026 audio-visual telemedicine series (HCPCS-style 98xxx — confirm with AMA before paid pilot)
-  ('98000', 'CPT',    'A/V telemed E/M new pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98001', 'CPT',    'A/V telemed E/M new pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98002', 'CPT',    'A/V telemed E/M new pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98003', 'CPT',    'A/V telemed E/M new pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98004', 'CPT',    'A/V telemed E/M new pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98005', 'CPT',    'A/V telemed E/M new pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98006', 'CPT',    'A/V telemed E/M new pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98007', 'CPT',    'A/V telemed E/M new pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98008', 'CPT',    'A/V telemed E/M est pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98009', 'CPT',    'A/V telemed E/M est pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98010', 'CPT',    'A/V telemed E/M est pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98011', 'CPT',    'A/V telemed E/M est pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98012', 'CPT',    'A/V telemed E/M est pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98013', 'CPT',    'A/V telemed E/M est pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98014', 'CPT',    'A/V telemed E/M est pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  ('98015', 'CPT',    'A/V telemed E/M est pt (level placeholder)',             'Telemedicine',    '2025-01-01'),
-  -- 2026 NEW G-codes for psychiatric collaborative care
-  ('G0568', 'HCPCS2', 'Psych collab care, initial 70 min',                      'Psych Collab Care','2026-01-01'),
-  ('G0569', 'HCPCS2', 'Psych collab care, initial 60 min',                      'Psych Collab Care','2026-01-01'),
-  ('G0570', 'HCPCS2', 'Psych collab care, subseq month',                        'Psych Collab Care','2026-01-01')
+  -- CPT 2025 telemedicine E/M. Four groups of four, each ladder straightforward
+  -- / low / moderate / high MDM: 98000-98003 audio-video new patient,
+  -- 98004-98007 audio-video established, 98008-98011 audio-only new,
+  -- 98012-98015 audio-only established (CMS RVU file: "Synch audio-video new
+  -- sf 15" … "Synch audio-only est high 40"). These were four placeholders
+  -- that called 98004-98007 new-patient codes and 98008-98015 audio-video.
+  ('98000', 'CPT',    'Audio-video visit, new pt, straightforward MDM/15min',   'Telemedicine',    '2025-01-01'),
+  ('98001', 'CPT',    'Audio-video visit, new pt, low MDM/30min',               'Telemedicine',    '2025-01-01'),
+  ('98002', 'CPT',    'Audio-video visit, new pt, mod MDM/45min',               'Telemedicine',    '2025-01-01'),
+  ('98003', 'CPT',    'Audio-video visit, new pt, high MDM/60min',              'Telemedicine',    '2025-01-01'),
+  ('98004', 'CPT',    'Audio-video visit, est pt, straightforward MDM/10min',   'Telemedicine',    '2025-01-01'),
+  ('98005', 'CPT',    'Audio-video visit, est pt, low MDM/20min',               'Telemedicine',    '2025-01-01'),
+  ('98006', 'CPT',    'Audio-video visit, est pt, mod MDM/30min',               'Telemedicine',    '2025-01-01'),
+  ('98007', 'CPT',    'Audio-video visit, est pt, high MDM/40min',              'Telemedicine',    '2025-01-01'),
+  ('98008', 'CPT',    'Audio-only visit, new pt, straightforward MDM/15min',    'Telemedicine',    '2025-01-01'),
+  ('98009', 'CPT',    'Audio-only visit, new pt, low MDM/30min',                'Telemedicine',    '2025-01-01'),
+  ('98010', 'CPT',    'Audio-only visit, new pt, mod MDM/45min',                'Telemedicine',    '2025-01-01'),
+  ('98011', 'CPT',    'Audio-only visit, new pt, high MDM/60min',               'Telemedicine',    '2025-01-01'),
+  ('98012', 'CPT',    'Audio-only visit, est pt, straightforward MDM/10min',    'Telemedicine',    '2025-01-01'),
+  ('98013', 'CPT',    'Audio-only visit, est pt, low MDM/20min',                'Telemedicine',    '2025-01-01'),
+  ('98014', 'CPT',    'Audio-only visit, est pt, mod MDM/30min',                'Telemedicine',    '2025-01-01'),
+  ('98015', 'CPT',    'Audio-only visit, est pt, high MDM/40min',               'Telemedicine',    '2025-01-01'),
+  -- CY2026 behavioral health add-ons to Advanced Primary Care Management
+  -- (G0556-G0558), per the HCPCS file: G0568 initial-month psychiatric
+  -- collaborative care (built on 99492), G0569 subsequent-month (99493), G0570
+  -- general behavioral health integration (99484). CMS drops the time minimums
+  -- when they are billed with an APCM code, so no minutes are stated.
+  ('G0568', 'HCPCS2', 'APCM add-on: psych collab care, first month',            'APCM BHI Add-on', '2026-01-01'),
+  ('G0569', 'HCPCS2', 'APCM add-on: psych collab care, later month',            'APCM BHI Add-on', '2026-01-01'),
+  ('G0570', 'HCPCS2', 'APCM add-on: behavioral health care mgmt, per month',    'APCM BHI Add-on', '2026-01-01')
 ON CONFLICT (code, effective_date) DO UPDATE
   SET short_descriptor = EXCLUDED.short_descriptor,
       category = EXCLUDED.category;
@@ -104,20 +115,26 @@ ON CONFLICT (code, effective_date) DO NOTHING;
 UPDATE code SET typical_minutes = v.minutes, mdm_level = v.mdm
   FROM (VALUES
     -- Home visit E/M, new patient. 99343 is absent on purpose: CPT deleted it
-    -- effective 2023, and the ladder steps 99342 → 99344.
-    ('99341', 15, 'low'),
+    -- effective 2023, and the ladder steps 99342 → 99344. The first step is
+    -- straightforward MDM; this said 'low' for 99341 and 99347.
+    ('99341', 15, 'straightforward'),
     ('99342', 30, 'low'),
     ('99344', 60, 'moderate'),
     ('99345', 75, 'high'),
     -- Home visit E/M, established patient.
-    ('99347', 20, 'low'),
+    ('99347', 20, 'straightforward'),
     ('99348', 30, 'low'),
     ('99349', 40, 'moderate'),
     ('99350', 60, 'high'),
     -- Advance care planning is time-based only — no MDM level in the
     -- descriptor, so mdm_level stays NULL rather than being invented.
     ('99497', 30, NULL),
-    ('99498', 30, NULL)
+    ('99498', 30, NULL),
+    -- Telemedicine E/M: the same time and MDM steps as the office codes.
+    ('98000', 15, 'straightforward'), ('98001', 30, 'low'), ('98002', 45, 'moderate'), ('98003', 60, 'high'),
+    ('98004', 10, 'straightforward'), ('98005', 20, 'low'), ('98006', 30, 'moderate'), ('98007', 40, 'high'),
+    ('98008', 15, 'straightforward'), ('98009', 30, 'low'), ('98010', 45, 'moderate'), ('98011', 60, 'high'),
+    ('98012', 10, 'straightforward'), ('98013', 20, 'low'), ('98014', 30, 'moderate'), ('98015', 40, 'high')
   ) AS v(code, minutes, mdm)
  WHERE code.code = v.code;
 

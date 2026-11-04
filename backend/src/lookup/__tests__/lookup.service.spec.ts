@@ -268,7 +268,7 @@ describe('LookupService.run', () => {
     const services = makeServices();
     (services.sud.check as jest.Mock).mockResolvedValueOnce({
       status: 'consent_missing',
-      flagged_codes: ['H0004'],
+      flagged_codes: ['H0005'],
       required_scopes: ['TPO_payment'],
     });
     const svc = build(makeRulesRepo(baseHit()), services);
@@ -283,7 +283,7 @@ describe('LookupService.run', () => {
     const consent = r.cross_line_findings.find((f) => f.carc_class === 'part2_consent');
     expect(consent).toBeDefined();
     expect(consent!.severity).toBe('critical');
-    expect(consent!.detail).toContain('H0004');
+    expect(consent!.detail).toContain('H0005');
     expect(r.overall_severity).toBe('critical');
   });
 
@@ -307,7 +307,7 @@ describe('LookupService.run', () => {
     const services = makeServices();
     (services.sud.check as jest.Mock).mockResolvedValueOnce({
       status: 'consent_active',
-      flagged_codes: ['H0004'],
+      flagged_codes: ['H0005'],
       consent_id: 'c1',
       required_scopes: ['TPO_payment'],
     });
@@ -388,14 +388,14 @@ describe('LookupService.run', () => {
       {
         kind: 'asc_office_based',
         line_index: 0,
-        code: '11042',
-        message: 'A2 — office-based',
+        code: '10060',
+        message: 'P3 — office-based',
         source_url: 'https://cms/asc',
       },
     ]);
     const svc = build(makeRulesRepo(baseHit()), services);
     const r = await svc.run(
-      { ...baseReq, product_line: 'institutional_asc', lines: [{ code: '11042' }] },
+      { ...baseReq, product_line: 'institutional_asc', lines: [{ code: '10060' }] },
       ORG,
     );
     const ascFinding = r.cross_line_findings.find((f) => f.carc_class === 'asc_payment');

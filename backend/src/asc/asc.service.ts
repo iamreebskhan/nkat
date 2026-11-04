@@ -2,9 +2,9 @@
  * AscService — payment-indicator lookup for Ambulatory Surgical Center claims.
  *
  *   evaluate(line, dos)  — for a CPT/HCPCS code billed under an ASC product
- *     line, returns the CMS ASC payment indicator (e.g. P1, A2, J8). When no
- *     indicator is on file, the line is "ASC-not-payable" — typically a
- *     hospital-only procedure.
+ *     line, returns the CMS ASC payment indicator (e.g. A2, P3, J8; CMS
+ *     Addendum DD1). When no indicator is on file, the line is
+ *     "ASC-not-payable" — typically a hospital-only procedure.
  */
 import { Inject, Injectable } from '@nestjs/common';
 import { DB_TOKEN } from '../database/database.module';
@@ -25,7 +25,7 @@ export interface AscIndicatorMatch {
 
 export type AscIssueKind =
   | 'asc_not_payable' // no indicator on file → hospital-only
-  | 'asc_office_based'; // A2 → typically not paid in ASC; office-based procedure
+  | 'asc_office_based'; // P2/P3/R2 → office-based procedure; payment may be capped
 
 export interface AscIssue {
   kind: AscIssueKind;
@@ -35,6 +35,15 @@ export interface AscIssue {
   match?: AscIndicatorMatch;
   source_url?: string | null;
 }
+
+/**
+ * The office-based surgical procedures of CMS Addendum DD1: P2, P3 (the ASC
+ * rate is capped by the physician fee schedule's non-facility PE) and R2.
+ * Not A2, which is a procedure on the ASC list since 2007 paid from its OPPS
+ * relative weight; this used to flag A2, so cataract surgery and colonoscopy
+ * were warned about an office-based cap they do not have.
+ */
+const OFFICE_BASED_INDICATORS: ReadonlySet<string> = new Set(['P2', 'P3', 'R2']);
 
 /**
  * Pure-function evaluator. Given a line + the ASC indicator row (or undefined),
@@ -54,13 +63,13 @@ export function evaluateAscLine(
       },
     ];
   }
-  if (match.payment_indicator === 'A2') {
+  if (OFFICE_BASED_INDICATORS.has(match.payment_indicator)) {
     return [
       {
         kind: 'asc_office_based',
         line_index: line.index,
         code: line.code,
-        message: `${line.code} is classified A2 (office-based surgical procedure); ASC payment may be limited to the office-based rate ($${match.payment_rate?.toFixed(2) ?? '?'}).`,
+        message: `${line.code} is classified ${match.payment_indicator} (office-based surgical procedure); ASC payment may be limited to the office-based rate ($${match.payment_rate?.toFixed(2) ?? '?'}).`,
         match,
         ...(match.source_url ? { source_url: match.source_url } : {}),
       },

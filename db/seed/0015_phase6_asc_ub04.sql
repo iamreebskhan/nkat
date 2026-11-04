@@ -5,20 +5,27 @@
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- ASC payment indicators (CMS ASCFS Addenda; representative subset).
+-- ASC payment indicators: CMS Addendum AA, October 2026 release, for six
+-- representative codes, with the indicator definitions of Addendum DD1.
+--
+-- These rows used to be invented. "P1" is not an ASC payment indicator, the
+-- rates were round numbers, and A2 was labelled "office-based" — A2 means a
+-- procedure on the ASC list since 2007, paid from the OPPS relative weight;
+-- office-based procedures are P2, P3 and R2. The primary key includes the
+-- indicator, so the four P1 rows are removed rather than left beside the
+-- corrected ones.
 -- ---------------------------------------------------------------------------
+DELETE FROM asc_payment_indicator
+ WHERE effective_year = 2026 AND payment_indicator = 'P1'
+   AND code IN ('27447', '66984', '45378', '45380');
+
 INSERT INTO asc_payment_indicator (code, payment_indicator, payment_group, payment_rate, effective_year, source_url) VALUES
-  -- Office-based surgical procedures (group A2)
-  ('11042', 'A2', 'Office-based surgical procedure',         165.00, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc'),
-  -- Group P1 — paid at standard ASC rate
-  ('27447', 'P1', 'Total knee arthroplasty (TKA)',          12000.00, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc'),
-  -- Group J8 — device-intensive
-  ('63685', 'J8', 'Spinal neurostimulator implant',         18500.00, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc'),
-  -- Cataract surgery (very high ASC volume)
-  ('66984', 'P1', 'Cataract surgery, with IOL',              1700.00, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc'),
-  -- Colonoscopy (high volume)
-  ('45378', 'P1', 'Diagnostic colonoscopy',                   650.00, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc'),
-  ('45380', 'P1', 'Colonoscopy w/ biopsy',                    760.00, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc')
+  ('11042', 'A2', 'On ASC list since 2007; paid from OPPS relative weight',      223.01, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc/asc-payment-rates-addenda'),
+  ('27447', 'J8', 'Device-intensive procedure; paid at adjusted rate',          9393.16, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc/asc-payment-rates-addenda'),
+  ('63685', 'J8', 'Device-intensive procedure; paid at adjusted rate',         27485.81, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc/asc-payment-rates-addenda'),
+  ('66984', 'A2', 'On ASC list since 2007; paid from OPPS relative weight',     1255.73, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc/asc-payment-rates-addenda'),
+  ('45378', 'A2', 'On ASC list since 2007; paid from OPPS relative weight',      510.49, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc/asc-payment-rates-addenda'),
+  ('45380', 'A2', 'On ASC list since 2007; paid from OPPS relative weight',      656.75, 2026, 'https://www.cms.gov/medicare/payment/prospective-payment-systems/ambulatory-surgical-center-asc/asc-payment-rates-addenda')
 ON CONFLICT (code, payment_indicator, effective_year) DO UPDATE
   SET payment_group = EXCLUDED.payment_group,
       payment_rate = EXCLUDED.payment_rate,
@@ -36,8 +43,13 @@ INSERT INTO ub04_bill_type (bill_type, facility_type, classification, frequency,
   ('112', '1', '1', '2', 'Hospital inpatient — interim first',                         '{institutional_hospital}',     '1980-01-01'),
   ('114', '1', '1', '4', 'Hospital inpatient — interim last',                          '{institutional_hospital}',     '1980-01-01'),
   ('131', '1', '3', '1', 'Hospital outpatient — admit thru discharge',                 '{institutional_hospital,institutional_asc}', '1980-01-01'),
-  ('141', '1', '4', '1', 'Hospital — observation services',                            '{institutional_hospital}',     '2003-04-01'),
-  ('181', '1', '8', '1', 'Hospital hospice — admit thru discharge',                    '{institutional_hospice}',      '1983-11-01'),
+  -- 14X is "hospital, other (Part B)" — referred diagnostic services for a
+  -- non-patient, such as a lab specimen; observation is billed on 13X. 18X is
+  -- the hospital SWING BED, and hospital-based hospice is 82X. Both rows had
+  -- been described as the other service.
+  ('141', '1', '4', '1', 'Hospital other (Part B), e.g. referred diagnostics — admit thru discharge', '{institutional_hospital}', '2003-04-01'),
+  ('181', '1', '8', '1', 'Hospital swing bed — admit thru discharge',                  '{institutional_hospital}',     '1983-11-01'),
+  ('821', '8', '2', '1', 'Hospice (hospital based) — admit thru discharge',            '{institutional_hospice}',      '1983-11-01'),
   ('211', '2', '1', '1', 'SNF inpatient — admit thru discharge',                       '{institutional_snf}',          '1980-01-01'),
   ('212', '2', '1', '2', 'SNF inpatient — interim first',                              '{institutional_snf}',          '1980-01-01'),
   ('213', '2', '1', '3', 'SNF inpatient — interim continuing',                         '{institutional_snf}',          '1980-01-01'),
@@ -69,19 +81,22 @@ INSERT INTO revenue_code_product_line (revenue_code, product_line, valid, ration
   ('0656', 'institutional_hospice',        TRUE,  'Hospice general inpatient',                                       '1983-11-01'),
   ('0657', 'institutional_hospice',        TRUE,  'Hospice physician services',                                      '1983-11-01'),
   ('0659', 'institutional_hospice',        TRUE,  'Hospice other',                                                   '1983-11-01'),
-  -- Home health revenue codes only valid on home health product line.
+  -- Home health revenue codes only valid on home health product line. The
+  -- discipline families are those of db/seed/0004_revenue_codes.sql.
+  ('0421', 'institutional_home_health',    TRUE,  'Home health physical therapy visit',                              '1980-01-01'),
+  ('0431', 'institutional_home_health',    TRUE,  'Home health occupational therapy visit',                          '1980-01-01'),
+  ('0441', 'institutional_home_health',    TRUE,  'Home health speech-language pathology visit',                     '1980-01-01'),
+  ('0551', 'institutional_home_health',    TRUE,  'Home health skilled nursing visit',                               '1980-01-01'),
   ('0571', 'institutional_home_health',    TRUE,  'Home health aide visit',                                          '1980-01-01'),
-  ('0572', 'institutional_home_health',    TRUE,  'Home health PT visit',                                            '1980-01-01'),
-  ('0573', 'institutional_home_health',    TRUE,  'Home health OT visit',                                            '1980-01-01'),
-  ('0574', 'institutional_home_health',    TRUE,  'Home health speech visit',                                        '1980-01-01'),
-  ('0581', 'institutional_home_health',    TRUE,  'Home health skilled nurse visit',                                 '1980-01-01'),
+  ('0572', 'institutional_home_health',    TRUE,  'Home health aide, hourly',                                        '1980-01-01'),
+  ('0581', 'institutional_home_health',    TRUE,  'Home health other visit',                                         '1980-01-01'),
   -- Hospital revenue codes (general — applies to inpatient/outpatient/asc).
   ('0250', 'institutional_hospital',       TRUE,  'Pharmacy general',                                                '1980-01-01'),
   ('0258', 'institutional_hospital',       TRUE,  'Pharmacy IV solutions',                                           '1980-01-01'),
   ('0450', 'institutional_hospital',       TRUE,  'Emergency room general',                                          '1980-01-01'),
   ('0451', 'institutional_hospital',       TRUE,  'Emergency room EMTALA',                                           '2003-04-01'),
   ('0636', 'institutional_hospital',       TRUE,  'Drugs requiring detailed coding',                                 '1996-01-01'),
-  ('0762', 'institutional_hospital',       TRUE,  'Treatment / observation room',                                    '2002-04-01'),
+  ('0762', 'institutional_hospital',       TRUE,  'Observation room',                                                '2002-04-01'),
   ('0780', 'institutional_hospital',       TRUE,  'Telemedicine general',                                            '2017-01-01'),
   -- SNF accommodation codes
   ('0190', 'institutional_snf',            TRUE,  'Subacute care',                                                   '1996-01-01'),

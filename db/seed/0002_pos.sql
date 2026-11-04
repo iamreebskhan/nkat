@@ -5,14 +5,19 @@
 -- Source: https://www.cms.gov/medicare/coding-billing/place-of-service-codes
 -- ============================================================================
 
+-- facility_indicator decides which physician fee schedule rate a visit is
+-- priced at. CMS uses the facility rate for hospital, SNF and ASC settings and
+-- the non-facility rate everywhere else (RVU26A documentation): of the Indian
+-- Health Service and tribal 638 codes, only the provider-based ones (06, 08)
+-- are facility; the free-standing 05 and 07 were wrongly marked facility.
 INSERT INTO pos (pos, description, facility_indicator, effective_date) VALUES
   ('01','Pharmacy',                              'non_facility', '2003-04-01'),
   ('02','Telehealth provided other than home',   'facility',     '2017-01-01'),
   ('03','School',                                'non_facility', '2003-04-01'),
   ('04','Homeless Shelter',                      'non_facility', '2003-04-01'),
-  ('05','Indian Health Service free-standing',   'facility',     '2003-04-01'),
+  ('05','Indian Health Service free-standing',   'non_facility', '2003-04-01'),
   ('06','Indian Health Service provider-based',  'facility',     '2003-04-01'),
-  ('07','Tribal 638 free-standing',              'facility',     '2003-04-01'),
+  ('07','Tribal 638 free-standing',              'non_facility', '2003-04-01'),
   ('08','Tribal 638 provider-based',             'facility',     '2003-04-01'),
   ('09','Prison/Correctional Facility',          'non_facility', '2003-04-01'),
   ('10','Telehealth provided in patient''s home','non_facility', '2022-01-01'),

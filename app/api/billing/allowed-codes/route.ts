@@ -7,15 +7,17 @@
  * Query params:
  *   payerId      UUID         required
  *   state        CHAR(2)      required
- *   dos          YYYY-MM-DD   optional, defaults to today
+ *   dos          YYYY-MM-DD   optional, defaults to today; a bill passes its
+ *                             date of service and gets the rules in force then
  *   productLine  string       optional; defaults to the line implied by
  *                             the payer's payer_type (see below)
  *   query        string       optional — filter by code prefix / descriptor
  *   limit        int          optional, 1..50
  *
- * Auth: `billing.lookup.view` (every clinician + billing role already has
- * it). The data is global reference, not org-scoped, so the role check
- * is just sanity, not isolation.
+ * Auth: `billing.lookup.view`, held by the billing, admin, intake and analyst
+ * roles; the clinician role holds no billing.* permission
+ * (lib/features/team/team.types.ts). The data is global reference, not
+ * org-scoped, so the role check is just sanity, not isolation.
  */
 import { type NextRequest } from "next/server";
 import { z } from "zod";

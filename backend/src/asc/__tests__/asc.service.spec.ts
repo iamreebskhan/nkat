@@ -9,21 +9,21 @@ describe('evaluateAscLine', () => {
     ]);
   });
 
-  it('returns no issues for a P1 (standard ASC payment)', () => {
+  it('returns no issues for A2 (on the ASC list since 2007, paid from the OPPS weight)', () => {
     const m: AscIndicatorMatch = {
-      payment_indicator: 'P1',
-      payment_group: 'Standard',
-      payment_rate: 12000,
+      payment_indicator: 'A2',
+      payment_group: 'On ASC list since 2007; paid from OPPS relative weight',
+      payment_rate: 1255.73,
       source_url: 'https://cms/asc',
       effective_year: 2026,
     };
-    expect(evaluateAscLine(line, m)).toEqual([]);
+    expect(evaluateAscLine({ index: 0, code: '66984' }, m)).toEqual([]);
   });
 
-  it('flags A2 (office-based) as a payment-rate caveat', () => {
+  it('flags P3 (office-based) as a payment-rate caveat', () => {
     const m: AscIndicatorMatch = {
-      payment_indicator: 'A2',
-      payment_group: 'Office-based surgical procedure',
+      payment_indicator: 'P3',
+      payment_group: 'Office-based; paid from MPFS non-facility PE RVUs',
       payment_rate: 165,
       source_url: 'https://cms/asc',
       effective_year: 2026,
@@ -36,14 +36,28 @@ describe('evaluateAscLine', () => {
         source_url: 'https://cms/asc',
       }),
     ]);
+    expect(out[0].message).toMatch(/classified P3/);
     expect(out[0].message).toMatch(/\$165\.00/);
+  });
+
+  it.each(['P2', 'R2'])('flags %s (office-based) too', (pi) => {
+    const m: AscIndicatorMatch = {
+      payment_indicator: pi,
+      payment_group: null,
+      payment_rate: 200,
+      source_url: null,
+      effective_year: 2026,
+    };
+    expect(evaluateAscLine(line, m)).toEqual([
+      expect.objectContaining({ kind: 'asc_office_based' }),
+    ]);
   });
 
   it('does not flag J8 (device-intensive) — paid normally with device adjustment', () => {
     const m: AscIndicatorMatch = {
       payment_indicator: 'J8',
-      payment_group: 'Device-intensive',
-      payment_rate: 18500,
+      payment_group: 'Device-intensive procedure; paid at adjusted rate',
+      payment_rate: 9393.16,
       source_url: 'https://cms/asc',
       effective_year: 2026,
     };
@@ -52,7 +66,7 @@ describe('evaluateAscLine', () => {
 
   it('passes source_url through to the issue when present', () => {
     const m: AscIndicatorMatch = {
-      payment_indicator: 'A2',
+      payment_indicator: 'P3',
       payment_group: 'Office-based',
       payment_rate: 100,
       source_url: 'https://cms/source',
@@ -64,7 +78,7 @@ describe('evaluateAscLine', () => {
 
   it('handles missing payment_rate gracefully (renders ?)', () => {
     const m: AscIndicatorMatch = {
-      payment_indicator: 'A2',
+      payment_indicator: 'R2',
       payment_group: null,
       payment_rate: null,
       source_url: null,

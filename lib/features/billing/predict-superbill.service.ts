@@ -2,9 +2,9 @@
  * predictSuperbill — Phase B bridge between live data + the pure scorer.
  *
  * Given a draft superbill payload (lines + patient context), this service:
- *   1. Pulls the relevant payer_rule rows from the allowed-codes view
- *      (single query, per payer/state) and reshapes them into the
- *      CodeRuleSet shape the pure scorer needs.
+ *   1. Pulls the relevant payer_rule rows as they stood on the date of
+ *      service (payer_allowed_codes_on; single query, per payer/state) and
+ *      reshapes them into the CodeRuleSet shape the pure scorer needs.
  *   2. Pulls the patient's recent superbill lines for frequency-limit
  *      checks (last 90 days, RLS-scoped).
  *   3. Calls scoreSuperbill() and returns the structured result.
@@ -111,11 +111,14 @@ export async function predictSuperbill(args: PredictInput): Promise<PredictedRis
   // will fall through to coverage_unknown which the scorer flags.
   if (args.payerId && args.state) {
     await withOrgContext(args.orgId, async (tx) => {
+      // The rules in force on the claim's date of service (0129). The view
+      // answers for today, so a bill dated in March was scored by July's file,
+      // while its rate came from March's.
       const rows = await tx.$queryRaw<AllowedRow[]>`
         SELECT code, coverage_status, confidence,
                modifier_required, prior_auth_required,
                has_frequency_limit, frequency_limit_value, payer_rule_id
-          FROM payer_allowed_codes_v
+          FROM payer_allowed_codes_on(${args.dos}::date)
          WHERE payer_id = ${args.payerId}::uuid
            AND state    = ${args.state}
            AND code     = ANY(${lines.map((l) => l.code)}::text[])

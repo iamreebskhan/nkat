@@ -33,7 +33,7 @@ const base = {
   state: "OH",
   orgId: "11111111-1111-4111-8111-111111111111",
   carcCode: "16",
-  denialReason: "Claim/service lacks information needed for adjudication.",
+  denialReason: "Claim/service lacks information or has submission/billing error(s).",
   dateOfService: "2026-10-22",
 };
 
@@ -76,7 +76,7 @@ describe("analyzeDenial — remark codes", () => {
   it("sends the CARC with its wording, and no RARC line when there is none", async () => {
     await analyzeDenial({ ...base, rarcCode: null });
     const { user } = sent();
-    expect(user).toContain("CARC: 16 — Claim/service lacks information needed for adjudication.");
+    expect(user).toContain("CARC: 16 — Claim/service lacks information or has submission/billing error(s).");
     expect(user).not.toContain("RARC");
   });
 });

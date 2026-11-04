@@ -116,4 +116,18 @@ describe("ATTRIBUTE_DB_MAP", () => {
     const exposed = [...block![1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
     expect(exposed.sort()).toEqual([...ALL_API_ATTRIBUTES].sort());
   });
+
+  // The documentation screen's panel asks through the visit (0129 batch): the
+  // same lookup, so the same attributes, or a telehealth question that the
+  // billing route answers would be refused on the clinician's screen.
+  it("the visit's payer-rules API accepts the same attributes", () => {
+    const route = readFileSync(
+      join(process.cwd(), "app/api/visits/[id]/payer-rules/route.ts"),
+      "utf8",
+    );
+    const block = route.match(/attribute:[\s\S]*?z\s*\.enum\(\[([\s\S]*?)\]\)/);
+    expect(block, "could not find the attribute z.enum in the visit payer-rules route").toBeTruthy();
+    const exposed = [...block![1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+    expect(exposed.sort()).toEqual([...ALL_API_ATTRIBUTES].sort());
+  });
 });

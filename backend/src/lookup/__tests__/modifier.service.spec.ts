@@ -49,9 +49,9 @@ const modifiers: ModifierRecord[] = [
   },
   {
     modifier: 'GT',
-    description: 'Legacy A/V',
+    description: 'Interactive A/V (Medicaid)',
     modifier_type: 'telehealth',
-    payer_applicability: ['Medicare'],
+    payer_applicability: ['Medicaid'],
     effective_date: T('1999-01-01'),
     expiration_date: null,
   },
@@ -202,7 +202,7 @@ describe('validateModifierSet', () => {
     expect(issues.some((i) => i.kind === 'mutually_exclusive')).toBe(true);
   });
 
-  it('flags GT used on a non-Medicare payer (payer_inapplicable)', () => {
+  it('flags GT used on a non-Medicaid payer (payer_inapplicable)', () => {
     const issues = validateModifierSet(
       { modifiers: ['GT'], payer_type: 'Commercial', dos },
       modifiers,

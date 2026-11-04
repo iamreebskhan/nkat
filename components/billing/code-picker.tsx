@@ -10,7 +10,7 @@
  * server-side via PATCH /api/superbills/[id] overrides[]).
  *
  * Source of data:
- *   GET /api/billing/allowed-codes?payerId&state&query
+ *   GET /api/billing/allowed-codes?payerId&state&dos&query
  *   "Show all" toggle adds includeDenied=true to surface not_covered /
  *   unknown rows so the nurse can pick one (override modal still fires).
  *
@@ -44,6 +44,11 @@ export interface AllowedCodeOption {
 interface Props {
   payerId: string | null;
   state: string | null;
+  /**
+   * The bill's date of service, YYYY-MM-DD: the codes and statuses of the
+   * rules in force that day. Today's when absent.
+   */
+  dos?: string | null;
   /** Currently selected codes on the draft. */
   selected: string[];
   /** Called when codes are added / removed. */
@@ -72,6 +77,7 @@ const SOURCE_KIND_LABEL: Record<AllowedCodeOption["sourceKind"], string> = {
 export function CodePicker({
   payerId,
   state,
+  dos,
   selected,
   onChange,
   onOverride,
@@ -101,6 +107,7 @@ export function CodePicker({
       }
       setLoading(true);
       const params = new URLSearchParams({ payerId, state });
+      if (dos) params.set("dos", dos);
       if (query.trim().length > 0) params.set("query", query.trim());
       if (showAll) params.set("includeDenied", "true");
       try {
@@ -121,7 +128,7 @@ export function CodePicker({
       abandoned = true;
       ctrl.abort();
     };
-  }, [payerId, state, query, showAll]);
+  }, [payerId, state, dos, query, showAll]);
 
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 

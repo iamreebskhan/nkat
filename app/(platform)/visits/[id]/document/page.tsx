@@ -1623,11 +1623,15 @@ export default function VisitDocumentPage({
             <CardHeader>
               <CardTitle>Payer rules</CardTitle>
               <CardDescription>
-                Live from /v1/billing/lookup for the patient&rsquo;s payer.
+                The patient&rsquo;s payer&rsquo;s rules on the date of this visit.
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {/* Through the visit (POST /api/visits/[id]/payer-rules): the
+                  clinician holds no billing permission, and the visit gives
+                  the payer, the coverage state and the date of service. */}
               <RuleSidebar
+                visitId={visit.id}
                 payerId={patient?.primaryPayerId}
                 state={patient?.insuranceState ?? patient?.state}
                 cptCodes={

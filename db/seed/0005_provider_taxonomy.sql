@@ -10,9 +10,16 @@ INSERT INTO provider_taxonomy (taxonomy, classification, specialization, groupin
   ('208D00000X','General Practice',                  NULL,                                  'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
   ('207Q00000X','Family Medicine',                   NULL,                                  'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
   ('207R00000X','Internal Medicine',                 NULL,                                  'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
-  ('207RH0000X','Internal Medicine',                 'Hematology & Oncology',               'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
-  ('207RG0100X','Internal Medicine',                 'Geriatric Medicine',                  'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
-  ('207RH0003X','Internal Medicine',                 'Hospice & Palliative Medicine',       'Allopathic & Osteopathic Physicians',                          '2007-04-01'),
+  -- Checked against the NUCC code set. Three of these rows carried another
+  -- code's name: 207RH0003X is Hematology & Oncology (Hospice and Palliative
+  -- Medicine is 207RH0002X, the code a palliative physician puts on a claim),
+  -- 207RH0000X is Hematology alone, and 207RG0100X is Gastroenterology
+  -- (Geriatric Medicine is 207RG0300X).
+  ('207RH0000X','Internal Medicine',                 'Hematology',                          'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
+  ('207RH0003X','Internal Medicine',                 'Hematology & Oncology',               'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
+  ('207RH0002X','Internal Medicine',                 'Hospice and Palliative Medicine',     'Allopathic & Osteopathic Physicians',                          '2007-04-01'),
+  ('207RG0100X','Internal Medicine',                 'Gastroenterology',                    'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
+  ('207RG0300X','Internal Medicine',                 'Geriatric Medicine',                  'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
   ('207RX0202X','Internal Medicine',                 'Medical Oncology',                    'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
   ('207V00000X','Obstetrics & Gynecology',           NULL,                                  'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
   ('207W00000X','Ophthalmology',                     NULL,                                  'Allopathic & Osteopathic Physicians',                          '2003-01-01'),
@@ -40,14 +47,15 @@ INSERT INTO provider_taxonomy (taxonomy, classification, specialization, groupin
   ('103TC0700X','Psychologist',                      'Clinical',                            'Behavioral Health & Social Service Providers',                 '2003-01-01'),
   ('101YM0800X','Counselor',                         'Mental Health',                       'Behavioral Health & Social Service Providers',                 '2003-01-01'),
   ('101YA0400X','Counselor',                         'Addiction (Substance Use Disorder)',  'Behavioral Health & Social Service Providers',                 '2003-01-01'),
-  -- Hospice / Palliative agencies
-  ('251G00000X','Home Health Agency',                NULL,                                  'Agencies',                                                     '2003-01-01'),
-  -- Hospice Care, Community Based has its own taxonomy code (251V00000X),
-  -- distinct from Home Health Agency (251G00000X). Original seed had both
-  -- under the same code, which made ON CONFLICT collide on a single
-  -- statement.
-  ('251V00000X','Hospice Care, Community Based',     NULL,                                  'Agencies',                                                     '2003-01-01')
+  -- Hospice / home health agencies. 251G00000X is Hospice Care, Community
+  -- Based, and Home Health is 251E00000X. An earlier "fix" moved hospice onto
+  -- 251V00000X, which NUCC defines as Voluntary or Charitable; that row now
+  -- says so, rather than being deleted, in case anything recorded it.
+  ('251E00000X','Home Health',                       NULL,                                  'Agencies',                                                     '2003-01-01'),
+  ('251G00000X','Hospice Care, Community Based',     NULL,                                  'Agencies',                                                     '2003-01-01'),
+  ('251V00000X','Voluntary or Charitable',           NULL,                                  'Agencies',                                                     '2003-01-01')
 ON CONFLICT (taxonomy) DO UPDATE
   SET classification = EXCLUDED.classification,
       specialization = EXCLUDED.specialization,
-      grouping = EXCLUDED.grouping;
+      grouping = EXCLUDED.grouping,
+      effective_date = EXCLUDED.effective_date;

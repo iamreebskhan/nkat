@@ -41,7 +41,7 @@ side-panel UI, and a backend API client — all unit-tested.
 | `synthesis/synthesis.module.ts` | Wiring | — |
 | `feature-flags/feature-flag.service.ts` | `resolve(flag, orgId)` with tenant-override-wins precedence | 6 |
 | `feature-flags/feature-flag.module.ts` | Wiring | — |
-| `asc/asc.service.ts` | Pure `evaluateAscLine` + DB-backed `AscService`; flags `asc_not_payable` and `asc_office_based` (A2) | 6 |
+| `asc/asc.service.ts` | Pure `evaluateAscLine` + DB-backed `AscService`; flags `asc_not_payable` and `asc_office_based` (P2, P3, R2) | 6 |
 | `asc/asc.module.ts` | Wiring | — |
 | `institutional/institutional.service.ts` | UB-04 bill-type validator + revenue-code allowlist validator | — |
 | `institutional/institutional.module.ts` | Wiring | — |

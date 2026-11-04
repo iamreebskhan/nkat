@@ -16,7 +16,12 @@ INSERT INTO modifier (modifier, description, modifier_type, payer_applicability,
   ('XU','Unusual non-overlapping service',                        'distinct_service', '{}', '2015-01-01'),
   -- Telehealth
   ('95','Synchronous audio/video telemedicine',                   'telehealth',       '{}', '2017-01-01'),
-  ('GT','Interactive A/V telecomm system (legacy)',               'telehealth',       '{Medicare}', '1999-01-01'),
+  -- GT ("via interactive audio and video telecommunication systems") is a
+  -- MEDICAID modifier today: Medicare dropped it from professional claims in
+  -- 2018 (place of service 02/10 instead) and keeps it only for critical
+  -- access hospital method II billing, while Ohio, NC and SC Medicaid require
+  -- it on telehealth lines. It was marked Medicare-only.
+  ('GT','Interactive audio-video telecomm (Medicaid; Medicare CAH II only)', 'telehealth', '{Medicaid}', '1999-01-01'),
   ('GQ','Asynchronous telemedicine',                              'telehealth',       '{}', '2002-01-01'),
   ('93','Audio-only telemedicine',                                'telehealth',       '{}', '2022-01-01'),
   -- ABN / beneficiary liability

@@ -39,6 +39,13 @@
 
 BEGIN;
 
+-- G0180 was added to HCPCS on 1 October 2000 (the file's "added" date), not
+-- 2001. Re-keyed in place, as 0007 does for G0318, so the composite primary
+-- key does not gain a second G0180 row. Idempotent.
+UPDATE code SET effective_date = DATE '2000-10-01'
+ WHERE code = 'G0180' AND effective_date = DATE '2001-01-01'
+   AND NOT EXISTS (SELECT 1 FROM code k WHERE k.code = 'G0180' AND k.effective_date = DATE '2000-10-01');
+
 INSERT INTO code (code, code_system, short_descriptor, category, effective_date) VALUES
   -- Chronic / principal care management. 99490 and 99439 are the CCM pair;
   -- 99491 is physician-time CCM; 99424-99427 are principal care management.
@@ -55,10 +62,14 @@ INSERT INTO code (code, code_system, short_descriptor, category, effective_date)
   ('99495', 'CPT',    'Transitional care mgmt, moderate MDM, 14-day visit',      'TCM',             '2013-01-01'),
   ('99496', 'CPT',    'Transitional care mgmt, high MDM, 7-day visit',           'TCM',             '2013-01-01'),
 
-  -- Home health certification and supervision.
-  ('G0179', 'HCPCS2', 'MD recertification, home health patient',                 'Home Health Cert', '2001-01-01'),
-  ('G0180', 'HCPCS2', 'MD certification, home health patient',                   'Home Health Cert', '2001-01-01'),
-  ('G0181', 'HCPCS2', 'MD supervision, home health patient, 30+ min/month',      'Home Health Cert', '2001-01-01'),
+  -- Home health certification and supervision. Since March 2020 the HCPCS
+  -- descriptors read "Physician or allowed practitioner": a nurse
+  -- practitioner or physician assistant may certify and supervise too, which
+  -- the old "MD …" wording hid from the NPs who make most palliative visits.
+  -- G0181 is care plan oversight, not a certification.
+  ('G0179', 'HCPCS2', 'HH recertification, physician or NP/PA',                  'Home Health Cert', '2001-01-01'),
+  ('G0180', 'HCPCS2', 'HH certification, physician or NP/PA',                    'Home Health Cert', '2000-10-01'),
+  ('G0181', 'HCPCS2', 'HH care plan oversight, 30+ min/month',                   'Care Plan Oversight', '2001-01-01'),
 
   -- Prolonged service beyond the primary visit. The CPT sibling of G0318,
   -- which was already present.

@@ -203,3 +203,32 @@ describe("parser prompt: G0318 agrees with the CPT suggester", () => {
     expect(h.recordedSql[0]).toMatch(/FROM system_setting/);
   });
 });
+
+/**
+ * The MDM level of each home-visit code, as CMS's RVU file states it ("Home/res
+ * vst new sf mdm 15" … "est high mdm 60"; sf = straightforward). The prompt
+ * said "low/low/mod/high" for 99341-99345, so a "low MDM new patient" visit
+ * could resolve to 99341. Read from the same real call as above.
+ */
+const MDM_BY_CODE: Record<string, string> = {
+  "99341": "straightforward", "99342": "low", "99344": "moderate", "99345": "high",
+  "99347": "straightforward", "99348": "low", "99349": "moderate", "99350": "high",
+};
+
+describe("parser prompt: home-visit MDM levels match CMS", () => {
+  it("CONTROL: every MDM → code route the prompt states is CMS's level for that code", () => {
+    const routes = [...systemText.matchAll(/\b(straightforward|low|moderate|high)\s*→\s*(\d{5})/g)];
+    expect(routes.length, "no MDM → code routes in the prompt").toBe(8);
+    const wrong = routes
+      .filter(([, mdm, code]) => MDM_BY_CODE[code!] !== mdm)
+      .map(([whole, , code]) => `${whole} (CMS: ${MDM_BY_CODE[code!] ?? "not a home-visit code"})`);
+    expect(wrong).toEqual([]);
+  });
+
+  it("CONTROL: the catalog lines list the MDM levels in ladder order, starting at straightforward", () => {
+    const lines = systemText.split("\n").filter((l) => /home visit, (NEW|ESTABLISHED) patient/.test(l));
+    expect(lines).toHaveLength(2);
+    for (const l of lines) expect(l, l.trim()).toMatch(/straightforward\/low\/moderate\/high MDM/);
+    expect(systemText).not.toMatch(/low\/low\/mod\/high/);
+  });
+});

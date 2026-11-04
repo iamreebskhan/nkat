@@ -132,6 +132,40 @@ export function SectionedNote({
   const [carrying, setCarrying] = useState(false);
   /** Sections typed into since their last successful save, keyed by section. */
   const pending = useRef(new Map<string, unknown>());
+  /**
+   * The vitals as they are on screen right now. A save sends this when it
+   * starts, not a render's copy, so it carries everything typed up to then.
+   */
+  const vitalsNow = useRef<Vitals | null>(null);
+  /**
+   * Vitals changed on screen that the server has not confirmed yet. Every
+   * re-read of the note keeps these as they are on screen. It used to replace
+   * the whole set with the server's copy: a reading typed into the next field
+   * while one field's save was on its way back was wiped when the re-read
+   * landed, and that field's blur then saved it as blank. On a slow connection
+   * in a patient's home that is an ordinary pace of typing.
+   */
+  const unsavedVitals = useRef(new Set<keyof Vitals>());
+  /**
+   * The vitals save on the wire, if any. One at a time: each sends the whole
+   * set, so two in flight could land out of order and the older set would
+   * overwrite the newer one.
+   */
+  const vitalsSaving = useRef<Promise<boolean> | null>(null);
+  /** Something changed while a save was on the wire; send again when it lands. */
+  const vitalsAgain = useRef(false);
+
+  const showVitals = useCallback((next: Vitals) => {
+    vitalsNow.current = next;
+    setVitals(next);
+  }, []);
+
+  /** The server's vitals, with every reading not yet saved kept as on screen. */
+  const takeServerVitals = useCallback(
+    (server: Vitals | null) =>
+      showVitals(keepUnsaved(server ?? blankVitals(), vitalsNow.current, unsavedVitals.current)),
+    [showVitals],
+  );
 
   const load = useCallback(async () => {
     try {
@@ -142,11 +176,11 @@ export function SectionedNote({
         return;
       }
       setNote(d.data as NoteView);
-      setVitals((d.data as NoteView).vitals ?? blankVitals());
+      takeServerVitals((d.data as NoteView).vitals);
     } catch {
       setError("Network error loading the note.");
     }
-  }, [visitId]);
+  }, [visitId, takeServerVitals]);
 
   // Async IIFE with an abandon flag, matching the visit page's own load
   // effect — a bare `void load()` in the effect body is a synchronous setState
@@ -163,7 +197,7 @@ export function SectionedNote({
         return;
       }
       setNote(d.data as NoteView);
-      setVitals((d.data as NoteView).vitals ?? blankVitals());
+      takeServerVitals((d.data as NoteView).vitals);
 
       const cr = await fetch(`/api/visits/${visitId}/carry-forward`).catch(() => null);
       if (!cr || abandoned) return;
@@ -173,7 +207,7 @@ export function SectionedNote({
     return () => {
       abandoned = true;
     };
-  }, [visitId]);
+  }, [visitId, takeServerVitals]);
 
   /**
    * Bring forward every section this visit has not started. Never overwrites
@@ -241,6 +275,69 @@ export function SectionedNote({
   }, [readOnly, visitId, load, onSaved]);
 
   /**
+   * Save the vitals as they are on screen, and report whether every reading
+   * typed is now saved. A call while a save is on the wire does not start a
+   * second one: it asks the running one to send again when it lands, with
+   * whatever is on screen by then, and shares its outcome.
+   */
+  const saveVitals = useCallback(async (): Promise<boolean> => {
+    if (readOnly) return true;
+    if (vitalsSaving.current) {
+      vitalsAgain.current = true;
+      return vitalsSaving.current;
+    }
+    const run = (async (): Promise<boolean> => {
+      do {
+        vitalsAgain.current = false;
+        const sent = vitalsNow.current;
+        if (!sent || unsavedVitals.current.size === 0) return true;
+        setSavingKey("vitals");
+        setError(null);
+        try {
+          // recordedAt is server-owned — the API stamps it — so it is not sent.
+          const r = await fetch(`/api/visits/${visitId}/vitals`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              heightCm: sent.heightCm, weightKg: sent.weightKg,
+              bpSystolic: sent.bpSystolic, bpDiastolic: sent.bpDiastolic,
+              heartRate: sent.heartRate, respRate: sent.respRate,
+              temperatureC: sent.temperatureC, spo2Percent: sent.spo2Percent,
+              ppsPercent: sent.ppsPercent, painScore: sent.painScore,
+              dyspneaScore: sent.dyspneaScore, nauseaScore: sent.nauseaScore,
+              notes: sent.notes,
+            }),
+          });
+          const d = await r.json();
+          if (!d.success) {
+            // Still unsaved, so still kept on screen; the next blur retries.
+            setError(d.error ?? "Could not save vitals.");
+            return false;
+          }
+          // The server holds what was sent. A reading changed since is not saved.
+          for (const k of [...unsavedVitals.current]) {
+            if (vitalsNow.current?.[k] === sent[k]) unsavedVitals.current.delete(k);
+          }
+          await load();
+          onSaved?.();
+        } catch {
+          setError("Network error saving vitals.");
+          return false;
+        } finally {
+          setSavingKey(null);
+        }
+      } while (vitalsAgain.current);
+      return true;
+    })();
+    vitalsSaving.current = run;
+    try {
+      return await run;
+    } finally {
+      vitalsSaving.current = null;
+    }
+  }, [readOnly, visitId, load, onSaved]);
+
+  /**
    * Persist everything typed but not yet blurred, and report whether it all
    * landed. The parent awaits this before signing.
    *
@@ -259,8 +356,11 @@ export function SectionedNote({
     for (const [key, content] of entries) {
       if (!(await saveSection(key, content, { silent: true }))) allSaved = false;
     }
+    // A reading typed and not blurred, or still on its way: the same loss as a
+    // section's, since signing locks the vitals too.
+    if (!(await saveVitals())) allSaved = false;
     return allSaved;
-  }, [readOnly, saveSection]);
+  }, [readOnly, saveSection, saveVitals]);
 
   useEffect(() => {
     registerFlush?.(flush);
@@ -298,37 +398,12 @@ export function SectionedNote({
     }
   }
 
-  async function saveVitals(next: Vitals) {
-    if (readOnly) return;
-    setSavingKey("vitals");
-    setError(null);
-    try {
-      // recordedAt is server-owned — the API stamps it — so it is not sent.
-      const r = await fetch(`/api/visits/${visitId}/vitals`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          heightCm: next.heightCm, weightKg: next.weightKg,
-          bpSystolic: next.bpSystolic, bpDiastolic: next.bpDiastolic,
-          heartRate: next.heartRate, respRate: next.respRate,
-          temperatureC: next.temperatureC, spo2Percent: next.spo2Percent,
-          ppsPercent: next.ppsPercent, painScore: next.painScore,
-          dyspneaScore: next.dyspneaScore, nauseaScore: next.nauseaScore,
-          notes: next.notes,
-        }),
-      });
-      const d = await r.json();
-      if (!d.success) {
-        setError(d.error ?? "Could not save vitals.");
-        return;
-      }
-      await load();
-      onSaved?.();
-    } catch {
-      setError("Network error saving vitals.");
-    } finally {
-      setSavingKey(null);
-    }
+  /** A reading changed on screen: shown at once, saved on blur. */
+  function changeVital<K extends keyof Vitals>(key: K, value: Vitals[K]) {
+    const now = vitalsNow.current ?? blankVitals();
+    if (now[key] === value) return;
+    unsavedVitals.current.add(key);
+    showVitals({ ...now, [key]: value });
   }
 
   const missing = useMemo(
@@ -480,7 +555,7 @@ export function SectionedNote({
                 // The input holds the DISPLAYED unit; `vitals` holds metric.
                 // Converting on the way in and out keeps the storage canonical
                 // without ever showing a US clinician a number in kilograms.
-                const shown = vitals[f.key] === null ? "" : String(f.fromStored(Number(vitals[f.key])));
+                const shown = shownVital(f, vitals);
                 const toStored = (raw: string) =>
                   raw === "" ? null : f.toStored(Number(raw));
                 return (
@@ -496,16 +571,20 @@ export function SectionedNote({
                       max={f.max}
                       readOnly={readOnly}
                       value={shown}
-                      onChange={(e) => setVitals({ ...vitals, [f.key]: toStored(e.target.value) })}
-                      // Read the field's value off the event rather than off
-                      // `vitals`. The closure captures the state as it was when
-                      // this input rendered, so a change and a blur landing in
-                      // the same tick would save the pre-change value — which is
-                      // exactly what happens when the field is filled by anything
-                      // faster than a human.
-                      onBlur={(e) =>
-                        void saveVitals({ ...vitals, [f.key]: toStored(e.target.value) })
-                      }
+                      onChange={(e) => changeVital(f.key, toStored(e.target.value))}
+                      // Read the field's value off the event as well: a change
+                      // and a blur landing in the same tick — anything faster
+                      // than a human filling the field — must save the value
+                      // just entered. Only text that differs from what the
+                      // stored reading shows is a change: converting the shown
+                      // 135.4 lb back gives 61.42 kg, not the 61.4 on file, and
+                      // a blur alone used to save that drift.
+                      onBlur={(e) => {
+                        if (e.target.value !== shownVital(f, vitalsNow.current)) {
+                          changeVital(f.key, toStored(e.target.value));
+                        }
+                        void saveVitals();
+                      }}
                       className="mt-1 w-full h-9 px-2 border border-slate-300 rounded-md text-sm tabular read-only:bg-slate-50"
                     />
                   </label>
@@ -525,6 +604,23 @@ function blankVitals(): Vitals {
     heartRate: null, respRate: null, temperatureC: null, spo2Percent: null,
     ppsPercent: null, painScore: null, dyspneaScore: null, nauseaScore: null, notes: null, recordedAt: null,
   };
+}
+
+/** A reading as its field shows it, in the field's display unit. */
+function shownVital(f: VitalsFieldSpec & { key: keyof Vitals }, v: Vitals | null): string {
+  const stored = v?.[f.key] ?? null;
+  return stored === null ? "" : String(f.fromStored(Number(stored)));
+}
+
+/** The server's vitals, with the readings named in `unsaved` taken from the screen. */
+function keepUnsaved(
+  server: Vitals,
+  onScreen: Vitals | null,
+  unsaved: ReadonlySet<keyof Vitals>,
+): Vitals {
+  if (!onScreen || unsaved.size === 0) return server;
+  const kept: Partial<Vitals> = Object.fromEntries([...unsaved].map((k) => [k, onScreen[k]]));
+  return { ...server, ...kept };
 }
 
 function listToText(content: unknown): string {

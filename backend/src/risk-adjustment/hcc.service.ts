@@ -3,9 +3,8 @@
  *
  *   computeRaf(icd10[]) — pure function: groups input ICD-10s into HCC
  *     categories, applies the V28 hierarchy (a more-severe HCC trumps a
- *     less-severe one within the same family — implemented via explicit
- *     `dominates` map; the simple in-DB seed has no hierarchy chains, so the
- *     pure fn just sums the unique HCC raf_weights).
+ *     less-severe one within the same family, per CMS's hierarchy table
+ *     below) and sums the surviving HCCs' raf_weights.
  *
  *   scorePatient(patient_external_id, icd10[]) — DB-backed: looks up V28
  *     mappings for the current effective_year and returns score + breakdown
@@ -27,7 +26,7 @@ export interface HccBreakdownItem {
   category: string | null;
   raf_weight: number;
   contributing_icd10s: string[];
-  /** True if a more-severe HCC trumped this entry (currently always false until V28 chains are seeded). */
+  /** True if a more-severe HCC in the same V28 hierarchy trumped this entry. */
   trumped: boolean;
 }
 
@@ -38,19 +37,76 @@ export interface RafResult {
 }
 
 /**
- * V28 hierarchy "trumping" rules as a sparse map: when both keys are present,
- * the value HCC suppresses the key HCC.
+ * The V28 hierarchies, verbatim from CMS's V28_HCC_Hierarchies.csv (2026
+ * model software, CMS_HCC_v28_2026_T): when a key HCC is present, every HCC
+ * in its list is dropped. Codes are written as the database stores them
+ * (HCC037, not HCC37).
  *
- * Example: HCC037 (Diabetes with chronic complications) trumps HCC038
- * (Diabetes without complication). HCC222 (End-Stage HF) trumps HCC224 and
- * HCC226. Real V28 has many more; this seed covers the cases in our DB seed
- * (db/seed/0014_hcc_v28.sql) so the unit tests are honest.
+ * This was a four-entry sparse map that had the diabetes chain backwards: it
+ * dropped HCC036 (severe acute complications) under HCC037 (chronic), where
+ * CMS drops 37 and 38 under 36.
  */
-const HIERARCHY_TRUMPS: Record<string, string> = {
-  HCC038: 'HCC037', // diabetes w/o complications trumped by w/ chronic complications
-  HCC036: 'HCC037', // diabetes w/ acute trumped by w/ chronic
-  HCC224: 'HCC222', // HF (general) trumped by end-stage HF
-  HCC226: 'HCC222', // HF (unspecified) trumped by end-stage HF
+const HIERARCHY: Readonly<Record<string, readonly string[]>> = {
+  HCC017: ['HCC018', 'HCC019', 'HCC020', 'HCC021', 'HCC022', 'HCC023'],
+  HCC018: ['HCC019', 'HCC020', 'HCC021', 'HCC022', 'HCC023'],
+  HCC019: ['HCC020', 'HCC021', 'HCC022', 'HCC023'],
+  HCC020: ['HCC021', 'HCC022', 'HCC023'],
+  HCC021: ['HCC022', 'HCC023'],
+  HCC022: ['HCC023'],
+  HCC035: ['HCC036', 'HCC037', 'HCC038'],
+  HCC036: ['HCC037', 'HCC038'],
+  HCC037: ['HCC038'],
+  HCC062: ['HCC063', 'HCC064', 'HCC065', 'HCC068'],
+  HCC063: ['HCC064', 'HCC065', 'HCC068', 'HCC202'],
+  HCC064: ['HCC065', 'HCC068'],
+  HCC077: ['HCC078', 'HCC080', 'HCC081'],
+  HCC080: ['HCC081'],
+  HCC093: ['HCC094'],
+  HCC107: ['HCC108'],
+  HCC111: ['HCC112'],
+  HCC114: ['HCC115'],
+  HCC125: ['HCC126', 'HCC127'],
+  HCC126: ['HCC127'],
+  HCC135: ['HCC136', 'HCC137', 'HCC138', 'HCC139'],
+  HCC136: ['HCC137', 'HCC138', 'HCC139'],
+  HCC137: ['HCC138', 'HCC139'],
+  HCC138: ['HCC139'],
+  HCC151: ['HCC152', 'HCC153', 'HCC154', 'HCC155'],
+  HCC152: ['HCC153', 'HCC154', 'HCC155'],
+  HCC153: ['HCC154', 'HCC155'],
+  HCC154: ['HCC155'],
+  HCC180: ['HCC181', 'HCC182', 'HCC253', 'HCC254'],
+  HCC181: ['HCC182', 'HCC254'],
+  HCC191: ['HCC180', 'HCC181', 'HCC182', 'HCC192', 'HCC253', 'HCC254'],
+  HCC192: ['HCC180', 'HCC181', 'HCC182', 'HCC253', 'HCC254'],
+  HCC195: ['HCC196'],
+  HCC211: ['HCC212', 'HCC213'],
+  HCC212: ['HCC213'],
+  HCC221: ['HCC222', 'HCC223', 'HCC224', 'HCC225', 'HCC226', 'HCC227'],
+  HCC222: ['HCC223', 'HCC224', 'HCC225', 'HCC226', 'HCC227'],
+  HCC223: ['HCC224', 'HCC225', 'HCC226', 'HCC227'],
+  HCC224: ['HCC225', 'HCC226', 'HCC227'],
+  HCC225: ['HCC226', 'HCC227'],
+  HCC226: ['HCC227'],
+  HCC228: ['HCC229'],
+  HCC248: ['HCC249'],
+  HCC253: ['HCC254'],
+  HCC263: ['HCC264', 'HCC383', 'HCC409'],
+  HCC276: ['HCC277', 'HCC278', 'HCC279', 'HCC280'],
+  HCC277: ['HCC278', 'HCC279', 'HCC280'],
+  HCC278: ['HCC279', 'HCC280'],
+  HCC279: ['HCC280'],
+  HCC282: ['HCC283'],
+  HCC326: ['HCC327', 'HCC328', 'HCC329'],
+  HCC327: ['HCC328', 'HCC329'],
+  HCC328: ['HCC329'],
+  HCC379: ['HCC380', 'HCC381', 'HCC382', 'HCC383'],
+  HCC380: ['HCC381', 'HCC382', 'HCC383'],
+  HCC381: ['HCC382', 'HCC383'],
+  HCC382: ['HCC383'],
+  HCC397: ['HCC202', 'HCC398', 'HCC399'],
+  HCC398: ['HCC202', 'HCC399'],
+  HCC405: ['HCC409'],
 };
 
 /**
@@ -95,11 +151,11 @@ export function computeRaf(icd10: string[], mappings: HccMapping[]): RafResult {
     }
   }
 
-  // Apply hierarchy.
-  const presentHccs = new Set(groups.keys());
-  for (const [trumped, dominator] of Object.entries(HIERARCHY_TRUMPS)) {
-    if (presentHccs.has(trumped) && presentHccs.has(dominator)) {
-      groups.get(trumped)!.trumped = true;
+  // Apply hierarchy: every HCC present drops the ones CMS ranks below it.
+  for (const dominator of groups.keys()) {
+    for (const lower of HIERARCHY[dominator] ?? []) {
+      const item = groups.get(lower);
+      if (item) item.trumped = true;
     }
   }
 

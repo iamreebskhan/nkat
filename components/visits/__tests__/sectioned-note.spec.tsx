@@ -652,3 +652,129 @@ describe("SectionedNote — vitals", () => {
     expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
   });
 });
+
+describe("SectionedNote — a vitals save on the wire (regression)", () => {
+  // Every save re-reads the note, and the re-read used to replace the whole
+  // vitals set with the server's copy. A reading typed into the next field
+  // while a save was on its way back was wiped when the re-read landed, and
+  // that field's blur then saved it as blank. Seen on localhost on 3 Nov 2026:
+  // six vitals entered in quick succession, one kept. On a slow connection in a
+  // patient's home a nurse typing at an ordinary pace does the same.
+
+  const puts = () => requests.filter((r) => r.method === "PUT");
+  const value = (label: string) => (screen.getByLabelText(label) as HTMLInputElement).value;
+
+  /** Hold the next vitals PUT's answer until the test lets it land. */
+  function holdNextVitalsPut(): () => void {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const answer = fakeFetch(url, init);
+        if (!held && url.endsWith("/vitals") && init?.method === "PUT") {
+          held = true;
+          await gate;
+        }
+        return answer;
+      }),
+    );
+    return release;
+  }
+
+  it("keeps a reading typed while another reading's save is on the wire", async () => {
+    const onSaved = vi.fn();
+    mount({ onSaved });
+    await ready();
+    const release = holdNextVitalsPut();
+
+    fireEvent.change(screen.getByLabelText("Weight lb"), { target: { value: "150.5" } });
+    fireEvent.blur(screen.getByLabelText("Weight lb"));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+
+    // Typed while the weight's save is still on its way back.
+    fireEvent.change(screen.getByLabelText("BP systolic mmHg"), { target: { value: "128" } });
+
+    release();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(value("BP systolic mmHg")).toBe("128");
+    expect(value("Weight lb")).toBe("150.5");
+
+    fireEvent.blur(screen.getByLabelText("BP systolic mmHg"));
+    await waitFor(() => expect(puts()).toHaveLength(2));
+    expect(puts()[1]!.body).toMatchObject({ weightKg: 68.27, bpSystolic: 128 });
+    expect(store.vitals).toMatchObject({ weightKg: 68.27, bpSystolic: 128 });
+  });
+
+  it("sends one save at a time, the next with everything on screen", async () => {
+    // Each save sends the whole set. Two on the wire at once could land out of
+    // order, and the older set would overwrite the newer one.
+    mount();
+    await ready();
+    const release = holdNextVitalsPut();
+
+    fireEvent.change(screen.getByLabelText("Weight lb"), { target: { value: "150.5" } });
+    fireEvent.blur(screen.getByLabelText("Weight lb"));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    fireEvent.change(screen.getByLabelText("BP systolic mmHg"), { target: { value: "128" } });
+    fireEvent.blur(screen.getByLabelText("BP systolic mmHg"));
+    await Promise.resolve();
+    expect(puts()).toHaveLength(1);
+
+    release();
+    await waitFor(() => expect(puts()).toHaveLength(2));
+    expect(puts()[1]!.body).toMatchObject({ weightKg: 68.27, bpSystolic: 128 });
+  });
+
+  it("keeps a reading typed while a section's save is on the wire", async () => {
+    const onSaved = vi.fn();
+    mount({ onSaved });
+    await ready();
+    fireEvent.change(screen.getByLabelText("BP systolic mmHg"), { target: { value: "128" } });
+
+    fireEvent.change(screen.getByLabelText("Goals of care"), { target: { value: "Comfort." } });
+    fireEvent.blur(screen.getByLabelText("Goals of care"));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+
+    expect(value("BP systolic mmHg")).toBe("128");
+  });
+
+  it("flush() saves a reading typed but not blurred, before signing", async () => {
+    // Signing locks the vitals with the note.
+    mount();
+    await ready();
+    fireEvent.change(screen.getByLabelText("Weight lb"), { target: { value: "150.5" } });
+
+    expect(await flushRef!()).toBe(true);
+    expect(puts()).toHaveLength(1);
+    expect(puts()[0]!.body!.weightKg).toBe(68.27);
+  });
+
+  it("keeps a reading whose save failed, and flush() reports it until it lands", async () => {
+    store.failWith = "network is down";
+    mount();
+    await ready();
+    fireEvent.change(screen.getByLabelText("Weight lb"), { target: { value: "150.5" } });
+    fireEvent.blur(screen.getByLabelText("Weight lb"));
+    await screen.findByRole("alert");
+    expect(value("Weight lb")).toBe("150.5");
+
+    expect(await flushRef!()).toBe(false);
+
+    store.failWith = null;
+    expect(await flushRef!()).toBe(true);
+    expect(store.vitals).toMatchObject({ weightKg: 68.27 });
+  });
+
+  it("sends nothing for a blur that changed nothing", async () => {
+    // Each save is an audit entry ("visit_vitals_record"); an untouched field
+    // records nothing new.
+    store.vitals = { weightKg: 61.4, recordedAt: "2026-09-09T10:00:00.000Z" };
+    mount();
+    await ready();
+    fireEvent.blur(screen.getByLabelText("Weight lb"));
+    await Promise.resolve();
+    expect(puts()).toHaveLength(0);
+  });
+});

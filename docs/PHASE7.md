@@ -42,7 +42,7 @@ if (req.product_line === 'institutional_asc') {
 
 Severity mapping:
 - `asc_not_payable` → **critical** + recommendation
-- `asc_office_based` (A2 indicator) → **warning** + payment-rate caveat
+- `asc_office_based` (office-based indicators P2, P3, R2 per CMS Addendum DD1) → **warning** + payment-rate caveat
 
 Tested for: skip-when-not-ASC, fire-when-ASC, severity demotion for office-based. The full lookup test suite went from 19 to 22 specs without losing any prior behavior.
 

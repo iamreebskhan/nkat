@@ -85,7 +85,7 @@ function fakeTx() {
     values.forEach((v, i) => {
       if (strings[i + 1]!.startsWith("::date")) castToDate(v);
     });
-    if (sql.includes("FROM payer_allowed_codes_v")) return Promise.resolve([]);
+    if (sql.includes("FROM payer_allowed_codes_on(")) return Promise.resolve([]);
     if (sql.includes("FROM visit dv")) return Promise.resolve([unbilledVisit(sql)]);
     if (sql.includes("FROM documentation_requirement")) return Promise.resolve([]);
     if (sql.includes("FROM superbill")) return Promise.resolve([]);
@@ -133,5 +133,13 @@ describe("POST /api/superbills/predict — the date of service is a day that exi
     expect(res.status).toBe(200);
     const q = calls.find((c) => c.sql.includes("FROM documentation_requirement"))!;
     expect(q.values).toContain("2026-09-09");
+  });
+
+  it("scores the payer's rules as they stood on that day", async () => {
+    // The coverage read binds the day into ::date too (0129), so the cast above
+    // has to hold for it as well.
+    await post(body);
+    const q = calls.find((c) => c.sql.includes("FROM payer_allowed_codes_on("))!;
+    expect(q.values[0]).toBe("2026-09-09");
   });
 });

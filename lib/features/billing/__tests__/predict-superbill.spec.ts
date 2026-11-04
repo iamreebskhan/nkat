@@ -79,14 +79,40 @@ interface Rule {
   has_frequency_limit: boolean;
   frequency_limit_value: string | null;
   payer_rule_id: string;
+  /** The rule's own window, [effective, expiration), as YYYY-MM-DD. */
+  effective_date: string;
+  expiration_date: string | null;
 }
 
 const rule = (o: Partial<Rule> & { payer_rule_id: string }): Rule => ({
   payer_id: PAYER, state: "OH", code: "99349", coverage_status: "covered", confidence: "0.85",
   modifier_required: false, prior_auth_required: false,
   has_frequency_limit: false, frequency_limit_value: null,
+  effective_date: "2026-01-01", expiration_date: null,
   ...o,
 });
+
+/** In force on `day`, as payer_allowed_codes_on decides it. */
+const inForceOn = (day: string) => (r: Rule) =>
+  r.effective_date <= day && (r.expiration_date === null || r.expiration_date > day);
+
+/**
+ * The coverage read's rows: payer_allowed_codes_on(<bound day>) answers from the
+ * rules in force on that day. A read of payer_allowed_codes_v answers for the
+ * real today, as the view does, so a test about a past date fails against it.
+ */
+function coverageRead(sql: string, values: unknown[]): Rule[] | null {
+  const call = { sql, values };
+  if (sql.includes("FROM payer_allowed_codes_on(")) {
+    const day = boundIn(call, /payer_allowed_codes_on\(¶/);
+    if (typeof day !== "string") throw new Error("the coverage read binds no day this fake can apply");
+    return rulesMatching(sql, values).filter(inForceOn(day));
+  }
+  if (sql.includes("FROM payer_allowed_codes_v")) {
+    return rulesMatching(sql, values).filter(inForceOn(new Date().toISOString().slice(0, 10)));
+  }
+  return null;
+}
 
 /**
  * What payer_allowed_codes_v holds — ROWS, not one answer.
@@ -192,9 +218,8 @@ function fakeTx() {
   const run = (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join("¶");
     calls.push({ sql, values });
-    if (sql.includes("FROM payer_allowed_codes_v")) {
-      return Promise.resolve(rulesMatching(sql, values));
-    }
+    const coverage = coverageRead(sql, values);
+    if (coverage) return Promise.resolve(coverage);
     if (/FROM superbill\s+WHERE/.test(sql)) return Promise.resolve(historyRead(sql, values));
     if (sql.includes("FROM visit dv")) return Promise.resolve([visitFacts(sql)]);
     if (sql.includes("FROM superbill sb")) return Promise.resolve([facts]);
@@ -349,10 +374,44 @@ describe("predictSuperbill — whose coverage rules the draft is scored against"
     // keystroke-triggered preview. Asserted on the BOUND array, not on the
     // SQL's words: a predicate that loses its bind loses this assertion too.
     await predictSuperbill({ ...base, cptCodes: ["99349", "99350"] });
-    const coverage = read("FROM payer_allowed_codes_v")!;
+    const coverage = read("FROM payer_allowed_codes_on(")!;
     expect(boundIn(coverage, /\bcode\s*= ANY\(¶/)).toEqual(["99349", "99350"]);
     expect(boundIn(coverage, /\bpayer_id\s*= ¶/)).toBe(PAYER);
     expect(boundIn(coverage, /\bstate\s*= ¶/)).toBe("OH");
+  });
+});
+
+/**
+ * The rules in force on the claim's date of service (0129). The read was the
+ * view, which answers for today: a bill dated 12 March 2026 was scored by the
+ * July CMS file, while its rate on the same screen came from January's.
+ */
+describe("predictSuperbill — the rules of the date of service", () => {
+  beforeEach(() => {
+    rules = [
+      // January's file: in force 1 Jan to 31 Mar.
+      rule({ payer_rule_id: "january-file", coverage_status: "varies", expiration_date: "2026-04-01" }),
+      // July's file, from 1 Jul, says otherwise.
+      rule({ payer_rule_id: "july-file", coverage_status: "not_covered", effective_date: "2026-07-01" }),
+    ];
+  });
+
+  const coverageReason = (r: Awaited<ReturnType<typeof predictSuperbill>>) =>
+    r.perLine[0]!.reasons.find((x) => x.code.startsWith("coverage_"));
+
+  it("scores a March claim by the rule in force in March", async () => {
+    const r = await predictSuperbill({ ...base, dos: "2026-03-12" });
+    expect(coverageReason(r)).toMatchObject({ code: "coverage_varies", payerRuleId: "january-file" });
+  });
+
+  it("scores a September claim by the rule in force in September", async () => {
+    const r = await predictSuperbill({ ...base, dos: "2026-09-09" });
+    expect(coverageReason(r)).toMatchObject({ code: "coverage_denied", payerRuleId: "july-file" });
+  });
+
+  it("asks for the claim's own date, not today's", async () => {
+    await predictSuperbill({ ...base, dos: "2026-03-12" });
+    expect(boundIn(read("FROM payer_allowed_codes_on(")!, /payer_allowed_codes_on\(¶/)).toBe("2026-03-12");
   });
 });
 

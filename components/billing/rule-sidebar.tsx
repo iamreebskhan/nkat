@@ -10,7 +10,18 @@
  *
  * Given (payerId, state, [cptCodes]) the component runs one rule
  * lookup per code via /api/billing/lookup and renders the result
- * with a `CoverageBadge` + collapsible source citation.
+ * with a `CoverageBadge` + collapsible source citation. Rules carry dates,
+ * so a bill passes its date of service and is checked against the rules in
+ * force that day, as its price is; without one the lookup answers for today.
+ *
+ * Given a `visitId` instead, it asks /api/visits/[id]/payer-rules, which reads
+ * the payer, the coverage state and the date of service from the visit. That
+ * is the documentation screen's panel: /api/billing/lookup needs
+ * billing.lookup.view, which the clinician role does not hold, so for a
+ * clinician every lookup was refused.
+ *
+ * A refused or failed lookup says so. It used to stay on "checking…" for good,
+ * which reads as a check still running, not as no check at all.
  *
  * Skipped silently if `payerId` or `state` is missing — the rule
  * lookup needs both. Skipped when `cptCodes` is empty.
@@ -82,10 +93,35 @@ function SourceChip({ source }: { source: RuleResult["source"] }) {
   );
 }
 
+/** Why a code has no answer: the caller may not ask, or the lookup failed. */
+interface LookupFailure {
+  failed: "refused" | "error";
+  message: string;
+}
+
+const REFUSED = "Payer rules aren't available to your role.";
+
+function failureFrom(r: Response, data: { error?: string } | null): LookupFailure {
+  return r.status === 401 || r.status === 403
+    ? { failed: "refused", message: REFUSED }
+    : { failed: "error", message: data?.error ?? "The lookup failed." };
+}
+
 type Props = {
   payerId: string | null | undefined;
   state: string | null | undefined;
   cptCodes: string[];
+  /**
+   * The date of service, YYYY-MM-DD: the rules in force that day answer.
+   * Today's when absent.
+   */
+  dos?: string | null;
+  /**
+   * The visit being documented. The server reads the payer, the coverage
+   * state and the date of service from it; `payerId` and `state` then only
+   * decide whether there is anything to look up.
+   */
+  visitId?: string;
   /** Drives which rule attribute we ask about. Defaults to "covered". */
   attribute?:
     | "covered"
@@ -100,8 +136,8 @@ type Props = {
     | "pos_allowed";
 };
 
-export function RuleSidebar({ payerId, state, cptCodes, attribute = "covered" }: Props) {
-  const [results, setResults] = useState<Record<string, RuleResult | null>>({});
+export function RuleSidebar({ payerId, state, cptCodes, dos, visitId, attribute = "covered" }: Props) {
+  const [results, setResults] = useState<Record<string, RuleResult | LookupFailure>>({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -112,22 +148,45 @@ export function RuleSidebar({ payerId, state, cptCodes, attribute = "covered" }:
         return;
       }
       setLoading(true);
-      const next: Record<string, RuleResult | null> = {};
-      // Sequential not parallel — keeps server load in check + each
-      // request potentially fires Anthropic. The clinician sees results
-      // populate in document order.
-      for (const code of cptCodes) {
-        if (abandoned) return;
+      const next: Record<string, RuleResult | LookupFailure> = {};
+      if (visitId) {
+        // One request: the server looks the codes up in turn.
         try {
-          const r = await fetch("/api/billing/lookup", {
+          const r = await fetch(`/api/visits/${visitId}/payer-rules`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ payerId, state, cptCode: code, attribute }),
+            body: JSON.stringify({ codes: cptCodes, attribute }),
           });
-          const data = await r.json();
-          next[code] = data.success ? (data.data as RuleResult) : null;
+          const data = await r.json().catch(() => null);
+          if (data?.success) {
+            const answered = (data.data?.results ?? {}) as Record<string, RuleResult>;
+            for (const code of cptCodes) {
+              next[code] = answered[code] ?? { failed: "error", message: "No answer came back for this code." };
+            }
+          } else {
+            const why = failureFrom(r, data);
+            for (const code of cptCodes) next[code] = why;
+          }
         } catch {
-          next[code] = null;
+          for (const code of cptCodes) next[code] = { failed: "error", message: "Network error." };
+        }
+      } else {
+        // Sequential not parallel — keeps server load in check + each
+        // request potentially fires Anthropic. The clinician sees results
+        // populate in document order.
+        for (const code of cptCodes) {
+          if (abandoned) return;
+          try {
+            const r = await fetch("/api/billing/lookup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ payerId, state, cptCode: code, attribute, ...(dos ? { dos } : {}) }),
+            });
+            const data = await r.json().catch(() => null);
+            next[code] = data?.success ? (data.data as RuleResult) : failureFrom(r, data);
+          } catch {
+            next[code] = { failed: "error", message: "Network error." };
+          }
         }
       }
       if (!abandoned) {
@@ -138,7 +197,7 @@ export function RuleSidebar({ payerId, state, cptCodes, attribute = "covered" }:
     return () => {
       abandoned = true;
     };
-  }, [payerId, state, cptCodes.join(","), attribute]);
+  }, [payerId, state, cptCodes.join(","), attribute, dos, visitId]);
 
   if (!payerId || !state) {
     return (
@@ -162,7 +221,9 @@ export function RuleSidebar({ payerId, state, cptCodes, attribute = "covered" }:
         <p className="text-xs text-slate-500">Checking payer rules…</p>
       )}
       {cptCodes.map((code) => {
-        const r = results[code];
+        const answer = results[code];
+        const failure = answer && "failed" in answer ? answer : null;
+        const r = answer && !("failed" in answer) ? answer : null;
         return (
           <div
             key={code}
@@ -174,10 +235,17 @@ export function RuleSidebar({ payerId, state, cptCodes, attribute = "covered" }:
               </span>
               {r ? (
                 <CoverageBadge status={r.coverageStatus} size="sm" />
+              ) : failure ? (
+                <span className="text-xs text-slate-600">not checked</span>
               ) : (
                 <span className="text-xs text-slate-400">checking…</span>
               )}
             </div>
+            {failure && (
+              <p role="status" className="text-xs text-amber-800 leading-snug">
+                {failure.message}
+              </p>
+            )}
             {r && r.answer && (
               <p className="text-xs text-slate-700 leading-snug line-clamp-3">
                 {r.answer}

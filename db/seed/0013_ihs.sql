@@ -13,7 +13,9 @@ ON CONFLICT (code, effective_date) DO UPDATE
       specialty = EXCLUDED.specialty;
 
 INSERT INTO modifier (modifier, description, modifier_type, payer_applicability, effective_date) VALUES
-  ('SE', 'State / federally-funded program / IHS encounter rate', 'informational', '{Medicaid,Medicare}', '2003-01-01')
+  -- HCPCS: "State and/or federally-funded programs/services". It is not an
+  -- IHS-specific modifier, which the old wording implied.
+  ('SE', 'State and/or federally-funded programs/services', 'informational', '{Medicaid,Medicare}', '2003-01-01')
 ON CONFLICT (modifier) DO UPDATE
   SET description = EXCLUDED.description;
 

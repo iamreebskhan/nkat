@@ -53,19 +53,37 @@ INSERT INTO modifier_relationship (modifier_a, modifier_b, relationship_type, ra
   ('GA', 'GY', 'mutually_exclusive', 'Signed ABN vs statutorily excluded — distinct paths',  '2002-01-01')
 ON CONFLICT DO NOTHING;
 
--- DMEPOS Master List (representative entries; the 2026-04-13 update added
--- 18 codes per Federal Register notice).
+-- DMEPOS requirements, from CMS's own lists: the Required Prior Authorization
+-- List (updated 29 July 2026) and the Required Face-to-Face Encounter and
+-- Written Order Prior to Delivery List (effective 28 October 2026). Each row
+-- is dated from when its requirement took effect nationwide.
+--
+-- These rows used to claim prior authorization for every item and a
+-- certificate of medical necessity for two, with dollar thresholds nobody
+-- published. On the CMS lists: K0823 needs both prior authorization (from
+-- 1 Sept 2018) and a face-to-face encounter; E0277 (21 Oct 2019) and L5856
+-- (1 Dec 2020) need prior authorization only; E1390 needs a face-to-face
+-- encounter from 13 April 2026 and no prior authorization; E0470, E0471 and
+-- E0601 are on neither list, so they have no row. CMS retired certificates
+-- of medical necessity for claims from 1 January 2023, and prior
+-- authorization does not depend on the billed amount, so no threshold is
+-- stored.
+--
+-- The dates are part of the unique key, so the old rows are removed and
+-- written again rather than updated. Nothing references this table.
+DELETE FROM dme_master_list
+ WHERE code IN ('K0823', 'E0470', 'E0471', 'E0601', 'E1390', 'L5856', 'E0277');
+
 INSERT INTO dme_master_list (code, description, requires_face_to_face, requires_prior_auth, requires_cmn, payment_threshold_dollar, effective_date, source_release, source_url) VALUES
-  ('K0823', 'Power wheelchair group 2 standard',          TRUE, TRUE,  TRUE,  4000, '2018-01-01', 'CMS DMEPOS ML', 'https://www.cms.gov/medicare/coverage/dmepos/master-list'),
-  ('E0470', 'BiPAP without backup',                       TRUE, TRUE,  FALSE, 1500, '2018-01-01', 'CMS DMEPOS ML', 'https://www.cms.gov/medicare/coverage/dmepos/master-list'),
-  ('E0471', 'BiPAP with backup',                          TRUE, TRUE,  FALSE, 2500, '2018-01-01', 'CMS DMEPOS ML', 'https://www.cms.gov/medicare/coverage/dmepos/master-list'),
-  ('E0601', 'CPAP device',                                TRUE, TRUE,  FALSE, 800,  '2018-01-01', 'CMS DMEPOS ML', 'https://www.cms.gov/medicare/coverage/dmepos/master-list'),
-  ('E1390', 'Oxygen concentrator',                        TRUE, TRUE,  FALSE, 600,  '2018-01-01', 'CMS DMEPOS ML', 'https://www.cms.gov/medicare/coverage/dmepos/master-list'),
-  ('L5856', 'Microprocessor-controlled prosthetic knee',  TRUE, TRUE,  TRUE,  20000,'2018-01-01', 'CMS DMEPOS ML', 'https://www.cms.gov/medicare/coverage/dmepos/master-list'),
-  ('E0277', 'Powered pressure-reducing mattress',         TRUE, TRUE,  FALSE, 1500, '2018-01-01', 'CMS DMEPOS ML', 'https://www.cms.gov/medicare/coverage/dmepos/master-list')
+  ('K0823', 'Power wheelchair group 2 standard, captains chair', TRUE,  TRUE,  FALSE, NULL, '2018-09-01', 'CMS Required PA List 2026-07-29; F2F/WOPD List 2026-10-28', 'https://www.cms.gov/data-research/monitoring-programs/medicare-fee-service-compliance-programs/prior-authorization-and-pre-claim-review-initiatives/prior-authorization-process-certain-durable-medical-equipment-prosthetics-orthotics-and-supplies'),
+  ('E0277', 'Powered pressure-reducing air mattress',            FALSE, TRUE,  FALSE, NULL, '2019-10-21', 'CMS Required PA List 2026-07-29; F2F/WOPD List 2026-10-28', 'https://www.cms.gov/data-research/monitoring-programs/medicare-fee-service-compliance-programs/prior-authorization-and-pre-claim-review-initiatives/prior-authorization-process-certain-durable-medical-equipment-prosthetics-orthotics-and-supplies'),
+  ('L5856', 'Microprocessor-controlled prosthetic knee',         FALSE, TRUE,  FALSE, NULL, '2020-12-01', 'CMS Required PA List 2026-07-29; F2F/WOPD List 2026-10-28', 'https://www.cms.gov/data-research/monitoring-programs/medicare-fee-service-compliance-programs/prior-authorization-and-pre-claim-review-initiatives/prior-authorization-process-certain-durable-medical-equipment-prosthetics-orthotics-and-supplies'),
+  ('E1390', 'Oxygen concentrator, single delivery port',         TRUE,  FALSE, FALSE, NULL, '2026-04-13', 'CMS Required PA List 2026-07-29; F2F/WOPD List 2026-10-28', 'https://www.cms.gov/data-research/monitoring-programs/medicare-fee-service-compliance-programs/medical-review-and-education/dmepos-order-requirements')
 ON CONFLICT (code, effective_date) DO UPDATE
   SET description = EXCLUDED.description,
       requires_face_to_face = EXCLUDED.requires_face_to_face,
       requires_prior_auth = EXCLUDED.requires_prior_auth,
       requires_cmn = EXCLUDED.requires_cmn,
-      payment_threshold_dollar = EXCLUDED.payment_threshold_dollar;
+      payment_threshold_dollar = EXCLUDED.payment_threshold_dollar,
+      source_release = EXCLUDED.source_release,
+      source_url = EXCLUDED.source_url;

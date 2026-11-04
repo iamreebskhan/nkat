@@ -6,9 +6,9 @@
  *   * Phase B — the pre-submission denial predictor (which calls this
  *               to know whether a draft line uses a covered code).
  *
- * Reads from the `payer_allowed_codes_v` view (migration 0041). The
- * view is global (no RLS) — payer rules are reference data shared
- * across every org.
+ * Reads `payer_allowed_codes_on(dos)` (migration 0129): the rows of the
+ * `payer_allowed_codes_v` view as they stood on the date of service. Global
+ * (no RLS) — payer rules are reference data shared across every org.
  *
  * Result is cached in-process for 60 seconds per (payerId, state, dos)
  * key. Payer rules move daily at most, so this is safe and keeps the
@@ -120,9 +120,10 @@ export async function getAllowedCodesForPayer(args: {
   const cached = CACHE.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.rows;
 
-  // Use the view. The view already filters to active+covered rules,
-  // but we still respect `dos` here so a request for a historic date
-  // (denial review, audit) returns the right set.
+  // The rules in force on `dos`, so a bill under review (a denial, an audit)
+  // is offered its own date's codes. This read used the view, which answers
+  // for today, and only added `effective_date <= dos`: for a past date that
+  // dropped today's rules without bringing back the ones in force then.
   const statusFilter = includeDenied
     ? ["covered", "varies", "not_covered", "unknown"]
     : ["covered", "varies"];
@@ -135,11 +136,10 @@ export async function getAllowedCodesForPayer(args: {
       source_doc_id, source_quote, source_kind,
       modifier_required, prior_auth_required,
       has_frequency_limit, frequency_limit_value, prior_auth_value
-    FROM payer_allowed_codes_v
+    FROM payer_allowed_codes_on(${dos}::date)
     WHERE payer_id = ${args.payerId}::uuid
       AND state    = ${args.state}
       AND product_line = ${productLine}
-      AND effective_date <= ${dos}::date
       AND coverage_status = ANY(${statusFilter}::text[])
     ORDER BY
       CASE coverage_status

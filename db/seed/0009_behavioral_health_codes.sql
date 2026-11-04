@@ -21,7 +21,8 @@ INSERT INTO code (code, code_system, short_descriptor, category, specialty, is_s
   ('90839', 'CPT',    'Psychotherapy for crisis, first 60 min',               'Crisis',        'behavioral_health', FALSE, '2013-01-01'),
   ('90840', 'CPT',    'Psychotherapy for crisis, addl 30 min',                'Crisis',        'behavioral_health', FALSE, '2013-01-01'),
   -- Med management
-  ('99202', 'CPT',    'New pt office E/M, low MDM/15min',                     'E/M Office',    'medical_surgical',  FALSE, '2021-01-01'),
+  -- 99202 is straightforward MDM (CMS RVU file: "Office o/p new sf 15 min").
+  ('99202', 'CPT',    'New pt office E/M, straightforward MDM/15min',         'E/M Office',    'medical_surgical',  FALSE, '2021-01-01'),
   ('99203', 'CPT',    'New pt office E/M, low MDM/30min',                     'E/M Office',    'medical_surgical',  FALSE, '2021-01-01'),
   ('99213', 'CPT',    'Est pt office E/M, low MDM/20min',                     'E/M Office',    'medical_surgical',  FALSE, '2021-01-01'),
   ('99214', 'CPT',    'Est pt office E/M, mod MDM/30min',                     'E/M Office',    'medical_surgical',  FALSE, '2021-01-01'),
@@ -31,10 +32,17 @@ INSERT INTO code (code, code_system, short_descriptor, category, specialty, is_s
   ('90838', 'CPT',    'Psychotherapy add-on, 53+ min, w/E&M',                 'Psychotherapy', 'behavioral_health', FALSE, '2013-01-01'),
   -- SUD-specific (42 CFR Part 2 applies)
   ('H0001', 'HCPCS2', 'Alcohol/SUD assessment',                               'SUD',           'behavioral_health', TRUE,  '2003-01-01'),
-  ('H0004', 'HCPCS2', 'SUD individual counseling, per 15 min',                'SUD',           'behavioral_health', TRUE,  '2003-01-01'),
+  -- H0004 is NOT SUD-specific: the HCPCS file reads "Behavioral health
+  -- counseling and therapy, per 15 minutes", and states bill it for mental
+  -- health counseling too. Part 2 follows the program that delivers the care,
+  -- not this code, so the code alone does not flag it.
+  ('H0004', 'HCPCS2', 'Behavioral health counseling/therapy, per 15 min',     'BH Counseling', 'behavioral_health', FALSE, '2003-01-01'),
   ('H0005', 'HCPCS2', 'SUD group counseling',                                 'SUD',           'behavioral_health', TRUE,  '2003-01-01'),
   ('H0006', 'HCPCS2', 'SUD case management',                                  'SUD',           'behavioral_health', TRUE,  '2003-01-01'),
-  ('H0010', 'HCPCS2', 'SUD residential, per diem',                            'SUD',           'behavioral_health', TRUE,  '2003-01-01'),
+  -- HCPCS: "Alcohol and/or drug services; sub-acute detoxification
+  -- (residential addiction program inpatient)" — a detox stay, not any
+  -- residential SUD day (that is H0018/H0019).
+  ('H0010', 'HCPCS2', 'SUD sub-acute detox, residential',                     'SUD',           'behavioral_health', TRUE,  '2003-01-01'),
   ('H0015', 'HCPCS2', 'SUD intensive outpatient program (IOP)',               'SUD',           'behavioral_health', TRUE,  '2003-01-01'),
   ('H0020', 'HCPCS2', 'SUD methadone admin',                                  'SUD',           'behavioral_health', TRUE,  '2003-01-01'),
   ('H0050', 'HCPCS2', 'SUD brief intervention, per 15 min',                   'SUD',           'behavioral_health', TRUE,  '2003-01-01')

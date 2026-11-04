@@ -45,6 +45,7 @@ interface ViewRow {
   coverage_status: "covered" | "varies" | "not_covered" | "unknown";
   confidence: string;
   effective_date: Date;
+  expiration_date: Date | null;
   rule_created_at: Date;
   created_by: string;
   source_doc_id: string;
@@ -65,7 +66,8 @@ const viewRow = (
 ): ViewRow => ({
   payer_id: payerId, state: "OH", product_line: "commercial", code, descriptor, category: null,
   code_system: codeSystem, coverage_status: "covered", confidence: "0.85",
-  effective_date: new Date("2026-01-01T00:00:00Z"), rule_created_at: new Date("2026-01-02T00:00:00Z"),
+  effective_date: new Date("2026-01-01T00:00:00Z"), expiration_date: null,
+  rule_created_at: new Date("2026-01-02T00:00:00Z"),
   created_by: "extract:coverage-basis-2026-08", source_doc_id: "d", source_quote: null,
   // What the live view derives for every row today.
   source_kind: "unknown",
@@ -119,6 +121,18 @@ const asDay = (v: unknown) =>
  * rather than being guessed at.
  */
 function rowsMatching(sql: string, values: unknown[]): ViewRow[] {
+  // What the read is FROM decides which rows exist at all: the function answers
+  // for the day bound into it, the view for the real today (0129). A read that
+  // still went to the view would get today's rows for a back-dated bill, as it
+  // did, and a test about a past date fails against it.
+  const fn = /FROM payer_allowed_codes_on\(¶::date\)/.exec(sql);
+  let asOf: string;
+  if (fn) asOf = asDay(values[sql.slice(0, fn.index + fn[0].indexOf("¶")).split("¶").length - 1]);
+  else if (/FROM payer_allowed_codes_v\b/.test(sql)) asOf = asDay(new Date());
+  else throw new Error("the fake models no such read");
+  const inForce = (r: ViewRow) =>
+    asDay(r.effective_date) <= asOf && (r.expiration_date === null || asDay(r.expiration_date) > asOf);
+
   const start = sql.indexOf("WHERE ") + "WHERE ".length;
   const end = sql.indexOf("ORDER BY", start);
   let next = sql.slice(0, start).split("¶").length - 1;
@@ -156,7 +170,7 @@ function rowsMatching(sql: string, values: unknown[]): ViewRow[] {
     const either = splitOutsideParens(clause.slice(1, -1), " OR ").map(atom);
     return (r: ViewRow) => either.some((p) => p(r));
   });
-  return rows.filter((r) => clauses.every((p) => p(r)));
+  return rows.filter(inForce).filter((r) => clauses.every((p) => p(r)));
 }
 
 beforeEach(() => {
@@ -295,8 +309,31 @@ describe("allowed codes — which rules reach the picker", () => {
       expect(boundIn(call, /\bpayer_id\s*= ¶/)).toBe(payerId);
       expect(boundIn(call, /\bstate\s*= ¶/)).toBe("OH");
       expect(boundIn(call, /\bproduct_line\s*= ¶/)).toBe("commercial");
-      expect(boundIn(call, /\beffective_date\s*<= ¶/)).toBe("2026-03-15");
+      expect(boundIn(call, /payer_allowed_codes_on\(¶/)).toBe("2026-03-15");
       expect(boundIn(call, /\bcoverage_status\s*= ANY\(¶/)).toEqual(["covered", "varies"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers a back-dated bill the codes in force on its date of service", async () => {
+    // A rule that ran from January to March: a March bill is offered its code,
+    // today's picker is not. The read used the view (today's rules) and only
+    // added effective_date <= dos, so the March bill lost it.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-03T12:00:00.000Z"));
+    try {
+      rows.push(
+        viewRow("98975", "CPT", "Remote therapeutic monitoring setup", {
+          expiration_date: new Date("2026-04-01T00:00:00Z"),
+        }),
+      );
+      const march = await getAllowedCodesForPayer({ payerId, state: "OH", dos: "2026-03-12" });
+      expect(codesFrom(march)).toContain("98975");
+      expect(boundIn(readCall(), /payer_allowed_codes_on\(¶/)).toBe("2026-03-12");
+
+      const today = await getAllowedCodesForPayer({ payerId, state: "OH" });
+      expect(codesFrom(today)).not.toContain("98975");
     } finally {
       vi.useRealTimers();
     }

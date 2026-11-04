@@ -929,6 +929,7 @@ export default function SuperbillPage({
           <CodePicker
             payerId={patient?.primaryPayerId ?? draft.payerId}
             state={coverageState}
+            dos={draft.dateOfService}
             selected={currentCpts}
             onChange={(cpt) => setEdits((e) => ({ ...e, cpt }))}
             onOverride={(o) =>
@@ -990,10 +991,13 @@ export default function SuperbillPage({
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {/* Checked against the rules in force on the bill's date of service,
+              the same rules its price comes from. */}
           <RuleSidebar
             payerId={patient?.primaryPayerId ?? draft.payerId}
             state={coverageState}
             cptCodes={currentCpts}
+            dos={draft.dateOfService}
             attribute="covered"
           />
           {/* The payer's place-of-service rules, shown rather than evaluated:
@@ -1005,6 +1009,7 @@ export default function SuperbillPage({
             payerId={patient?.primaryPayerId ?? draft.payerId}
             state={coverageState}
             cptCodes={currentCpts}
+            dos={draft.dateOfService}
             attribute="pos_allowed"
           />
           {/* No warning would otherwise read as a clean claim (0122). */}
