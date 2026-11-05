@@ -583,6 +583,24 @@ SQL
       || die "retiring uncited document versions FAILED. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
   fi
 
+  # Bring every practice's rulebook copies up to the library the seeds just
+  # corrected.
+  #
+  # Generating a rulebook copies each library rule into the practice's own
+  # rows. The seeds rewrite the library in place and never touched the
+  # copies, so after the 3 Nov 2026 audit production's rulebooks still read
+  # G0318 as an office code and quoted CMS mid-sentence. The lookup no longer
+  # answers from a copy, but the rulebook page and the cheat sheets print
+  # them. Last, so it copies the rules as the steps above left them. A
+  # person's edit, upload or payer call is never touched.
+  MIRROR_SQL="db/maintenance/refresh-rulebook-mirrors.sql"
+  if [ "$DRY_RUN" = "1" ]; then
+    [ -f "$MIRROR_SQL" ] && echo "    [dry-run] would bring rulebook copies up to the library ($MIRROR_SQL)"
+  elif [ -f "$MIRROR_SQL" ]; then
+    sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d "$PG_DB" -f "$MIRROR_SQL" \
+      || die "refreshing rulebook copies FAILED — practices' rulebook pages may show superseded rules. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
+  fi
+
   # The library's core invariant: fetchPayerRule ends in LIMIT 1 with no
   # confidence tiebreak, so two rows served on one key make the answer
   # depend on row order.

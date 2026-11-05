@@ -6,7 +6,10 @@
  * which reads the global (non-RLS) `payer_rule` reference library.
  *
  * Why both exist — see `rule-lookup.service.ts` step 2:
- *   - `org_rulebook_row` is what the ORG says. It wins.
+ *   - `org_rulebook_row` is what the ORG says, where a person in the org
+ *     said it (an edit, an upload, an analyst's payer call). It wins.
+ *     Rows the machine wrote (origin 'source': library copies, the AI
+ *     cache) never answer; the library answers those cells itself.
  *   - `payer_rule` is the platform's reference library (CMS seed,
  *     platform-ingested payer policy). It's the fallback, and it's
  *     shown alongside the org answer so a biller can see when their
@@ -31,14 +34,6 @@ import { dateColumnIso, isCalendarDay } from "@/lib/features/org/org-date";
 
 /** Mirrors the org_rulebook_row.origin CHECK (migration 0031). */
 export type OrgRuleOrigin = "source" | "org_upload" | "org_override" | "analyst";
-
-/**
- * Confidence floor for MACHINE-written org rows (origin='source').
- * Matches MIN_SQL_CONFIDENCE in rule-lookup.service.ts: an AI-synthesized
- * answer is cached at 0.4 pending analyst review, and until a human
- * confirms it, it must not answer a lookup under the org's own banner.
- */
-const MIN_ORG_RULE_CONFIDENCE = 0.5;
 
 export interface OrgRuleHit {
   rowId: string;
@@ -91,7 +86,7 @@ export interface FetchOrgRuleInput {
 
 /**
  * Fetch this org's own rule for (payer, state, code, attribute), or
- * null if their rulebook doesn't cover the cell.
+ * null if no person in the org has decided the cell.
  *
  * Ordering breaks ties when an org somehow holds more than one row for
  * a cell (possible across rulebook regenerations, since the unique
@@ -131,12 +126,18 @@ export async function fetchOrgRule(
         -- caller's instant fell in.
         AND (r.expires_at IS NULL
              OR r.expires_at > (${input.dos}::date::timestamp AT TIME ZONE o.timezone))
-        -- Human decisions (analyst call, manual override, uploaded
-        -- rulebook) always answer. Machine-written rows (origin
-        -- 'source' — the AI-synthesized cache) must clear the same
-        -- confidence floor the global library does, so an unverified
-        -- 0.4 guess is never presented to a biller as "your rulebook".
-        AND (r.origin <> 'source' OR r.confidence >= ${MIN_ORG_RULE_CONFIDENCE})
+        -- Only a person's decision answers as "your rulebook": an analyst's
+        -- payer call, a manual edit, an uploaded rulebook. Rows with origin
+        -- 'source' were written by the machine — the library's rules copied
+        -- in when the rulebook was generated, or an unreviewed AI answer —
+        -- and the copies answered here too. A copy kept what the library
+        -- said the day it was made: after the 3 Nov 2026 audit corrected
+        -- the library, production still answered G0318 as an office code,
+        -- quoted CMS mid-sentence and gave no NP/PA rate, and a copy
+        -- answered a March visit with July's rule. Those cells now fall
+        -- through to the library itself, which answers for the date of
+        -- service (rule-lookup.service.ts step 2b; migration 0130).
+        AND r.origin <> 'source'
       ORDER BY
         (r.origin = 'org_override') DESC,
         (r.origin = 'analyst')      DESC,

@@ -8,9 +8,13 @@
  *   1. Validate payer + state + cptCode + attribute. If any missing,
  *      try parsing the natural-language query (haiku) to fill in.
  *   2. ORG FIRST. Look the cell up in the caller's own rulebook
- *      (`org_rulebook_row`). If they have it, that IS the answer — an
- *      org's documented position outranks the platform's reference
- *      library, because they're the ones who called the payer.
+ *      (`org_rulebook_row`). If a person there decided it — an edit, an
+ *      uploaded rulebook, an analyst's payer call — that IS the answer:
+ *      an org's documented position outranks the platform's reference
+ *      library, because they're the ones who called the payer. The
+ *      library rules the rulebook generator copied in are not a position
+ *      the org took, so they don't answer here; step 2b reads the
+ *      library itself, for the date of service (migration 0130).
  *   2b. Structured SQL lookup against the global `payer_rule` library
  *      for an exact match effective on the date-of-service. This is
  *      the fallback when the org's rulebook doesn't cover the cell —
@@ -41,7 +45,7 @@ import {
   synthesizeRuleAnswer,
   type ParsedQuery,
 } from "@/lib/ai/anthropic.client";
-import { assertNoPhi } from "@/lib/ai/phi-guard";
+import { assertNoPhi, PhiGuardError } from "@/lib/ai/phi-guard";
 import { isEmbedderConfigured } from "@/lib/ai/embedder";
 import { hybridSearch } from "@/lib/ai/vector-search";
 import { withOrgContext } from "@/lib/db";
@@ -471,20 +475,38 @@ export async function lookupRule(req: LookupRequest): Promise<LookupResult> {
     req.query ?? `${fullAttribute} for CPT ${fullCptCode} in ${fullState}`;
   assertNoPhi(queryText, "ruleLookup.synth");
 
-  const chunks = await hybridSearch({
-    query: queryText,
-    payerId: fullPayerId,
-    state: fullState,
-    topK: 5,
-  });
+  let chunks: Awaited<ReturnType<typeof hybridSearch>>;
+  let synth: Awaited<ReturnType<typeof synthesizeRuleAnswer>>;
+  try {
+    chunks = await hybridSearch({
+      query: queryText,
+      payerId: fullPayerId,
+      state: fullState,
+      topK: 5,
+    });
 
-  const synth = await synthesizeRuleAnswer({
-    query: queryText,
-    structuredRule: structuredHit
-      ? renderStructuredAnswer(structuredHit, fullCptCode)
-      : null,
-    chunks: chunks.map((c) => c.content),
-  });
+    synth = await synthesizeRuleAnswer({
+      query: queryText,
+      structuredRule: structuredHit
+        ? renderStructuredAnswer(structuredHit, fullCptCode)
+        : null,
+      chunks: chunks.map((c) => c.content),
+    });
+  } catch (err) {
+    // A PHI refusal is about the question, and the caller shows it as such.
+    if (err instanceof PhiGuardError) throw err;
+    // Anything else is the search or a provider failing: OpenAI out of
+    // credit, Anthropic unreachable, a timeout. It used to reach the route
+    // as the lookup's error, so a biller read "429 You have no credits
+    // remaining. Add credits…" on every bill's place-of-service check. The
+    // library has answered what it could above; this answer says the
+    // documents went unread, and the reason goes to the server log.
+    console.error(
+      "rule lookup: payer-document search failed —",
+      err instanceof Error ? err.message : err,
+    );
+    return unknownResult(resolved, fallback, payerTypeRow, DOCUMENTS_UNREAD);
+  }
 
   // Step 5 — refusal path. NEVER swap in a synthesized rule without a
   // verbatim citation.
@@ -607,6 +629,10 @@ function globalComparison(
   };
 }
 
+/** Appended to an unknown answer when the document search itself failed. */
+const DOCUMENTS_UNREAD =
+  "This payer's documents couldn't be searched just now, so they weren't checked. Try again later.";
+
 function unknownResult(
   resolved: {
     payerId: string;
@@ -616,11 +642,12 @@ function unknownResult(
   },
   comparison: LookupResult["comparison"] = null,
   payerType: string | null = null,
+  note: string | null = null,
 ): LookupResult {
   return {
     status: "unknown",
     source: "unknown",
-    answer: unknownMessageFor(payerType),
+    answer: note ? `${unknownMessageFor(payerType)} ${note}` : unknownMessageFor(payerType),
     coverageStatus: "unknown",
     confidence: 0,
     citation: null,

@@ -16,7 +16,8 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { fail, handleServiceError, ok, parseJson, requireUuidParam, NotFoundError } from "@/lib/api";
+import { fail, handleServiceError, ok, parseJson, requireUuidParam } from "@/lib/api";
+import { PhiGuardError } from "@/lib/ai/phi-guard";
 import { requireAuth } from "@/lib/auth";
 import { requireVisitAccess } from "@/lib/features/visits/visit-access";
 import { getVisitPayerRules } from "@/lib/features/visits/visit-payer-rules.service";
@@ -79,10 +80,10 @@ export async function POST(req: NextRequest, ctx: Params): Promise<Response> {
       }),
     );
   } catch (err) {
-    if (err instanceof NotFoundError) return handleServiceError(err);
-    // As POST /api/billing/lookup: most failures here are a PHI-guard refusal
-    // or the model being unreachable, and the panel shows the reason.
-    const message = err instanceof Error ? err.message : "Rule lookup failed.";
-    return fail(message, { status: 422 });
+    // As POST /api/billing/lookup: a PHI-guard refusal shows its reason; a
+    // missing visit is a 404; anything else is logged and the panel gets a
+    // plain line, never a provider's or the database's own message.
+    if (err instanceof PhiGuardError) return fail(err.message, { status: 422 });
+    return handleServiceError(err);
   }
 }

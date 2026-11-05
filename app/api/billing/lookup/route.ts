@@ -13,7 +13,8 @@
 import { type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { ok, fail, parseJson } from "@/lib/api";
+import { ok, fail, handleServiceError, parseJson } from "@/lib/api";
+import { PhiGuardError } from "@/lib/ai/phi-guard";
 import { requireAuth } from "@/lib/auth";
 import { lookupRule } from "@/lib/features/billing/rule-lookup.service";
 import { persistSynthesizedRule } from "@/lib/features/billing/synthesized-rule.service";
@@ -74,9 +75,12 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     return ok(result);
   } catch (err) {
-    // Most errors here are PHI-detection refusals or upstream API
-    // failures. Surface as 422 so the FE shows the actual reason.
-    const message = err instanceof Error ? err.message : "Rule lookup failed.";
-    return fail(message, { status: 422 });
+    // A PHI-guard refusal is the answer to this question, and the page shows
+    // its reason. Everything else went out raw as well, which is how billers
+    // came to read OpenAI's "429 You have no credits remaining…" (4 Nov
+    // 2026). lookupRule now answers a failed document search itself, so what
+    // still lands here is unexpected: logged, and a plain line for the page.
+    if (err instanceof PhiGuardError) return fail(err.message, { status: 422 });
+    return handleServiceError(err);
   }
 }

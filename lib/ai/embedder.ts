@@ -37,16 +37,33 @@ export function isEmbedderConfigured(): boolean {
 }
 
 /**
+ * How long one call may take. The client's defaults (4 retries, a 10-minute
+ * timeout) suit ingestion, which can wait out a rate limit. A lookup has a
+ * person waiting: when the account had no credit left, every lookup that
+ * reached the document search sat through four retries and then failed.
+ */
+export interface EmbedOptions {
+  maxRetries?: number;
+  timeoutMs?: number;
+}
+
+/**
  * Embed a single string. Returns the 1024-dim vector. Truncated server
  * side at the model's 8191-token limit; long inputs raise the API's
  * native error.
  */
-export async function embed(text: string): Promise<number[]> {
-  const r = await client().embeddings.create({
-    model: EMBED_MODEL,
-    dimensions: EMBED_DIMS,
-    input: text,
-  });
+export async function embed(text: string, opts: EmbedOptions = {}): Promise<number[]> {
+  const r = await client().embeddings.create(
+    {
+      model: EMBED_MODEL,
+      dimensions: EMBED_DIMS,
+      input: text,
+    },
+    {
+      ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+      ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+    },
+  );
   const vec = r.data[0]?.embedding;
   if (!vec || vec.length !== EMBED_DIMS) {
     throw new Error(

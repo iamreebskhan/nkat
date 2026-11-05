@@ -13,9 +13,13 @@
  * produce the side-by-side view. The org admin resolves each row,
  * then we persist the merged set.
  */
+import type { Prisma } from "@prisma/client";
+
 import { NotFoundError } from "@/lib/api";
 import { withBreakglass, withOrgContext } from "@/lib/db";
 import { hasAmaLicense } from "@/lib/features/billing/code.service";
+import { orgToday } from "@/lib/features/org/org-date";
+import { readOrgTimeZone } from "@/lib/features/org/org-time-zone";
 import { compareRulebooks, sourceKindFor } from "./rulebook-pure";
 import type {
   ComparisonRow,
@@ -105,6 +109,41 @@ interface SourceQueryRow {
 }
 
 /**
+ * The library rule that answers each (payer, state, code, attribute) key
+ * today where the practice is: the latest effective date in force, then id,
+ * as close-rule-timelines.sql picks its anchor and
+ * app.refresh_rulebook_mirrors() (migration 0130) picks a row's rule, so a
+ * fresh rulebook, a refreshed one and an upload's comparison hold the same
+ * rule. "expiration_date IS NULL" took any open-ended row, a rule not yet in
+ * force among them, and where a key had several the last one read won.
+ */
+async function libraryRulesToday(
+  tx: Pick<Prisma.TransactionClient, "$queryRaw">,
+  orgId: string,
+  keys: { payerIds: string[]; states: string[]; codes: string[] },
+): Promise<SourceQueryRow[]> {
+  if (keys.payerIds.length === 0 || keys.states.length === 0 || keys.codes.length === 0) return [];
+  const today = orgToday(await readOrgTimeZone(tx, orgId));
+  return tx.$queryRaw<SourceQueryRow[]>`
+    SELECT DISTINCT ON (pr.payer_id, pr.state, pr.code, pr.attribute)
+      pr.payer_id, pr.state, pr.code, pr.attribute,
+      pr.value AS rule_value,
+      pr.coverage_status,
+      pr.confidence::text AS confidence,
+      pr.id AS rule_id,
+      pr.source_quote
+    FROM payer_rule pr
+    WHERE pr.payer_id = ANY(${keys.payerIds}::uuid[])
+      AND pr.state    = ANY(${keys.states}::text[])
+      AND pr.code     = ANY(${keys.codes}::text[])
+      AND pr.effective_date <= ${today}::date
+      AND (pr.expiration_date IS NULL OR pr.expiration_date > ${today}::date)
+    ORDER BY pr.payer_id, pr.state, pr.code, pr.attribute,
+             pr.effective_date DESC, pr.id DESC
+  `;
+}
+
+/**
  * Path A: build a fresh rulebook from the org's onboarding inputs.
  *
  * Wholesale-replace strategy: drop the existing rulebook (if any) and
@@ -122,22 +161,7 @@ export async function generateRulebook(args: {
   const { orgId, byUserId, states, payerIds, cptCodes } = args;
   return withOrgContext(orgId, async (tx) => {
     // Pull every matching source rule in one query.
-    const sourceRows: SourceQueryRow[] = states.length === 0 || payerIds.length === 0 || cptCodes.length === 0
-      ? []
-      : await tx.$queryRaw<SourceQueryRow[]>`
-        SELECT
-          pr.payer_id, pr.state, pr.code, pr.attribute,
-          pr.value AS rule_value,
-          pr.coverage_status,
-          pr.confidence::text AS confidence,
-          pr.id AS rule_id,
-          pr.source_quote
-        FROM payer_rule pr
-        WHERE pr.payer_id = ANY(${payerIds}::uuid[])
-          AND pr.state    = ANY(${states}::text[])
-          AND pr.code     = ANY(${cptCodes}::text[])
-          AND pr.expiration_date IS NULL
-      `;
+    const sourceRows = await libraryRulesToday(tx, orgId, { payerIds, states, codes: cptCodes });
 
     // Bump existing rulebook version (or insert new).
     const rb = await tx.$queryRaw<RulebookRow[]>`
@@ -394,8 +418,10 @@ export async function applyEdits(args: {
  * `org-rule.repository.ts#upsertOrgRule`. Do not reintroduce a call
  * from an org-scoped code path; if you need one, you want upsertOrgRule.
  *
- * Skipped for rows with origin='org_override' (the user explicitly
- * customized that cell; we never silently overwrite local edits).
+ * Only the machine's own rows (origin='source') follow. A person's edit
+ * ('org_override'), uploaded rulebook ('org_upload') or payer call
+ * ('analyst') is the org's position and stays as they left it; an
+ * uploaded row used to be rewritten here and relabelled 'source'.
  *
  * Returns the number of org rulebook rows refreshed across all orgs.
  */
@@ -419,15 +445,15 @@ export async function propagateGlobalRuleToAllOrgRulebooks(args: {
         rule_value = ${JSON.stringify(args.ruleValue)}::jsonb,
         source_quote = ${args.sourceQuote},
         confidence = ${args.confidence},
-        origin = 'source',
         updated_at = now()
        WHERE payer_id = ${args.payerId}::uuid
          AND state = ${args.state}
          AND cpt_code = ${args.cptCode}
          AND attribute = ${args.dbAttribute}
-         -- Never clobber a tenant's own position: an explicit override
-         -- or an analyst's payer call outranks a library refresh.
-         AND origin NOT IN ('org_override', 'analyst')
+         -- Never clobber a tenant's own position: an explicit override,
+         -- an uploaded rulebook or an analyst's payer call outranks a
+         -- library refresh.
+         AND origin = 'source'
     `;
     return Number(updated);
   }, "propagate global payer_rule change to org rulebook mirrors");
@@ -522,20 +548,7 @@ export async function buildComparison(args: {
     const states = Array.from(new Set(orgRows.map((r) => r.state)));
     const cpts = Array.from(new Set(orgRows.map((r) => r.cptCode)));
 
-    const sourceRows: SourceQueryRow[] = await tx.$queryRaw<SourceQueryRow[]>`
-      SELECT
-        pr.payer_id, pr.state, pr.code, pr.attribute,
-        pr.value AS rule_value,
-        pr.coverage_status,
-        pr.confidence::text AS confidence,
-        pr.id AS rule_id,
-        pr.source_quote
-      FROM payer_rule pr
-      WHERE pr.payer_id = ANY(${payerIds}::uuid[])
-        AND pr.state    = ANY(${states}::text[])
-        AND pr.code     = ANY(${cpts}::text[])
-        AND pr.expiration_date IS NULL
-    `;
+    const sourceRows = await libraryRulesToday(tx, args.orgId, { payerIds, states, codes: cpts });
 
     return compareRulebooks({
       orgRows,

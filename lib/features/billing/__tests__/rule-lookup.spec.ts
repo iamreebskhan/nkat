@@ -75,6 +75,7 @@ vi.mock("@/lib/ai/embedder", () => ({
   EMBEDDING_DIMS: 1024,
 }));
 
+import { PhiGuardError } from "@/lib/ai/phi-guard";
 import { withOrgContext } from "@/lib/db";
 
 import { lookupRule } from "../rule-lookup.service";
@@ -581,5 +582,80 @@ describe("lookupRule benchmark fallback", () => {
     const r = await lookupRule(req);
 
     expect(r.comparison?.scope).toBe("global_library");
+  });
+});
+
+// REGRESSION, 4 Nov 2026: production's OpenAI account ran out of credit, the
+// document search threw, and the lookup's error was OpenAI's own message —
+// "429 You have no credits remaining…" — on every bill's place-of-service
+// check. A failed search is now an answer: unknown, saying the documents went
+// unread, with whatever the library and the benchmark already found.
+describe("lookupRule — the document search failing", () => {
+  const req = {
+    payerId: "44444444-4444-4444-8444-444444444444",
+    state: "OH",
+    cptCode: "99350",
+    attribute: "pos_allowed" as const,
+  };
+  const CREDIT = "429 You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.";
+  let errors: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    mockFetchOrgRule.mockResolvedValue(null);
+    mockFetchPayerRule.mockResolvedValue(null);
+    mockFetchBenchmarks.mockResolvedValue([]);
+    errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => errors.mockRestore());
+
+  it("answers unknown, says the documents went unread, and never repeats the provider", async () => {
+    mockHybridSearch.mockRejectedValue(new Error(CREDIT));
+
+    const r = await lookupRule(req);
+
+    expect(r.status).toBe("unknown");
+    expect(r.coverageStatus).toBe("unknown");
+    expect(r.answer).toContain("No confirmed rule found in the library.");
+    expect(r.answer).toContain("This payer's documents couldn't be searched just now, so they weren't checked.");
+    expect(JSON.stringify(r)).not.toMatch(/credits|openai|429/i);
+    expect(mockSynthesize).not.toHaveBeenCalled();
+    // The reason is not lost: it goes to the server log.
+    expect(errors).toHaveBeenCalledWith("rule lookup: payer-document search failed —", CREDIT);
+  });
+
+  it("answers the same way when the model, not the search, fails", async () => {
+    mockHybridSearch.mockResolvedValue([{ chunkId: "c", docId: "d", content: "text", cptCodesMentioned: [], policySection: null, score: 1 }]);
+    mockSynthesize.mockRejectedValue(new Error("529 Overloaded"));
+
+    const r = await lookupRule(req);
+
+    expect(r.status).toBe("unknown");
+    expect(r.answer).toContain("couldn't be searched just now");
+    expect(r.answer).not.toContain("Overloaded");
+  });
+
+  it("keeps what the library already knew beside it", async () => {
+    mockFetchBenchmarks.mockResolvedValue([{
+      ruleId: "b1", attribute: "pos_allowed", value: { answer: "Home (12) allowed." },
+      coverageStatus: "covered", confidence: 0.95,
+      effectiveDate: new Date("2026-07-01"), expirationDate: null,
+      sourceDocId: "d", sourceUrl: null, sourceQuote: "POS 12", sourcePage: null, isStatewide: false,
+      payerName: "Traditional Medicare (Part B)", payerType: "medicare_mac",
+    }]);
+    mockHybridSearch.mockRejectedValue(new Error(CREDIT));
+
+    const r = await lookupRule(req);
+
+    expect(r.comparison?.scope).toBe("benchmark");
+    expect(r.comparison?.answer).toContain("Traditional Medicare");
+  });
+
+  it("still refuses a question that carries PHI, with the guard's own reason", async () => {
+    mockHybridSearch.mockResolvedValue([]);
+    mockSynthesize.mockRejectedValue(new PhiGuardError("synthesizeRuleAnswer", [{ pattern: "ssn", excerpt: "1*******9" }]));
+
+    await expect(lookupRule(req)).rejects.toBeInstanceOf(PhiGuardError);
+    expect(errors).not.toHaveBeenCalled();
   });
 });

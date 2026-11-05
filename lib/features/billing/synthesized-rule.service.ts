@@ -19,10 +19,9 @@ import type { lookupRule } from "./rule-lookup.service";
  * this row is an unreviewed 0.4-confidence AI answer produced by one
  * tenant's query. Writing it globally — which is what this function
  * used to do — silently made it the platform's answer for every other
- * tenant too. The org keeps the benefit (next identical lookup hits
- * the org-rulebook step, no AI cost, same answer) without exporting an
- * unverified rule to 100+ other practices. `payer_rule` is now written
- * only by platform ingestion.
+ * tenant too. It stays with the org that asked, and answers no lookup
+ * until an analyst confirms it (fetchOrgRule reads only rows a person
+ * decided). `payer_rule` is now written only by platform ingestion.
  *
  * Best-effort: failures are logged but don't surface to the caller —
  * the user already has their answer.

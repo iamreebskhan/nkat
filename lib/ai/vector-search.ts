@@ -81,30 +81,47 @@ export async function hybridSearch(input: VectorSearchInput): Promise<ChunkHit[]
   const topK = Math.min(20, Math.max(1, input.topK ?? 5));
 
   // 1. Dense lane — embed the query, run cosine on document_chunk.embedding.
-  const queryVec = await embed(input.query);
-  const denseRows = await prisma.$queryRaw<
-    {
-      id: string;
-      doc_id: string;
-      content: string;
-      cpt_codes_mentioned: string[];
-      policy_section: string | null;
-      sim: number;
-    }[]
-  >`
-    SELECT
-      dc.id, dc.source_doc_id AS doc_id, dc.content,
-      dc.codes_mentioned AS cpt_codes_mentioned, dc.policy_section,
-      1 - (dc.embedding <=> ${vectorLiteral(queryVec)}::vector) AS sim
-    FROM document_chunk dc
-    JOIN source_document sd ON sd.id = dc.source_doc_id
-    WHERE dc.payer_id = ${input.payerId}::uuid
-      AND dc.state = ${input.state}
-      AND dc.embedding IS NOT NULL
-      AND sd.document_type <> 'client_upload'
-    ORDER BY dc.embedding <=> ${vectorLiteral(queryVec)}::vector
-    LIMIT ${TOP_K_PER_LANE}
-  `;
+  //
+  // The embedding is a call to OpenAI, and on 4 Nov 2026 production's
+  // account had no credit left: every lookup that reached this line failed,
+  // and the biller saw OpenAI's "429 You have no credits remaining" in place
+  // of an answer. The sparse lane needs nothing outside Postgres, so a query
+  // that cannot be embedded now loses this lane and is searched by its words.
+  // One retry and eight seconds, not the client's four and ten minutes: a
+  // lookup has a person waiting.
+  let queryVec: number[] | null = null;
+  try {
+    queryVec = await embed(input.query, { maxRetries: 1, timeoutMs: 8_000 });
+  } catch (err) {
+    console.warn(
+      `vector-search: query not embedded, searching its words only — ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const denseRows = queryVec
+    ? await prisma.$queryRaw<
+        {
+          id: string;
+          doc_id: string;
+          content: string;
+          cpt_codes_mentioned: string[];
+          policy_section: string | null;
+          sim: number;
+        }[]
+      >`
+        SELECT
+          dc.id, dc.source_doc_id AS doc_id, dc.content,
+          dc.codes_mentioned AS cpt_codes_mentioned, dc.policy_section,
+          1 - (dc.embedding <=> ${vectorLiteral(queryVec)}::vector) AS sim
+        FROM document_chunk dc
+        JOIN source_document sd ON sd.id = dc.source_doc_id
+        WHERE dc.payer_id = ${input.payerId}::uuid
+          AND dc.state = ${input.state}
+          AND dc.embedding IS NOT NULL
+          AND sd.document_type <> 'client_upload'
+        ORDER BY dc.embedding <=> ${vectorLiteral(queryVec)}::vector
+        LIMIT ${TOP_K_PER_LANE}
+      `
+    : [];
 
   // 2. Sparse lane — Postgres FTS with same payer+state filter.
   const sparseRows = await prisma.$queryRaw<

@@ -19,15 +19,18 @@ vi.mock("@/lib/db", () => ({ prisma: {}, withOrgContext: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ requireAuth: vi.fn() }));
 vi.mock("@/lib/features/billing/rule-lookup.service", () => ({ lookupRule: vi.fn() }));
 vi.mock("@/lib/features/billing/synthesized-rule.service", () => ({ persistSynthesizedRule: vi.fn() }));
+vi.mock("@/lib/observability/sentry", () => ({ reportError: vi.fn() }));
 
 import { POST as billingLookup } from "@/app/api/billing/lookup/route";
 import { POST } from "@/app/api/visits/[id]/payer-rules/route";
+import { PhiGuardError } from "@/lib/ai/phi-guard";
 import { fail } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { withOrgContext } from "@/lib/db";
 import { lookupRule } from "@/lib/features/billing/rule-lookup.service";
 import { persistSynthesizedRule } from "@/lib/features/billing/synthesized-rule.service";
 import { ROLE_DEFAULT_PERMISSIONS } from "@/lib/features/team/team.types";
+import { reportError } from "@/lib/observability/sentry";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const ME = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -156,11 +159,53 @@ describe("POST /api/visits/[id]/payer-rules — the clinician's panel", () => {
     expect(persistSynthesizedRule).toHaveBeenCalledWith(expect.objectContaining({ source: "ai_synthesized" }), ORG);
   });
 
-  it("reports a lookup that failed, with its reason", async () => {
-    vi.mocked(lookupRule).mockRejectedValue(new Error("The rule library is unavailable."));
+  it("shows a PHI-guard refusal with its reason", async () => {
+    vi.mocked(lookupRule).mockRejectedValue(new PhiGuardError("ruleLookup.synth", [{ pattern: "ssn", excerpt: "1*******9" }]));
     const res = await post({ codes: ["99350"] });
     expect(res.status).toBe(422);
-    expect((await res.json()).error).toBe("The rule library is unavailable.");
+    expect((await res.json()).error).toMatch(/^PHI guard tripped at ruleLookup\.synth: ssn\./);
+  });
+
+  // REGRESSION, 4 Nov 2026: OpenAI's own billing message reached the panel as
+  // the lookup's reason. Any other failure is logged and shown in plain words.
+  it("never shows a provider's or the database's own message", async () => {
+    vi.mocked(lookupRule).mockRejectedValue(
+      new Error("429 You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/."),
+    );
+    const res = await post({ codes: ["99350"] });
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe("Something went wrong. Try again or contact support.");
+    expect(JSON.stringify(json)).not.toMatch(/credits|openai/i);
+    expect(reportError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("POST /api/billing/lookup — what a failure tells the page", () => {
+  const lookup = (body: unknown) =>
+    billingLookup(
+      new Request("http://localhost/x", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }) as unknown as NextRequest,
+    );
+
+  beforeEach(() => signInAs([...ROLE_DEFAULT_PERMISSIONS.clinician, "billing.lookup.view"]));
+
+  it("shows a PHI-guard refusal with its reason", async () => {
+    vi.mocked(lookupRule).mockRejectedValue(new PhiGuardError("ruleLookup.query", [{ pattern: "mrn", excerpt: "M****1" }]));
+    const res = await lookup({ query: "is it covered" });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toMatch(/^PHI guard tripped at ruleLookup\.query: mrn\./);
+  });
+
+  it("never shows a provider's or the database's own message", async () => {
+    vi.mocked(lookupRule).mockRejectedValue(new Error("429 You have no credits remaining. Add credits to continue."));
+    const res = await lookup({ payerId: MEDICARE, state: "OH", cptCode: "99350", attribute: "pos_allowed" });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Something went wrong. Try again or contact support.");
+    expect(reportError).toHaveBeenCalledTimes(1);
   });
 });
 
