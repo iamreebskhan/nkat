@@ -18,12 +18,14 @@ import type { Prisma } from "@prisma/client";
 import { NotFoundError } from "@/lib/api";
 import { withBreakglass, withOrgContext } from "@/lib/db";
 import { hasAmaLicense } from "@/lib/features/billing/code.service";
+import { ATTRIBUTE_DB_MAP, type PayerRuleAttribute } from "@/lib/features/billing/payer-rule.repository";
 import { orgToday } from "@/lib/features/org/org-date";
 import { readOrgTimeZone } from "@/lib/features/org/org-time-zone";
-import { compareRulebooks, sourceKindFor } from "./rulebook-pure";
+import { compareRulebooks, ownEditFields, sourceKindFor } from "./rulebook-pure";
 import type {
   ComparisonRow,
   CoverageStatus,
+  MergeDecision,
   RulebookAttribute,
   RulebookOrigin,
   RulebookRowView,
@@ -373,6 +375,13 @@ async function readRulebook(args: {
  * Apply org-admin edits to a rulebook. Each edit overwrites the cell's
  * `coverage_status` + `rule_value` and flips origin → 'org_override'.
  * Records the user + timestamp for audit.
+ *
+ * An edit that changes the coverage also drops what the row said for its
+ * old coverage: the value keeps only the editor's own fields
+ * (rulebook-pure ownEditFields) and the quote goes with it. It is compared
+ * with the row as stored, so an edit that leaves the coverage as it was (a
+ * note, or a coverage changed and changed back before saving) keeps the
+ * value as sent.
  */
 export async function applyEdits(args: {
   orgId: string;
@@ -382,9 +391,14 @@ export async function applyEdits(args: {
   let n = 0;
   await withOrgContext(args.orgId, async (tx) => {
     for (const e of args.edits) {
+      // SET reads the row as it was: coverage_status in the CASEs is the stored one.
       await tx.$executeRaw`
         UPDATE org_rulebook_row SET
-          rule_value = ${JSON.stringify(e.ruleValue)}::jsonb,
+          rule_value = CASE WHEN coverage_status = ${e.coverageStatus}
+                            THEN ${JSON.stringify(e.ruleValue)}::jsonb
+                            ELSE ${JSON.stringify(ownEditFields(e.ruleValue))}::jsonb
+                       END,
+          source_quote = CASE WHEN coverage_status = ${e.coverageStatus} THEN source_quote END,
           coverage_status = ${e.coverageStatus},
           origin = 'org_override',
           last_edited_by_user_id = ${args.byUserId}::uuid,
@@ -459,32 +473,94 @@ export async function propagateGlobalRuleToAllOrgRulebooks(args: {
   }, "propagate global payer_rule change to org rulebook mirrors");
 }
 
+/** A cell's attribute under the library's name, which the rulebook stores and the lookup reads. */
+function libraryAttribute(attribute: string): string {
+  return ATTRIBUTE_DB_MAP[attribute as PayerRuleAttribute] ?? attribute;
+}
+
+function cellKey(c: { payerId: string | null; state: string; cptCode: string; attribute: string }): string {
+  return `${c.payerId ?? ""}|${c.state}|${c.cptCode}|${c.attribute}`;
+}
+
+/** What every uploaded row has carried: the column's default. */
+const UPLOADED_ROW_CONFIDENCE = 0.5;
+
 /**
- * Path B merge (§9.4.3): persist the org's per-row decisions from the
- * comparison view into org_rulebook_row (origin='org_upload'), then
- * mark the upload 'merged'. Each decision carries the final
- * coverage_status + rule_value the org chose (accept-source /
- * keep-org / custom — resolved client-side).
+ * The cells, among `cells`, that someone at the practice already decided in
+ * its rulebook: edited by hand, or confirmed with the payer by an analyst.
+ * A merge leaves those as they are. An org has one rulebook (UNIQUE org_id).
+ */
+async function heldCells(
+  tx: Pick<Prisma.TransactionClient, "$queryRaw">,
+  orgId: string,
+  cells: { payerId: string | null; state: string; cptCode: string; attribute: string }[],
+): Promise<Map<string, "org_override" | "analyst">> {
+  if (cells.length === 0) return new Map();
+  const keys = cells.map((c) => ({ payer_id: c.payerId, state: c.state, cpt_code: c.cptCode, attribute: c.attribute }));
+  const rows = await tx.$queryRaw<
+    { payer_id: string | null; state: string; cpt_code: string; attribute: string; origin: "org_override" | "analyst" }[]
+  >`
+    SELECT r.payer_id, r.state, r.cpt_code, r.attribute, r.origin
+      FROM org_rulebook_row r
+      JOIN jsonb_to_recordset(${JSON.stringify(keys)}::jsonb)
+           AS k(payer_id uuid, state text, cpt_code text, attribute text)
+        ON r.payer_id IS NOT DISTINCT FROM k.payer_id
+       AND r.state = k.state AND r.cpt_code = k.cpt_code AND r.attribute = k.attribute
+     WHERE r.org_id = ${orgId}::uuid
+       AND r.origin IN ('org_override', 'analyst')
+  `;
+  return new Map(
+    rows.map((r) => [cellKey({ payerId: r.payer_id, state: r.state, cptCode: r.cpt_code, attribute: r.attribute }), r.origin]),
+  );
+}
+
+/**
+ * Path B merge (§9.4.3): write the org's per-row decisions from the
+ * comparison view into its rulebook, then mark the upload 'merged'.
+ *
+ * Each decision says which side the practice took for one cell. "upload"
+ * keeps the practice's own value ('org_upload'). "library" keeps Pallio's
+ * rule as a library copy (origin 'source') of the rule in force today, as
+ * generation writes one, so it follows the library from then on
+ * (app.refresh_rulebook_mirrors(), migration 0130) and the lookup answers
+ * the cell from the library for the date of service. A pick of Pallio's rule
+ * was stored as the practice's own: frozen as the library read that day, and
+ * answering every date of service with it.
+ *
+ * A decision replaces the cell's library copy or an earlier upload. A cell
+ * someone at the practice edited by hand, or an analyst confirmed with the
+ * payer, is left as it is and counted in `kept`; the comparison marks those
+ * before anyone applies (keptAs). Its default pick is Pallio's rule wherever
+ * the library has one, so replacing them would have overwritten a person's
+ * decision nobody was shown. Decisions used to be inserted blind, and a cell
+ * the rulebook already held (every cell, once a rulebook was generated) broke
+ * the unique index and rolled the whole merge back.
  */
 export async function mergeUploadedRulebook(args: {
   orgId: string;
   uploadId: string;
   byUserId: string;
-  decisions: Array<{
-    payerId: string | null;
-    state: string;
-    cptCode: string;
-    attribute: string;
-    coverageStatus: CoverageStatus;
-    ruleValue: Record<string, unknown>;
-  }>;
-}): Promise<{ merged: number }> {
+  decisions: MergeDecision[];
+}): Promise<{ merged: number; fromLibrary: number; kept: number }> {
+  // One decision per cell, under the library's attribute names. A file says
+  // 'prior_auth'; stored under that name a row never answered a lookup,
+  // which asks for 'prior_auth_required'. The last decision for a cell wins.
+  const byCell = new Map<string, MergeDecision>();
+  for (const d of args.decisions) {
+    const cell = { ...d, attribute: libraryAttribute(d.attribute) };
+    byCell.set(cellKey(cell), cell);
+  }
+  const decisions = [...byCell.values()];
+
   return withOrgContext(args.orgId, async (tx) => {
+    // A rulebook built from the file alone is 'uploaded'; a file merged into
+    // the rulebook the practice had is 'merged' ("reconciled against Pallio's
+    // library" on the page).
     const rb = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO org_rulebook (org_id, origin, current_version, finalized_by_user_id)
       VALUES (${args.orgId}::uuid, 'uploaded', 1, ${args.byUserId}::uuid)
       ON CONFLICT (org_id) DO UPDATE SET
-        origin = 'uploaded',
+        origin = 'merged',
         current_version = org_rulebook.current_version + 1,
         finalized_by_user_id = ${args.byUserId}::uuid,
         updated_at = now()
@@ -492,21 +568,85 @@ export async function mergeUploadedRulebook(args: {
     `;
     const rulebookId = rb[0]!.id;
 
-    let merged = 0;
-    for (const d of args.decisions) {
+    const held = await heldCells(tx, args.orgId, decisions);
+    const toWrite = decisions.filter((d) => !held.has(cellKey(d)));
+
+    const picks = toWrite.filter((d) => d.use === "library");
+    const withPayer = picks.filter((d) => d.payerId !== null);
+    const rules = await libraryRulesToday(tx, args.orgId, {
+      payerIds: [...new Set(withPayer.map((d) => d.payerId!))],
+      states: [...new Set(withPayer.map((d) => d.state))],
+      codes: [...new Set(withPayer.map((d) => d.cptCode))],
+    });
+    const ruleFor = new Map(
+      rules.map((r) => [cellKey({ payerId: r.payer_id, state: r.state, cptCode: r.code, attribute: r.attribute }), r]),
+    );
+
+    const cells = toWrite.map((d) => {
+      const at = { payer_id: d.payerId, state: d.state, cpt_code: d.cptCode, attribute: d.attribute };
+      if (d.use !== "library") {
+        return {
+          ...at, origin: "org_upload", rule_value: d.ruleValue, coverage_status: d.coverageStatus,
+          confidence: UPLOADED_ROW_CONFIDENCE, source_payer_rule_id: null, source_quote: null,
+        };
+      }
+      // The rule in force today, or the gap generation writes where there is none.
+      const r = ruleFor.get(cellKey(d));
+      return {
+        ...at, origin: "source", rule_value: r?.rule_value ?? {}, coverage_status: r?.coverage_status ?? "unknown",
+        confidence: r ? Number(r.confidence) : 0, source_payer_rule_id: r?.rule_id ?? null,
+        source_quote: r?.source_quote ?? null,
+      };
+    });
+
+    if (cells.length > 0) {
+      const json = JSON.stringify(cells);
+      // payer_id may be NULL (a payer the file names that matched none), and
+      // the unique index never matches NULLs, hence IS NOT DISTINCT FROM and
+      // no ON CONFLICT.
+      await tx.$executeRaw`
+        UPDATE org_rulebook_row r SET
+          rule_value             = d.rule_value,
+          coverage_status        = d.coverage_status,
+          origin                 = d.origin,
+          confidence             = d.confidence,
+          source_payer_rule_id   = d.source_payer_rule_id,
+          source_quote           = d.source_quote,
+          expires_at             = NULL,
+          source_attestation_id  = NULL,
+          last_edited_by_user_id = ${args.byUserId}::uuid,
+          last_edited_at         = now(),
+          updated_at             = now()
+          FROM jsonb_to_recordset(${json}::jsonb)
+               AS d(payer_id uuid, state text, cpt_code text, attribute text, rule_value jsonb,
+                    coverage_status text, origin text, confidence numeric,
+                    source_payer_rule_id uuid, source_quote text)
+         WHERE r.rulebook_id = ${rulebookId}::uuid
+           AND r.payer_id IS NOT DISTINCT FROM d.payer_id
+           AND r.state = d.state AND r.cpt_code = d.cpt_code AND r.attribute = d.attribute
+           -- Never a person's decision; heldCells kept those out already.
+           AND r.origin IN ('source', 'org_upload')
+      `;
       await tx.$executeRaw`
         INSERT INTO org_rulebook_row (
           org_id, rulebook_id, payer_id, state, cpt_code, attribute,
-          rule_value, coverage_status, origin, last_edited_by_user_id,
-          last_edited_at
-        ) VALUES (
-          ${args.orgId}::uuid, ${rulebookId}::uuid,
-          ${d.payerId}::uuid, ${d.state}, ${d.cptCode}, ${d.attribute},
-          ${JSON.stringify(d.ruleValue)}::jsonb, ${d.coverageStatus},
-          'org_upload', ${args.byUserId}::uuid, now()
+          rule_value, coverage_status, origin, confidence,
+          source_payer_rule_id, source_quote, last_edited_by_user_id, last_edited_at
         )
+        SELECT ${args.orgId}::uuid, ${rulebookId}::uuid, d.payer_id, d.state, d.cpt_code, d.attribute,
+               d.rule_value, d.coverage_status, d.origin, d.confidence,
+               d.source_payer_rule_id, d.source_quote, ${args.byUserId}::uuid, now()
+          FROM jsonb_to_recordset(${json}::jsonb)
+               AS d(payer_id uuid, state text, cpt_code text, attribute text, rule_value jsonb,
+                    coverage_status text, origin text, confidence numeric,
+                    source_payer_rule_id uuid, source_quote text)
+         WHERE NOT EXISTS (
+           SELECT 1 FROM org_rulebook_row r
+            WHERE r.rulebook_id = ${rulebookId}::uuid
+              AND r.payer_id IS NOT DISTINCT FROM d.payer_id
+              AND r.state = d.state AND r.cpt_code = d.cpt_code AND r.attribute = d.attribute
+         )
       `;
-      merged++;
     }
 
     await tx.$executeRaw`
@@ -514,7 +654,7 @@ export async function mergeUploadedRulebook(args: {
          SET status = 'merged', updated_at = now()
        WHERE id = ${args.uploadId}::uuid AND org_id = ${args.orgId}::uuid
     `;
-    return { merged };
+    return { merged: toWrite.length, fromLibrary: picks.length, kept: held.size };
   });
 }
 
@@ -531,16 +671,22 @@ export async function buildComparison(args: {
       SELECT parsed_rows FROM rulebook_upload WHERE id = ${args.uploadId}::uuid LIMIT 1
     `;
     if (!upload[0]) throw new NotFoundError("Upload not found.");
-    const orgRows = (upload[0].parsed_rows as unknown[]) as Array<{
+    const parsed = (upload[0].parsed_rows as unknown[]) as Array<{
       payerId: string | null;
       state: string;
       cptCode: string;
-      attribute: RulebookAttribute;
+      attribute: string;
       coverageStatus: CoverageStatus;
       ruleValue: Record<string, unknown>;
     }>;
 
-    if (orgRows.length === 0) return [];
+    if (parsed.length === 0) return [];
+
+    // The file's attribute names are the lookup's short ones ('prior_auth');
+    // the library's are 'prior_auth_required'. Compared as written, six of the
+    // ten never met the library's rule, and each came back twice: the
+    // upload's row "unverified" and the library's "new from Pallio".
+    const orgRows = parsed.map((r) => ({ ...r, attribute: libraryAttribute(r.attribute) }));
 
     const payerIds = Array.from(
       new Set(orgRows.map((r) => r.payerId).filter((v): v is string => !!v)),
@@ -550,7 +696,7 @@ export async function buildComparison(args: {
 
     const sourceRows = await libraryRulesToday(tx, args.orgId, { payerIds, states, codes: cpts });
 
-    return compareRulebooks({
+    const rows = compareRulebooks({
       orgRows,
       sourceRows: sourceRows.map((r) => ({
         payerId: r.payer_id,
@@ -562,6 +708,13 @@ export async function buildComparison(args: {
         sourceQuote: r.source_quote,
         sourcePayerRuleId: r.rule_id,
       })),
+    });
+
+    // A merge leaves a cell someone already decided; say which before anyone applies.
+    const held = await heldCells(tx, args.orgId, rows);
+    return rows.map((r) => {
+      const keptAs = held.get(cellKey(r));
+      return keptAs ? { ...r, keptAs } : r;
     });
   });
 }

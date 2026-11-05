@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareRulebooks,
   confidenceDisplay,
+  ownEditFields,
   payerRuleSourceKind,
   rowsAgree,
   sourceKindFor,
@@ -93,6 +94,40 @@ describe("compareRulebooks", () => {
 
   it("handles empty sets", () => {
     expect(compareRulebooks({ orgRows: [], sourceRows: [] })).toEqual([]);
+  });
+});
+
+describe("ownEditFields — what a cell keeps when its coverage changes", () => {
+  // A library copy of an Aetna rule, as generation writes it, with a note added.
+  const libraryCopy = {
+    answer: "Aetna publishes no code-level coverage determination for this code.",
+    source: "Aetna Clinical Policy Bulletin Notes (\"Important Note\"), read 2026-08-11",
+    sourceDocument: "Aetna CPB index",
+    supportingQuotes: ["Aetna considers…"],
+    mappedFrom: "covered",
+    notes: "Confirmed on the provider line, 5 Nov",
+  };
+
+  it("keeps the editor's own fields and none of the library's wording", () => {
+    expect(ownEditFields({ ...libraryCopy, source: "payer_call", verifiedBy: "Helen", verifiedAt: "2026-11-05" })).toEqual({
+      notes: "Confirmed on the provider line, 5 Nov",
+      source: "payer_call",
+      verifiedBy: "Helen",
+      verifiedAt: "2026-11-05",
+    });
+  });
+
+  it("reads the library's document name under `source` as wording, not a choice", () => {
+    expect(ownEditFields(libraryCopy)).toEqual({ notes: "Confirmed on the provider line, 5 Nov" });
+  });
+
+  it("drops an uploaded row's text and an analyst's note with the old coverage", () => {
+    expect(ownEditFields({ answer: "Covered in the home only" })).toEqual({});
+    expect(ownEditFields({ note: "Key1 prior auth required" })).toEqual({});
+  });
+
+  it("drops cleared fields", () => {
+    expect(ownEditFields({ notes: "", verifiedBy: undefined, source: undefined })).toEqual({});
   });
 });
 

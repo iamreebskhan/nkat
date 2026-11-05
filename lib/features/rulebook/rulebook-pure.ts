@@ -13,14 +13,14 @@ import type {
   ComparisonRow,
   CoverageStatus,
   RowOrigin,
-  RulebookAttribute,
 } from "./rulebook.types";
 
 interface PartialRow {
   payerId: string | null;
   state: string;
   cptCode: string;
-  attribute: RulebookAttribute;
+  /** The library's attribute name, on both sides (see buildComparison). */
+  attribute: string;
   coverageStatus: CoverageStatus;
   ruleValue: Record<string, unknown>;
 }
@@ -139,6 +139,31 @@ export function compareRulebooks(args: {
     );
   });
 
+  return out;
+}
+
+/** Where the rulebook editor's "Source" select says a person learned a rule. */
+const EDITOR_SOURCES = new Set(["payer_call", "contract", "portal", "other"]);
+
+/**
+ * What a cell keeps when a person changes its coverage: the fields the
+ * rulebook editor writes (notes, source, verified by and when), and nothing
+ * the row held for its old coverage.
+ *
+ * Everything else in a row's value was written for the coverage it had:
+ * Pallio's answer and the figures behind it, an uploaded row's text, an
+ * analyst's note. Kept under a new coverage it read as the reason for it:
+ * "Covered" sat above the library's "Aetna publishes no coverage decision for
+ * this code", and the lookup answered "Per your rulebook … covered." with
+ * that sentence after it. `source` counts only as one of the editor's four
+ * choices; the library keeps its document's name under the same key.
+ */
+export function ownEditFields(value: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of ["notes", "verifiedBy", "verifiedAt"] as const) {
+    if (value[k] !== undefined && value[k] !== null && value[k] !== "") out[k] = value[k];
+  }
+  if (typeof value.source === "string" && EDITOR_SOURCES.has(value.source)) out.source = value.source;
   return out;
 }
 

@@ -13,7 +13,7 @@
 import { createHash } from "node:crypto";
 
 import { withBreakglass, withOrgContext } from "@/lib/db";
-import { embed, isEmbedderConfigured } from "@/lib/ai/embedder";
+import { documentChunkEmbedder, isEmbedderConfigured } from "@/lib/ai/embedder";
 import { chunkText, parseRulebookCsv } from "./extractor";
 
 export interface RulebookIngestResult {
@@ -134,18 +134,12 @@ export async function ingestPolicyDocument(args: {
     const sourceDocId = doc[0]!.id;
 
     let embedded = false;
+    const embedChunk = documentChunkEmbedder(args.url);
     for (let i = 0; i < chunks.length; i++) {
       const content = chunks[i];
-      let vec: number[] | null = null;
-      if (canEmbed) {
-        try {
-          vec = await embed(content);
-          embedded = true;
-        } catch {
-          vec = null;
-        }
-      }
+      const vec = canEmbed ? await embedChunk(content, i, chunks.length) : null;
       if (vec) {
+        embedded = true;
         const lit = `[${vec.join(",")}]`;
         await tx.$executeRaw`
           INSERT INTO document_chunk (

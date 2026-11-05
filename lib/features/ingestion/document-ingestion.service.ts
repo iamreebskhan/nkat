@@ -20,7 +20,7 @@
  */
 import { createHash } from "node:crypto";
 
-import { embed, isEmbedderConfigured } from "@/lib/ai/embedder";
+import { documentChunkEmbedder, isEmbedderConfigured } from "@/lib/ai/embedder";
 import {
   extractRulesFromDocument,
   type ExtractedRule,
@@ -667,17 +667,11 @@ export async function ingestDocumentFromUrl(
           DELETE FROM document_chunk WHERE source_doc_id = ${docId}::uuid
         `;
       }
+      const embedChunk = documentChunkEmbedder(args.url);
       for (let i = 0; i < chunks.length; i++) {
-        let vec: number[] | null = null;
-        if (canEmbed) {
-          try {
-            vec = await embed(chunks[i]);
-            embedded = true;
-          } catch {
-            vec = null;
-          }
-        }
+        const vec = canEmbed ? await embedChunk(chunks[i], i, chunks.length) : null;
         if (vec) {
+          embedded = true;
           const lit = `[${vec.join(",")}]`;
           await tx.$executeRaw`
             INSERT INTO document_chunk (

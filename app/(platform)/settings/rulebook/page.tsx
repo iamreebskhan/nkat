@@ -527,7 +527,10 @@ function CptRows(props: {
                 const notes = (value.notes as string | undefined) ?? "";
                 const source = (value.source as string | undefined) ?? "";
                 const verifiedBy = (value.verifiedBy as string | undefined) ?? "";
-                const answer = (value.answer as string | undefined) ?? "";
+                // Saving a new coverage drops the row's wording for the old one
+                // (applyEdits), so it stops showing as soon as the coverage changes.
+                const coverageChanged = status !== row.coverageStatus;
+                const answer = coverageChanged ? "" : ((value.answer as string | undefined) ?? "");
                 const isUnknown = status === "unknown";
                 return (
                   <div
@@ -573,6 +576,11 @@ function CptRows(props: {
                     {answer && (
                       <p className="text-xs text-slate-700 mb-2">{answer}</p>
                     )}
+                    {coverageChanged && Boolean(row.ruleValue.answer || row.sourceQuote) ? (
+                      <p className="text-xs text-slate-500 mb-2">
+                        The wording that came with the old coverage is removed when you save. Add a note to say why.
+                      </p>
+                    ) : null}
                     {row.sourceQuote && !edit && (
                       <p className="text-xs italic text-slate-500 mb-2 border-l-2 border-slate-200 pl-2">
                         &ldquo;{row.sourceQuote}&rdquo;
@@ -693,7 +701,14 @@ interface ComparisonRow {
     sourcePayerRuleId: string | null;
   } | null;
   outcome: "match" | "diff" | "unverified" | "new_from_pallio";
+  /** Someone at the practice already decided this cell; a merge leaves it. */
+  keptAs?: "org_override" | "analyst";
 }
+
+const KEPT_LABEL: Record<NonNullable<ComparisonRow["keptAs"]>, string> = {
+  org_override: "Kept: edited by your team",
+  analyst: "Kept: confirmed with the payer",
+};
 
 const OUTCOME_STYLE: Record<ComparisonRow["outcome"], string> = {
   match: "bg-emerald-50 text-emerald-700",
@@ -710,6 +725,7 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
   const [uploadId, setUploadId] = useState<string | null>(null);
   // decision per row index: "source" | "org"
   const [picks, setPicks] = useState<Record<number, "source" | "org">>({});
+  const keptCount = rows?.filter((r) => r.keptAs).length ?? 0;
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -757,6 +773,7 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
     try {
       const decisions = rows
         .map((r, i) => {
+          if (r.keptAs) return null;
           const pick = picks[i] ?? (r.sourceValue ? "source" : "org");
           const chosen = pick === "source" ? r.sourceValue : r.orgValue;
           if (!chosen) return null;
@@ -765,11 +782,17 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
             state: r.state,
             cptCode: r.cptCode,
             attribute: r.attribute,
+            // Pallio's rule is kept as a copy that follows the library.
+            use: pick === "source" ? "library" : "upload",
             coverageStatus: chosen.coverageStatus,
             ruleValue: chosen.ruleValue,
           };
         })
         .filter(Boolean);
+      if (decisions.length === 0) {
+        setMsg("Nothing to merge: your team already decided every rule in this file.");
+        return;
+      }
       const res = await fetch("/api/rulebook/merge", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -777,7 +800,15 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
       });
       const d = await res.json();
       if (!d.success) throw new Error(d.error ?? "Merge failed");
-      setMsg(`Merged ${d.data.merged} rows into your rulebook.`);
+      const { merged, kept } = d.data as { merged: number; kept: number };
+      // The page never sends the cells it showed as kept; the server counts any it met itself.
+      const left = keptCount + kept;
+      setMsg(
+        `Merged ${merged} rule${merged === 1 ? "" : "s"} into your rulebook.` +
+          (left > 0
+            ? ` Left ${left} unchanged that your team had edited or confirmed with the payer; edit ${left === 1 ? "it" : "them"} in the rulebook below.`
+            : ""),
+      );
       setRows(null);
       setUploadId(null);
       // Path B completion also counts as onboarding's rulebook step done.
@@ -830,9 +861,10 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-slate-600">
                 {rows.length} cells to reconcile
+                {keptCount > 0 && ` · ${keptCount} already decided by your team, kept as they are`}
               </p>
-              <Button onClick={applyDecisions} loading={busy}>
-                Apply {rows.length} decisions
+              <Button onClick={applyDecisions} loading={busy} disabled={rows.length === keptCount}>
+                Apply {rows.length - keptCount} decisions
               </Button>
             </div>
             <div className="overflow-x-auto border border-slate-200 rounded">
@@ -864,19 +896,23 @@ function PathBUpload({ onMerged }: { onMerged: () => void }) {
                           : <span className="text-slate-400">—</span>}
                       </td>
                       <td className="px-2 py-1.5">
-                        <select
-                          value={picks[i] ?? (r.sourceValue ? "source" : "org")}
-                          onChange={(e) =>
-                            setPicks((p) => ({
-                              ...p,
-                              [i]: e.target.value as "source" | "org",
-                            }))
-                          }
-                          className="border border-slate-300 rounded px-1 py-0.5 text-xs bg-white"
-                        >
-                          {r.orgValue && <option value="org">Keep mine</option>}
-                          {r.sourceValue && <option value="source">Use Pallio</option>}
-                        </select>
+                        {r.keptAs ? (
+                          <span className="text-slate-600">{KEPT_LABEL[r.keptAs]}</span>
+                        ) : (
+                          <select
+                            value={picks[i] ?? (r.sourceValue ? "source" : "org")}
+                            onChange={(e) =>
+                              setPicks((p) => ({
+                                ...p,
+                                [i]: e.target.value as "source" | "org",
+                              }))
+                            }
+                            className="border border-slate-300 rounded px-1 py-0.5 text-xs bg-white"
+                          >
+                            {r.orgValue && <option value="org">Keep mine</option>}
+                            {r.sourceValue && <option value="source">Use Pallio</option>}
+                          </select>
+                        )}
                       </td>
                     </tr>
                   ))}

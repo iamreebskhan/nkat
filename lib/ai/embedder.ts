@@ -73,6 +73,34 @@ export async function embed(text: string, opts: EmbedOptions = {}): Promise<numb
   return vec;
 }
 
+/**
+ * Embeds one document's chunks, in order, for the document index, and stops
+ * calling OpenAI once a chunk has failed: that chunk and every one after it
+ * get null, are stored without a vector, and are still found by the word
+ * search.
+ *
+ * Each call already retried four times. With the account out of credit
+ * (4 Nov 2026) every chunk of a document sat through the same retries, six
+ * seconds or more each, so a long document ran past the request's time limit
+ * before it was stored. A failure that outlasts the retries will not clear
+ * by the next chunk.
+ */
+export function documentChunkEmbedder(label: string): (text: string, index: number, total: number) => Promise<number[] | null> {
+  let stopped = false;
+  return async (text, index, total) => {
+    if (stopped) return null;
+    try {
+      return await embed(text);
+    } catch (err) {
+      stopped = true;
+      console.warn(
+        `embed: stopped at chunk ${index + 1} of ${total} for ${label}; it and the rest are stored for word search only — ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  };
+}
+
 /** Batch embedder — single API round-trip per call. Useful at index time. */
 export async function embedBatch(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];

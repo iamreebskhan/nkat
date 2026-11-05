@@ -153,7 +153,11 @@ export interface ComparisonRow {
   payerId: string | null;
   state: string;
   cptCode: string;
-  attribute: RulebookAttribute;
+  /**
+   * The library's name for the attribute ('prior_auth_required', not the
+   * file's 'prior_auth'): the name the rulebook stores and the lookup reads.
+   */
+  attribute: string;
   /** What the org's uploaded doc said (null when missing). */
   orgValue: { coverageStatus: CoverageStatus; ruleValue: Record<string, unknown> } | null;
   /** What the source library says (null when no rule exists). */
@@ -164,4 +168,25 @@ export interface ComparisonRow {
     sourcePayerRuleId: string | null;
   } | null;
   outcome: ComparisonOutcome;
+  /**
+   * Set when someone at the practice already decided this cell in the
+   * rulebook: edited it by hand ('org_override') or confirmed it with the
+   * payer ('analyst'). A merge leaves those cells as they are.
+   */
+  keptAs?: "org_override" | "analyst";
+}
+
+/**
+ * One cell of a merge: which side the practice took. "library" keeps
+ * Pallio's rule as a library copy, which follows the library; "upload" keeps
+ * the practice's own value. Callers that send no `use` meant "upload".
+ */
+export interface MergeDecision {
+  payerId: string | null;
+  state: string;
+  cptCode: string;
+  attribute: string;
+  use?: "library" | "upload";
+  coverageStatus: CoverageStatus;
+  ruleValue: Record<string, unknown>;
 }
