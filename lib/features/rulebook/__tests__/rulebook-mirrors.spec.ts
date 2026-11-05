@@ -132,6 +132,18 @@ describe("generateRulebook — copies the rule that answers each key today", () 
     expect(libraryRead().sql).not.toMatch(/AND pr\.expiration_date IS NULL\s*$/m);
   });
 
+  it("rebuilds only the library copies: a person's rows stay and their cells get no copy", async () => {
+    await generate();
+
+    const wipe = calls.find((c) => c.sql.includes("DELETE FROM org_rulebook_row"))!;
+    expect(wipe.sql).toMatch(/WHERE rulebook_id = ¶::uuid\s*AND origin = 'source'\s*$/);
+    const insert = calls.find((c) => c.sql.includes("INSERT INTO org_rulebook_row"))!;
+    expect(insert.sql).toMatch(/WHERE NOT EXISTS \(\s*SELECT 1 FROM org_rulebook_row r\s*WHERE r\.rulebook_id = ¶::uuid/);
+    // A rulebook that holds an upload stays "reconciled", not "generated".
+    const rb = calls.find((c) => c.sql.includes("INSERT INTO org_rulebook ("))!;
+    expect(rb.sql).toMatch(/origin = CASE WHEN org_rulebook\.origin = 'generated' THEN 'generated' ELSE 'merged' END/);
+  });
+
   it("the day follows the practice's own zone, here Honolulu's", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-05T09:30:00Z")); // 23:30 on 4 Nov in Honolulu

@@ -148,10 +148,14 @@ async function libraryRulesToday(
 /**
  * Path A: build a fresh rulebook from the org's onboarding inputs.
  *
- * Wholesale-replace strategy: drop the existing rulebook (if any) and
- * insert a new one + its rows. Idempotent — calling twice with the
- * same inputs produces the same rows. The version snapshot table
- * keeps history.
+ * Rebuilds the library copies (origin 'source') and keeps every row a
+ * person decided: an edit, an uploaded row, an analyst's payer call. Those
+ * cells get no copy. Idempotent — calling twice with the same inputs
+ * produces the same rows.
+ *
+ * It used to delete every row first. "Re-generate from sources" asked
+ * nothing and kept no history (org_rulebook_version is never written), so
+ * one click threw away a practice's edits, uploads and payer calls.
  */
 export async function generateRulebook(args: {
   orgId: string;
@@ -176,7 +180,9 @@ export async function generateRulebook(args: {
         ${byUserId}::uuid, 1
       )
       ON CONFLICT (org_id) DO UPDATE SET
-        origin = 'generated',
+        -- A rulebook that holds an upload keeps holding it, rebuilt around
+        -- it: still reconciled against the library, not built from it.
+        origin = CASE WHEN org_rulebook.origin = 'generated' THEN 'generated' ELSE 'merged' END,
         source_state_codes = EXCLUDED.source_state_codes,
         source_payer_ids = EXCLUDED.source_payer_ids,
         source_cpt_codes = EXCLUDED.source_cpt_codes,
@@ -188,9 +194,12 @@ export async function generateRulebook(args: {
     `;
     const rulebook = rb[0]!;
 
-    // Drop existing rows; we re-insert from the source.
+    // Drop the library copies; we re-insert them from the source. A
+    // person's rows stay, wherever they are.
     await tx.$executeRaw`
-      DELETE FROM org_rulebook_row WHERE rulebook_id = ${rulebook.id}::uuid
+      DELETE FROM org_rulebook_row
+       WHERE rulebook_id = ${rulebook.id}::uuid
+         AND origin = 'source'
     `;
 
     // Build the cartesian: every (payer, state, cpt) the org cares
@@ -284,6 +293,13 @@ export async function generateRulebook(args: {
           payer_id, state, cpt_code, attribute, rule_value,
           coverage_status, origin, confidence,
           source_payer_rule_id, source_quote
+        )
+        -- A cell a person decided keeps their row and gets no copy.
+        WHERE NOT EXISTS (
+          SELECT 1 FROM org_rulebook_row r
+           WHERE r.rulebook_id = ${rulebook.id}::uuid
+             AND r.payer_id = t.payer_id::uuid
+             AND r.state = t.state AND r.cpt_code = t.cpt_code AND r.attribute = t.attribute
         )
       `;
     }
@@ -382,6 +398,12 @@ async function readRulebook(args: {
  * with the row as stored, so an edit that leaves the coverage as it was (a
  * note, or a coverage changed and changed back before saving) keeps the
  * value as sent.
+ *
+ * An edited payer call is the practice's own rule from then on, as the page
+ * already shows it ("Your org"): it loses the attestation's expiry and its
+ * link to the attestation (both mean something only on origin 'analyst',
+ * migration 0064). It kept both: the lookup stopped using the edit on the
+ * day the payer call expired, and voiding the attestation deleted it.
  */
 export async function applyEdits(args: {
   orgId: string;
@@ -401,6 +423,8 @@ export async function applyEdits(args: {
           source_quote = CASE WHEN coverage_status = ${e.coverageStatus} THEN source_quote END,
           coverage_status = ${e.coverageStatus},
           origin = 'org_override',
+          expires_at = NULL,
+          source_attestation_id = NULL,
           last_edited_by_user_id = ${args.byUserId}::uuid,
           last_edited_at = now(),
           updated_at = now()

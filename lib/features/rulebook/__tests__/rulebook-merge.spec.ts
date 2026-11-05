@@ -237,4 +237,12 @@ describe("applyEdits — a new coverage drops the wording of the old one", () =>
     expect(edit.values).toContain(JSON.stringify(libraryValue));
     expect(edit.values).toContain(JSON.stringify({ notes: "Confirmed on the provider line" }));
   });
+
+  it("makes an edited payer call the practice's own: no expiry, no link to the attestation", async () => {
+    await applyEdits({ orgId: ORG, byUserId: "u-1", edits: [{ rowId: "row-1", coverageStatus: "covered", ruleValue: {} }] });
+
+    const edit = calls.find((c) => c.sql.includes("UPDATE org_rulebook_row SET"))!;
+    // It kept both: the lookup dropped the edit when the call expired, and a void deleted it.
+    expect(edit.sql).toMatch(/origin = 'org_override',\s*expires_at = NULL,\s*source_attestation_id = NULL,/);
+  });
 });

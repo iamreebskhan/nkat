@@ -158,9 +158,16 @@ export default function RulebookPage() {
         setError(data.error ?? "Generation failed.");
         return;
       }
-      setRb(data.data.rulebook);
+      const built: RulebookView = data.data.rulebook;
+      setRb(built);
       setEdits({});
-      setInfo(`Generated ${data.data.rulebook.rows.length} rules from sources.`);
+      // Generation keeps every rule a person decided and rebuilds the rest.
+      const kept = built.rows.filter((r) => r.origin !== "source").length;
+      setInfo(
+        kept > 0
+          ? `Rebuilt ${built.rows.length - kept} rules from Pallio's library. Kept the ${kept} your team had edited, uploaded or confirmed with the payer.`
+          : `Generated ${built.rows.length} rules from sources.`,
+      );
       // The rulebook now exists — record onboarding completion (this endpoint
       // previously had no caller, so rulebook_complete could never flip).
       void fetch("/api/onboarding/finalize", { method: "POST" }).catch(() => {});
