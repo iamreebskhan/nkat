@@ -12,6 +12,7 @@ import { TextInput } from "@/components/forms/field";
 import { Button } from "@/components/ui/button";
 import { alertText, type EscalationAlertView } from "@/lib/features/care-coordination/care-coordination.types";
 import { ESCALATION_MEASURE_INFO } from "@/lib/features/care-plans/care-plan.types";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 import { TaskForm } from "./tasks";
 
@@ -46,15 +47,27 @@ export function AlertsBanner({
   const [tasking, setTasking] = useState<EscalationAlertView | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // The open alerts could not be read. The banner used to stay away, which on a
+  // chart reads as "nothing is waiting".
+  const [loadFailed, setLoadFailed] = useState(false);
+  // Raised on the practice's clock.
+  const atPractice = usePracticeTime();
 
   useEffect(() => {
     let abandoned = false;
     fetch(`/api/patients/${patientId}/alerts?status=open`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (!abandoned && d.success) setAlerts(d.data.rows);
+      .then(async (r) => ({ status: r.status, d: await r.json() }))
+      .then(({ status, d }) => {
+        if (abandoned) return;
+        if (d.success) {
+          setAlerts(d.data.rows);
+          setLoadFailed(false);
+          // A refusal is not a failure: alerts are shown to whoever may read them.
+        } else setLoadFailed(status !== 403);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!abandoned) setLoadFailed(true);
+      });
     return () => {
       abandoned = true;
     };
@@ -82,6 +95,14 @@ export function AlertsBanner({
     }
   }
 
+  if (loadFailed && alerts.length === 0) {
+    return (
+      <p role="alert" className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+        This patient&apos;s escalation alerts could not be loaded, so any that are open are not shown. Reload the page
+        to try again.
+      </p>
+    );
+  }
   if (alerts.length === 0) return null;
   return (
     <div role="region" aria-label="Escalation alerts" className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-950">
@@ -107,7 +128,7 @@ export function AlertsBanner({
                       )
                     </>
                   )}{" "}
-                  · {new Date(a.raisedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                  · {atPractice(a.raisedAt)}
                   {a.notifiedName ? ` · ${a.notifiedName} was told` : " · no primary NP to tell"}
                 </span>
               </span>

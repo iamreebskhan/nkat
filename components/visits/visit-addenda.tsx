@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 interface AddendumRow {
   id: string;
@@ -24,18 +25,24 @@ interface AddendumRow {
 export function VisitAddenda({ visitId, canSign }: { visitId: string; canSign: boolean }) {
   const [rows, setRows] = useState<AddendumRow[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // Why the addenda could not be read. A failed load used to read "No addenda."
+  // under a signed note that has some.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Signed on the practice's clock, as the note's own attestation prints it.
+  const atPractice = usePracticeTime();
 
   useEffect(() => {
     let abandoned = false;
     (async () => {
       const d = await fetch(`/api/visits/${visitId}/addenda`)
         .then((r) => r.json())
-        .catch(() => null);
+        .catch(() => ({ success: false, error: "Network error: the addenda could not be loaded." }));
       if (abandoned) return;
       if (d?.success) setRows(d.data.addenda ?? []);
+      else setLoadError(`${d?.error ?? "The addenda could not be loaded."} Reload the page to try again.`);
       setLoaded(true);
     })();
     return () => {
@@ -78,6 +85,10 @@ export function VisitAddenda({ visitId, canSign }: { visitId: string; canSign: b
       <CardContent className="space-y-3 text-sm">
         {!loaded ? (
           <p className="text-slate-500">Loading…</p>
+        ) : loadError ? (
+          <p role="alert" className="text-red-700">
+            {loadError}
+          </p>
         ) : rows.length === 0 ? (
           <p className="text-slate-500">No addenda.</p>
         ) : (
@@ -87,7 +98,7 @@ export function VisitAddenda({ visitId, canSign }: { visitId: string; canSign: b
                 <p className="text-xs text-slate-500">
                   {a.authorName ?? "Unknown author"}
                   {a.authorCredential ? `, ${a.authorCredential}` : ""} ·{" "}
-                  {new Date(a.signedAt).toLocaleString()}
+                  {atPractice(a.signedAt)}
                 </p>
                 <p className="mt-1 whitespace-pre-wrap text-slate-800">{a.body}</p>
               </li>

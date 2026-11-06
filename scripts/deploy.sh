@@ -619,11 +619,12 @@ SQL
                    WHERE effective_date <= CURRENT_DATE - o
                      AND (expiration_date IS NULL OR expiration_date > CURRENT_DATE - o)
                    GROUP BY 1,2,3,4 HAVING count(*) > 1) x) AS n
-          FROM (VALUES (0),(30),(90),(180),(365),(730)) t(o)) y" | tr -d '[:space:]')"
+          FROM (VALUES (0),(30),(90),(180),(365),(730),(-60),(-365)) t(o)) y" | tr -d '[:space:]')"
     if [ "$DUPES" != "0" ]; then
       die "$DUPES (payer, state, code, attribute) key(s) serve MORE THAN ONE rule at some date of service. Lookups on those keys return whichever row comes back first. Restore: sudo -u postgres pg_restore -d $PG_DB --clean --if-exists '${DUMP:-<backup>}'"
     fi
-    info "rule-library invariant OK — one rule served per key, today and at 30/90/180/365/730 days back"
+    # Ahead too: a rule announced for a later date (the 2027 fee schedule from 1 January) must not overlap the one it replaces.
+    info "rule-library invariant OK — one rule served per key, today, at 30/90/180/365/730 days back and 60/365 days ahead"
   fi
 fi
 

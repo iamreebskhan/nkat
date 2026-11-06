@@ -419,20 +419,20 @@ describe("scheduleVisit", () => {
 
   it("refuses a slug only the other org has, and books nothing", async () => {
     const before = visitCount();
-    const err = await scheduleVisit({ orgId: ORG, payload: booking({ visitType: "other_org_only" }) }).catch((e: unknown) => e);
+    const err = await scheduleVisit({ orgId: ORG, actorUserId: null, payload: booking({ visitType: "other_org_only" }) }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ValidationError);
     expect((err as Error).message).toBe('"other_org_only" is not one of your visit types.');
     expect(visitCount()).toBe(before);
   });
 
   it("takes this org's telehealth flag for a slug both orgs have", async () => {
-    const r = await scheduleVisit({ orgId: ORG, payload: booking({ visitType: "video_visit" }) });
+    const r = await scheduleVisit({ orgId: ORG, actorUserId: null, payload: booking({ visitType: "video_visit" }) });
     expect(rowOf("visit", r.id)).toMatchObject({ is_telehealth: true, telehealth_modality: "audio_video" });
   });
 
   it("refuses another org's patient with a 422, and books nothing", async () => {
     const before = visitCount();
-    const err = await scheduleVisit({ orgId: ORG, payload: booking({ patientId: OTHER_PATIENT }) }).catch((e: unknown) => e);
+    const err = await scheduleVisit({ orgId: ORG, actorUserId: null, payload: booking({ patientId: OTHER_PATIENT }) }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ValidationError);
     expect((err as Error).message).toBe(`Patient ${OTHER_PATIENT} is not one of this organization's patients.`);
     expect(visitCount()).toBe(before);
@@ -440,7 +440,7 @@ describe("scheduleVisit", () => {
 
   it("CONTROL: books this org's patient on this org's type, into this org", async () => {
     const before = visitCount();
-    const r = await scheduleVisit({ orgId: ORG, payload: booking() });
+    const r = await scheduleVisit({ orgId: ORG, actorUserId: null, payload: booking() });
     expect(visitCount()).toBe(before + 1);
     expect(rowOf("visit", r.id)).toMatchObject({
       org_id: ORG, patient_id: PATIENT, clinician_user_id: ME, visit_type: "established_patient_home",

@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 
+import { QrCodeImage } from "@/components/auth/qr-code-image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -156,8 +157,12 @@ export default function SecurityPage() {
           ) : setup ? (
             <div>
               <p className="text-sm text-slate-700 mb-3">
-                Add this secret to your authenticator app, then enter the 6-digit code it shows:
+                Scan this with your authenticator app, then enter the 6-digit code it shows:
               </p>
+              <div className="mb-3">
+                <QrCodeImage text={setup.otpauthUri} label="QR code to add Pallio to your authenticator app" />
+              </div>
+              <p className="text-xs text-slate-500 mb-1">Can&rsquo;t scan? Add this key by hand instead:</p>
               <code className="block font-mono text-sm bg-slate-100 px-3 py-2 rounded mb-2 break-all">
                 {setup.secretBase32}
               </code>

@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { authGapOn } from "@/lib/features/billing/prior-auth";
 import { orgInstant, orgLocalInput } from "@/lib/features/org/org-date";
+import { fetchAllPatients } from "@/lib/features/patients/patient-picker";
 import { loadClinicianOptions } from "@/lib/features/schedule/clinician-options";
 import { usePracticeZone } from "@/lib/features/schedule/use-practice-zone";
 import { hintDayLabel, visitTypeHistoryWarning } from "@/lib/features/visits/visit-pure";
@@ -68,6 +69,7 @@ export function NewVisitComposer({
   // The time typed is on the practice's clock, wherever the person typing is.
   const zone = usePracticeZone();
   const [patients, setPatients] = useState<PatientOption[]>([]);
+  const [patientsError, setPatientsError] = useState<string | null>(null);
   const [members, setMembers] = useState<MemberOption[]>([]);
   // The org's own types, not the five built-in coding bands (client
   // walkthrough 02:30 — "agar koi visit type ho raha hai jo hum ne add karna hai").
@@ -111,13 +113,20 @@ export function NewVisitComposer({
   // would otherwise re-run the effect, and its fetches, on every one.
   const lockedPatientId = lockedPatient?.id;
   useEffect(() => {
+    // Every patient under care, page by page: one page of 200 left the rest
+    // unbookable. Not needed when the patient is fixed. A list that could not
+    // be read says so under the field rather than offering nobody.
+    if (!lockedPatientId) {
+      fetchAllPatients()
+        .then((rows) => {
+          setPatients(rows);
+          setPatientsError(null);
+        })
+        .catch((e: unknown) =>
+          setPatientsError(e instanceof Error ? e.message : "The patient list could not be loaded."),
+        );
+    }
     void Promise.all([
-      // 200 is the API's max limit — 500 was rejected with a 400, leaving the
-      // patient dropdown empty and the composer unusable. Not needed when the
-      // patient is fixed.
-      lockedPatientId
-        ? Promise.resolve({ success: false })
-        : fetch("/api/patients?limit=200").then((r) => r.json()),
       // active=1: scheduleVisit refuses a clinician who is not an active
       // member of this org, so the picker offers exactly who the server will
       // take. Before either existed, a visit could be assigned to a member who
@@ -126,8 +135,7 @@ export function NewVisitComposer({
       // roster — see loadClinicianOptions.
       loadClinicianOptions(),
       fetch("/api/settings/visit-types").then((r) => r.json()),
-    ]).then(([p, opts, t]) => {
-      if (p.success) setPatients(p.data?.rows ?? []);
+    ]).then(([opts, t]) => {
       setMembers(opts);
       const preset = defaultClinicianUserId && opts.find((m) => m.userId === defaultClinicianUserId);
       if (preset) setForm((f) => ({ ...f, clinicianUserId: preset.userId }));
@@ -331,6 +339,11 @@ export function NewVisitComposer({
                     <option key={p.id} value={p.id}>{p.firstName} {p.lastName}</option>
                   ))}
                 </select>
+                {patientsError && (
+                  <p role="alert" className="mt-1 text-xs text-red-700">
+                    {patientsError} Close the form and open it again to retry.
+                  </p>
+                )}
               </Field>
             )}
             <Field label="Clinician" required>

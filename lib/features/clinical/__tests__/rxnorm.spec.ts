@@ -93,6 +93,7 @@ describe("the search", () => {
         { rxcui: "314076", name: "lisinopril 10 MG Oral Tablet" },
       ],
       unavailable: false,
+      more: 0,
     });
   });
 
@@ -106,6 +107,7 @@ describe("the search", () => {
     await expect(searchRxnorm("lisinopril 10 mg tablet", "medication")).resolves.toEqual({
       rows: [{ rxcui: "314076", name: "lisinopril 10 MG Oral Tablet" }],
       unavailable: false,
+      more: 0,
     });
   });
 
@@ -115,7 +117,7 @@ describe("the search", () => {
     expect(none.rows.map((c) => c.rxcui)).toEqual(["29046", "314076"]);
     answer = (url) => (url.includes("/properties.json") ? Promise.reject(new Error("timed out")) : json(url.includes("approximateTerm") ? NEAR : DRUGS));
     const failed = await searchRxnorm("lisinopril", "medication");
-    expect(failed).toEqual({ rows: [{ rxcui: "29046", name: "lisinopril" }, { rxcui: "314076", name: "lisinopril 10 MG Oral Tablet" }], unavailable: false });
+    expect(failed).toEqual({ rows: [{ rxcui: "29046", name: "lisinopril" }, { rxcui: "314076", name: "lisinopril 10 MG Oral Tablet" }], unavailable: false, more: 0 });
   });
 
   it("names at most five concepts a search, within RxNav's limit of 20 requests a second", async () => {
@@ -147,13 +149,42 @@ describe("the search", () => {
       url.includes("approximateTerm")
         ? Promise.resolve({ ok: true, json: () => Promise.resolve(NEAR) } as Response)
         : Promise.reject(new Error("timed out"));
-    await expect(searchRxnorm("metoprolol", "medication")).resolves.toEqual({ rows: [{ rxcui: "29046", name: "lisinopril" }], unavailable: false });
+    await expect(searchRxnorm("metoprolol", "medication")).resolves.toEqual({ rows: [{ rxcui: "29046", name: "lisinopril" }], unavailable: false, more: 0 });
+  });
+
+  it("lists every strength after the matches, in order of strength, however many matches there are", async () => {
+    // RxNav's answer for a common drug: more matches than the old cap of 15
+    // held, so the strengths never showed. lisinopril 10 MG Oral Tablet was
+    // the one wanted.
+    const matches = { approximateGroup: { candidate: Array.from({ length: 20 }, (_, i) => ({ rxcui: String(500 + i), name: `match ${i}`, source: "RXNORM" })) } };
+    const mg = ["40", "2.5", "10", "20", "5", "30"];
+    const scd = { drugGroup: { conceptGroup: [{ tty: "SCD", conceptProperties: mg.map((m, i) => ({ rxcui: String(700 + i), name: `lisinopril ${m} MG Oral Tablet` })) }] } };
+    answer = (url) => json(url.includes("approximateTerm") ? matches : url.includes("drugs.json") ? scd : {});
+    const r = await searchRxnorm("lisinopril", "medication");
+    expect(r.rows).toHaveLength(15 + 6);
+    expect(r.rows.slice(15).map((c) => c.name)).toEqual([
+      "lisinopril 2.5 MG Oral Tablet",
+      "lisinopril 5 MG Oral Tablet",
+      "lisinopril 10 MG Oral Tablet",
+      "lisinopril 20 MG Oral Tablet",
+      "lisinopril 30 MG Oral Tablet",
+      "lisinopril 40 MG Oral Tablet",
+    ]);
+    expect(r.more).toBe(0);
+  });
+
+  it("counts the strengths past sixty rather than dropping them without a word", async () => {
+    const scd = { drugGroup: { conceptGroup: [{ tty: "SCD", conceptProperties: Array.from({ length: 75 }, (_, i) => ({ rxcui: String(1000 + i), name: `drug ${i + 1} MG Oral Tablet` })) }] } };
+    answer = (url) => json(url.includes("approximateTerm") ? NEAR : url.includes("drugs.json") ? scd : properties["206765"]);
+    const r = await searchRxnorm("drug", "medication");
+    expect(r.rows.filter((c) => c.name.startsWith("drug "))).toHaveLength(60);
+    expect(r.more).toBe(15);
   });
 
   it("CONTROL: says it is unavailable when NLM is down, and never throws", async () => {
     answer = () => Promise.reject(new Error("offline"));
-    await expect(searchRxnorm("lisinopril", "medication")).resolves.toEqual({ rows: [], unavailable: true });
+    await expect(searchRxnorm("lisinopril", "medication")).resolves.toEqual({ rows: [], unavailable: true, more: 0 });
     answer = () => Promise.resolve({ ok: false, status: 503 } as Response);
-    await expect(searchRxnorm("lisinopril", "medication")).resolves.toEqual({ rows: [], unavailable: true });
+    await expect(searchRxnorm("lisinopril", "medication")).resolves.toEqual({ rows: [], unavailable: true, more: 0 });
   });
 });

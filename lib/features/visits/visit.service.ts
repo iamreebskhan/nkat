@@ -16,6 +16,7 @@ import {
   CARE_MANAGEMENT_VISIT_TYPE,
   NEW_PATIENT_LOOKBACK_YEARS,
   VISIT_TYPES,
+  VISIT_WINDOW_LIMIT,
   type DocumentVisit,
   type ScheduleVisit,
   type VisitStatus,
@@ -223,9 +224,17 @@ export async function assertBookable(
   return { isTelehealth, modality };
 }
 
+/**
+ * Book one visit. One visit_create audit row in the same transaction names who
+ * booked it: the clinician the visit is for is on the visit, the person who
+ * put it on the calendar was recorded nowhere (moving a visit was audited,
+ * creating one was not). A failed audit write blocks the booking.
+ */
 export async function scheduleVisit(args: {
   orgId: string;
   payload: ScheduleVisit;
+  /** Who booked it, for the audit row. */
+  actorUserId: string | null;
 }): Promise<{ id: string }> {
   const { orgId, payload } = args;
   return withOrgContext(orgId, async (tx) => {
@@ -248,6 +257,15 @@ export async function scheduleVisit(args: {
       RETURNING id
     `;
     if (!rows[0]) throw new Error("scheduleVisit: insert returned no row.");
+    await writeAudit(tx, {
+      orgId,
+      userId: args.actorUserId,
+      action: "visit_create",
+      targetType: "visit",
+      targetId: rows[0].id,
+      // Never the time, which is a date of service, or the org's own type name.
+      payload: { telehealth: isTelehealth },
+    });
     return { id: rows[0].id };
   });
 }
@@ -468,9 +486,14 @@ export async function listVisits(args: {
   patientId?: string;
   status?: VisitStatus;
   clinicianUserId?: string;
+  /** Visits that start at or after this instant… */
+  from?: string;
+  /** …and before this one. */
+  to?: string;
   limit?: number;
 }): Promise<VisitView[]> {
-  const limit = Math.min(200, Math.max(1, args.limit ?? 50));
+  const max = args.from || args.to ? VISIT_WINDOW_LIMIT : 200;
+  const limit = Math.min(max, Math.max(1, args.limit ?? 50));
   return withOrgContext(args.orgId, async (tx) => {
     // Filter pattern: parameterize each filter, NULL-out the unused ones.
     const rows = await tx.$queryRaw<VisitRow[]>`
@@ -502,6 +525,8 @@ export async function listVisits(args: {
         AND (${args.patientId ?? null}::uuid IS NULL OR v.patient_id = ${args.patientId ?? null}::uuid)
         AND (${args.status ?? null}::text IS NULL OR v.status = ${args.status ?? null})
         AND (${args.clinicianUserId ?? null}::uuid IS NULL OR v.clinician_user_id = ${args.clinicianUserId ?? null}::uuid)
+        AND (${args.from ?? null}::timestamptz IS NULL OR COALESCE(v.start_time, v.scheduled_start) >= ${args.from ?? null}::timestamptz)
+        AND (${args.to ?? null}::timestamptz IS NULL OR COALESCE(v.start_time, v.scheduled_start) < ${args.to ?? null}::timestamptz)
       ORDER BY COALESCE(v.start_time, v.scheduled_start, v.created_at) DESC
       LIMIT ${limit}
     `;

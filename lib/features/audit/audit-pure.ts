@@ -463,6 +463,8 @@ export function summarizeAuditPayload(
         visitId: null,
       };
     }
+    case "visit_create":
+      return { text: join(["Visit booked", p.telehealth === true && "telehealth"]), visitId: onVisit };
     case "visit_reschedule": {
       const fields = knownFields(p.fields, RESCHEDULE_FIELDS);
       return {

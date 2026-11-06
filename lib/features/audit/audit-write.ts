@@ -67,6 +67,11 @@ export type AuditAction =
   | "visit_cancel"
   | "visit_no_show"
   | "visit_reschedule"
+  /**
+   * One visit booked. The row's user is who booked it; the visit names the
+   * clinician it is for. Payload is whether it is telehealth, never the time.
+   */
+  | "visit_create"
   /** A repeating series booked (0126): how many visits and how often, never a date. */
   | "visit_series_create"
   /**

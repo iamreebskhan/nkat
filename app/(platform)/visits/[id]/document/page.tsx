@@ -73,6 +73,7 @@ import {
   intakeTelehealthConsentFor,
   type PatientView,
 } from "@/lib/features/patients/patient.types";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 type Doc = JSONContent | null;
 
@@ -125,6 +126,8 @@ export default function VisitDocumentPage({
   const [nextBooked, setNextBooked] = useState<
     { id: string; scheduledStart: string; clinicianName: string | null } | null
   >(null);
+  // A visit happens, and a note is signed, on the practice's clock.
+  const atPractice = usePracticeTime();
 
   // Local form state
   const [doc, setDoc] = useState<Doc>(null);
@@ -977,7 +980,7 @@ export default function VisitDocumentPage({
           className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-600/30"
         >
           <span>
-            Next visit booked for {new Date(nextBooked.scheduledStart).toLocaleString()}
+            Next visit booked for {atPractice(nextBooked.scheduledStart)}
             {nextBooked.clinicianName && ` with ${nextBooked.clinicianName}`}.
           </span>
           <Link href={`/visits/${nextBooked.id}/document`} className="text-xs font-medium underline">
@@ -1058,7 +1061,7 @@ export default function VisitDocumentPage({
           <span>
             Signed{visit.signerName ? ` by ${visit.signerName}` : ""}
             {visit.signerCredential ? `, ${visit.signerCredential}` : ""}
-            {visit.signedAt ? ` on ${new Date(visit.signedAt).toLocaleString()}` : ""}
+            {visit.signedAt ? ` on ${atPractice(visit.signedAt)}` : ""}
             {/* A Not billed visit type is signed and never submitted (audit R18). */}
             {nonBillable ? ". This visit type isn't billed" : " and submitted for billing"}. The
             documentation is locked — record any change as an addendum below.

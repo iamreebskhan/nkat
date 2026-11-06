@@ -21,6 +21,7 @@
  */
 import type { ReferringResult } from "@/lib/features/billing/claim-referring";
 import { normalizeUnits, unitsOf, type CodeUnits } from "@/lib/features/billing/code-units";
+import { lineModifiers } from "@/lib/features/billing/visit-complexity";
 
 import type { ConnectionSettings } from "./connection-settings";
 import { FILING_INDICATOR_BY_PAYER_TYPE } from "./vendors";
@@ -160,12 +161,13 @@ export function claimTo837(c: ClaimSource, ctx: { settings: ConnectionSettings; 
   const codes = [...new Set(c.codes)];
   const dx = c.icd10.slice(0, 12);
   const pointers = Array.from({ length: Math.min(4, dx.length) }, (_, i) => i + 1);
-  const modifiers = c.modifiers.slice(0, 4).map((m) => m.toUpperCase());
+  const modifiers = c.modifiers.map((m) => m.toUpperCase());
   for (const code of codes) if (!/^[A-Z0-9]{5}$/.test(code)) stops.push(`code ${code} isn't a CPT or HCPCS code (${FIX_AT.bill})`);
   for (const m of modifiers) if (!/^[A-Z0-9]{2}$/.test(m)) stops.push(`modifier ${m} isn't two characters (${FIX_AT.bill})`);
   const lines = codes.map((code) => ({
     code,
-    modifiers,
+    // B1 and B2 on the visit's own line only (2027); the rest on every line, as before.
+    modifiers: lineModifiers(code, modifiers).slice(0, 4),
     units: unitsOf(units, code),
     chargeCents: c.chargeCents[code] ?? 0,
     diagnosisPointers: pointers,

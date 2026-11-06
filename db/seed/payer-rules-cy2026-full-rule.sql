@@ -673,8 +673,15 @@ UPDATE payer_rule pr
 --     above no longer touches. Not the January and April files' rows, which
 --     end on purpose (31 March, 30 June); reopening one would put two rules
 --     on its key from April on.
+--
+--     Back to the July file's own end, 1 January 2027, where the CY 2027 rows
+--     of payer-rules-fee-schedules-full.sql begin. This set NULL: that undid
+--     the July rows' end on these 46 codes on every deploy, both rules then
+--     answered every 2027 date of service, and close-rule-timelines, keeping
+--     the one in force today, shut the 2027 rows: 99350, G0318, 99497 would
+--     have had no Medicare rate from 1 January.
 UPDATE payer_rule pr
-   SET expiration_date = NULL
+   SET expiration_date = DATE '2027-01-01'
   FROM _cy2026_rules r
  WHERE pr.payer_id = (SELECT id FROM payer WHERE name ILIKE '%medicare%'
                        ORDER BY (payer_type = 'medicare_mac') DESC, created_at ASC LIMIT 1)
@@ -684,7 +691,7 @@ UPDATE payer_rule pr
    AND pr.created_by = 'extract:fee-schedules-full-2026-08'
    AND pr.source_doc_id = '5c5772ec-2213-4658-b32e-b5e9332dca0e'::uuid
    AND pr.effective_date > DATE '2026-01-01'
-   AND pr.expiration_date IS NOT NULL;
+   AND (pr.expiration_date IS NULL OR pr.expiration_date < DATE '2027-01-01');
 
 -- 5. One row per rule per state, each keeping its id (step 2).
 --

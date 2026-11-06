@@ -32,15 +32,24 @@
 --
 -- HOW IT DECIDES
 -- The row that answers TODAY is authoritative — exactly one per key,
--- since today is unambiguous. Every other row on that key must stop
--- before the anchor starts:
+-- since today is unambiguous. Every other row on that key that began by
+-- today must stop before the anchor starts:
 --   begins earlier   -> expire at the anchor's effective date, so real
 --                       history still answers for older dates
 --   begins on/after  -> collapse to zero width; the anchor was already in
 --                       force, so it can never have been the answer
 --
+-- A row that begins AFTER today is a rule announced ahead: the CY 2027
+-- Medicare fee schedule, written in November 2026 to answer from 1
+-- January. It takes its key from its first day: the anchor, and any
+-- earlier announced row, end there. This used to treat it as "begins
+-- after the anchor" and collapse it, so every announced rule was dead on
+-- the deploy that wrote it, and from its first day nothing answered. A
+-- row that never answers (it ends where it starts) is not an announced
+-- rule and moves nothing.
+--
 -- Only ever shortens a rule's life, so it cannot resurrect a withdrawn
--- one, and the anchor is untouched, so no key stops answering.
+-- one. The anchor still answers today: it can only end on a later day.
 --
 -- Idempotent. Safe to run on every deploy. Read-only when there is
 -- nothing to close.
@@ -73,13 +82,27 @@ COMMENT ON TABLE rule_timeline_repair_journal IS
 
 CREATE TEMP TABLE _anchor ON COMMIT DROP AS
 SELECT DISTINCT ON (payer_id, state, code, attribute)
-       payer_id, state, code, attribute, id AS anchor_id, effective_date AS anchor_effective
+       payer_id, state, code, attribute, id AS anchor_id, effective_date AS anchor_effective,
+       expiration_date AS anchor_expiration
   FROM payer_rule
  WHERE effective_date <= CURRENT_DATE
    AND (expiration_date IS NULL OR expiration_date > CURRENT_DATE)
  ORDER BY payer_id, state, code, attribute, effective_date DESC, id DESC;
 
+-- Rules announced ahead: they begin after today and answer on some day.
+-- Each answers until the next one on its key begins.
+CREATE TEMP TABLE _announced ON COMMIT DROP AS
+SELECT id, payer_id, state, code, attribute, effective_date, expiration_date,
+       lead(id) OVER w             AS next_id,
+       lead(effective_date) OVER w AS next_start,
+       row_number() OVER w         AS nth
+  FROM payer_rule
+ WHERE effective_date > CURRENT_DATE
+   AND (expiration_date IS NULL OR expiration_date > effective_date)
+WINDOW w AS (PARTITION BY payer_id, state, code, attribute ORDER BY effective_date, id);
+
 CREATE TEMP TABLE _close ON COMMIT DROP AS
+-- Rows that began by today, against the anchor.
 SELECT other.id                                           AS rule_id,
        other.expiration_date                              AS prior_expiration,
        a.anchor_id,
@@ -89,8 +112,24 @@ SELECT other.id                                           AS rule_id,
     ON a.payer_id  = other.payer_id AND a.state = other.state
    AND a.code      = other.code     AND a.attribute = other.attribute
  WHERE other.id <> a.anchor_id
+   AND other.effective_date <= CURRENT_DATE
    AND (other.expiration_date IS NULL
-        OR other.expiration_date > GREATEST(other.effective_date, a.anchor_effective));
+        OR other.expiration_date > GREATEST(other.effective_date, a.anchor_effective))
+UNION ALL
+-- The anchor ends where the first announced rule on its key begins.
+SELECT a.anchor_id, a.anchor_expiration, f.id, f.effective_date
+  FROM _anchor a
+  JOIN _announced f
+    ON f.payer_id  = a.payer_id AND f.state = a.state
+   AND f.code      = a.code     AND f.attribute = a.attribute
+ WHERE f.nth = 1
+   AND (a.anchor_expiration IS NULL OR a.anchor_expiration > f.effective_date)
+UNION ALL
+-- An announced rule ends where the next one on its key begins.
+SELECT f.id, f.expiration_date, f.next_id, f.next_start
+  FROM _announced f
+ WHERE f.next_start IS NOT NULL
+   AND (f.expiration_date IS NULL OR f.expiration_date > f.next_start);
 
 INSERT INTO rule_timeline_repair_journal (rule_id, prior_expiration, new_expiration, anchor_id)
 SELECT rule_id, prior_expiration, new_expiration, anchor_id FROM _close;
@@ -110,7 +149,8 @@ DECLARE
 BEGIN
   SELECT count(*) INTO n_closed FROM _close;
 
-  FOREACH d IN ARRAY ARRAY[0, 30, 60, 90, 180, 270, 365, 545, 730] LOOP
+  -- Past dates of service, and dates ahead, where announced rules answer.
+  FOREACH d IN ARRAY ARRAY[0, 30, 60, 90, 180, 270, 365, 545, 730, -30, -60, -90, -180, -365, -730] LOOP
     SELECT count(*) INTO ambiguous FROM (
       SELECT payer_id, state, code, attribute
         FROM payer_rule
@@ -118,7 +158,7 @@ BEGIN
          AND (expiration_date IS NULL OR expiration_date > CURRENT_DATE - d)
        GROUP BY 1,2,3,4 HAVING count(*) > 1) x;
     IF ambiguous > worst THEN worst := ambiguous; END IF;
-    detail := detail || format('    dos -%s: %s%s', d, ambiguous, chr(10));
+    detail := detail || format('    dos %s: %s%s', CASE WHEN d >= 0 THEN '-' || d ELSE '+' || -d END, ambiguous, chr(10));
   END LOOP;
 
   RAISE NOTICE 'rule timelines: % overlap(s) closed', n_closed;

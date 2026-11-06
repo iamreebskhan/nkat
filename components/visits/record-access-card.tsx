@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { RecordAccessRow } from "@/lib/features/audit/record-access.service";
+import { fetchAllPatients } from "@/lib/features/patients/patient-picker";
 
 interface Filters {
   patientId: string;
@@ -84,17 +85,17 @@ export function RecordAccessCard() {
     // From a timer, so no state is set synchronously in the effect body.
     const t = setTimeout(() => {
       void load(true, NONE);
-      fetch("/api/patients?limit=200")
-        .then((r) => r.json())
-        .then((d) => {
-          if (!d.success) return;
+      // Every patient, page by page: the first page alone left the rest out of
+      // the filter.
+      fetchAllPatients()
+        .then((rows) =>
           setPatients(
-            (d.data?.rows ?? []).map((p: { id: string; firstName?: string; lastName?: string }) => ({
+            rows.map((p) => ({
               id: p.id,
               name: `${p.lastName ?? ""}, ${p.firstName ?? ""}`.replace(/^, |, $/g, "") || p.id,
             })),
-          );
-        })
+          ),
+        )
         .catch(() => {
           /* the filter is still usable without names: it is optional */
         });

@@ -19,6 +19,7 @@ import {
   dateColumnIso,
   isCalendarDay,
   isPracticeTimeZone,
+  orgDateTime,
   orgLocalDate,
   orgLocalMinute,
   orgToday,
@@ -118,6 +119,33 @@ describe("orgLocalMinute — a time as the practice reads it", () => {
 
   it("refuses a missing zone, as orgLocalDate does", () => {
     expect(() => orgLocalMinute(new Date("2026-09-23T00:30:00Z"), "")).toThrow(/time zone/);
+  });
+});
+
+describe("orgDateTime — a time a record carries, on the practice's clock", () => {
+  it.each([
+    // A note signed at 10 am in Ohio. Read in Karachi through toLocaleString it said 8 pm.
+    ["2026-11-05T15:00:00Z", "America/New_York", "Nov 5, 2026, 10:00 AM EST"],
+    // Summer time, and an evening that is already the next day in UTC.
+    ["2026-09-24T01:30:00Z", "America/New_York", "Sep 23, 2026, 9:30 PM EDT"],
+    ["2026-09-23T04:30:00Z", "America/Chicago", "Sep 22, 2026, 11:30 PM CDT"],
+    ["2026-09-23T09:30:00Z", "Pacific/Honolulu", "Sep 22, 2026, 11:30 PM HST"],
+    // The fallback when the practice's clock cannot be read: UTC, saying so.
+    ["2026-11-05T15:00:00Z", "UTC", "Nov 5, 2026, 3:00 PM UTC"],
+  ])("%s in %s reads %s", (at, zone, text) => {
+    expect(orgDateTime(new Date(at), zone)).toBe(text);
+    expect(orgDateTime(at, zone)).toBe(text);
+  });
+
+  it("does not depend on the clock of the machine it runs on", () => {
+    // The same instant reads the same for every viewer: the zone is the practice's.
+    const at = "2026-11-05T15:00:00Z";
+    expect(orgDateTime(at, "America/New_York")).toBe(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(at)));
+  });
+
+  it("refuses a missing zone and an invalid instant", () => {
+    expect(() => orgDateTime("2026-11-05T15:00:00Z", "")).toThrow(/time zone/);
+    expect(() => orgDateTime("not a time", "America/New_York")).toThrow(RangeError);
   });
 });
 

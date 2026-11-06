@@ -4,6 +4,7 @@ import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { QrCodeImage } from "@/components/auth/qr-code-image";
 import { PasswordInput } from "@/components/forms/password-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -145,7 +146,11 @@ export default function LoginPage() {
             <ol className="list-decimal pl-5 space-y-2 text-sm text-slate-700">
               <li>Open an authenticator app (Google Authenticator, Microsoft Authenticator, Authy, 1Password).</li>
               <li>
-                Add an account with this key:
+                Scan this code with the app:
+                <span className="block mt-2">
+                  <QrCodeImage text={enrolSetup.otpauthUri} label="QR code to add Pallio to your authenticator app" />
+                </span>
+                <span className="block text-xs text-slate-500 mt-2">Can&rsquo;t scan? Add an account with this key instead:</span>
                 <code className="block font-mono text-sm bg-slate-100 px-3 py-2 rounded mt-1 break-all">
                   {enrolSetup.secretBase32}
                 </code>

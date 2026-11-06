@@ -24,6 +24,7 @@ import { TipTapEditor } from "@/components/editor/tiptap-editor";
 import { Button } from "@/components/ui/button";
 import { medicationLabel, type MedicationView } from "@/lib/features/clinical/clinical-lists.types";
 import type { CarePlanStructure, EscalationRule, Intervention, MonitoringItem } from "@/lib/features/care-plans/care-plan.types";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 import {
   Card,
   CardContent,
@@ -79,6 +80,8 @@ export default function CarePlanPage({
   const askedVisitId = typeof visitParam === "string" ? visitParam : null;
 
   const [plan, setPlan] = useState<CarePlan | null>(null);
+  // Saves are stamped on the practice's clock.
+  const atPractice = usePracticeTime();
   const [doc, setDoc] = useState<JSONContent | null>(null);
   const [goals, setGoals] = useState("");
   const [symptoms, setSymptoms] = useState<string[]>([]);
@@ -274,7 +277,7 @@ export default function CarePlanPage({
         <h1 className="font-display text-3xl tracking-tight mt-1">Care plan</h1>
         <p className="text-slate-600 mt-1 tabular">
           {plan
-            ? `v${plan.currentVersion} · last saved ${new Date(plan.updatedAt).toLocaleString()}`
+            ? `v${plan.currentVersion} · last saved ${atPractice(plan.updatedAt)}`
             : "No saves yet"}
         </p>
         {plan?.lastUpdatedVisit && (
@@ -576,15 +579,29 @@ interface VersionRow {
  */
 function VersionHistory({ patientId }: { patientId: string }) {
   const [rows, setRows] = useState<VersionRow[] | null>(null);
+  // A history that could not be read says so. It used to vanish, which reads as
+  // a plan never frozen at a signed visit.
+  const [failed, setFailed] = useState<string | null>(null);
   const [openVersion, setOpenVersion] = useState<number | null>(null);
+  const atPractice = usePracticeTime();
 
   useEffect(() => {
     fetch(`/api/care-plans/${patientId}/versions`)
       .then((r) => r.json())
-      .then((d) => setRows(d.success ? (d.data?.rows ?? []) : []))
-      .catch(() => setRows([]));
+      .then((d) => {
+        if (d.success) setRows(d.data?.rows ?? []);
+        else setFailed(`${d.error ?? "The version history could not be loaded."} Reload the page to try again.`);
+      })
+      .catch(() => setFailed("Network error: the version history could not be loaded. Reload the page to try again."));
   }, [patientId]);
 
+  if (failed) {
+    return (
+      <p role="alert" className="mt-6 text-sm text-red-700">
+        {failed}
+      </p>
+    );
+  }
   if (!rows || rows.length === 0) return null;
 
   return (
@@ -609,7 +626,7 @@ function VersionHistory({ patientId }: { patientId: string }) {
                 <span className="text-slate-500 text-xs">
                   {v.snapshotVisitId
                     ? `Frozen when the visit of ${v.snapshotVisitDay ?? "?"} was signed${v.createdByName ? ` by ${v.createdByName}` : ""}`
-                    : new Date(v.createdAt).toLocaleString()}
+                    : atPractice(v.createdAt)}
                 </span>
               </button>
               {openVersion === v.version && (

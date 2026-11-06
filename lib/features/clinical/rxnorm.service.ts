@@ -11,7 +11,15 @@
 
 const RXNAV = "https://rxnav.nlm.nih.gov/REST";
 const TIMEOUT_MS = 5_000;
-const MAX_ROWS = 15;
+/** RxNav's best matches, listed first. */
+const MAX_MATCHES = 15;
+/**
+ * A drug's strengths, listed after the matches in order of strength. One cap of
+ * 15 used to cover both, and the matches filled it, so for a common drug the
+ * strength wanted fell past the cut. Past this many the rest are counted, and
+ * typing the strength finds one.
+ */
+const MAX_STRENGTHS = 60;
 /** RxNav asks for at most 20 requests a second from one address: a search names at most this many. */
 const MAX_NAME_LOOKUPS = 5;
 
@@ -78,7 +86,10 @@ export function clinicalDrugsFrom(a: DrugsAnswer): RxnormConcept[] {
     .flatMap((c) => (c.rxcui && c.name ? [{ rxcui: c.rxcui, name: c.name }] : []));
 }
 
-export async function searchRxnorm(q: string, use: RxnormUse): Promise<{ rows: RxnormConcept[]; unavailable: boolean }> {
+export async function searchRxnorm(
+  q: string,
+  use: RxnormUse,
+): Promise<{ rows: RxnormConcept[]; unavailable: boolean; more: number }> {
   const term = encodeURIComponent(q.trim());
   // Asked apart: the list of strengths is slow for some drugs, and losing it
   // should not lose the match.
@@ -87,13 +98,13 @@ export async function searchRxnorm(q: string, use: RxnormUse): Promise<{ rows: R
     // An allergy is to a substance, not to a strength of a tablet.
     use === "medication" ? ask<DrugsAnswer>(`/drugs.json?name=${term}`) : Promise.resolve<DrugsAnswer>({}),
   ]);
-  if (near.status === "rejected") return { rows: [], unavailable: true };
+  if (near.status === "rejected") return { rows: [], unavailable: true, more: 0 };
   // A match through another source's string is shown by RxNorm's name for it,
   // and left out when there is none.
   let lookups = 0;
   const named = await Promise.all(
     candidatesFrom(near.value)
-      .slice(0, MAX_ROWS)
+      .slice(0, MAX_MATCHES)
       .map(async (c) => {
         if (c.name) return { rxcui: c.rxcui, name: c.name };
         if (++lookups > MAX_NAME_LOOKUPS) return null;
@@ -103,6 +114,13 @@ export async function searchRxnorm(q: string, use: RxnormUse): Promise<{ rows: R
   );
   const first = named.filter((c): c is RxnormConcept => c !== null);
   const known = new Set(first.map((c) => c.rxcui));
-  const strengths = drugs.status === "fulfilled" ? clinicalDrugsFrom(drugs.value) : [];
-  return { rows: [...first, ...strengths.filter((c) => !known.has(c.rxcui))].slice(0, MAX_ROWS), unavailable: false };
+  // By strength as a person reads it: 2.5 mg, 5 mg, 10 mg, 20 mg, not 10 before 2.5.
+  const strengths = (drugs.status === "fulfilled" ? clinicalDrugsFrom(drugs.value) : [])
+    .filter((c) => !known.has(c.rxcui))
+    .sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true, sensitivity: "base" }));
+  return {
+    rows: [...first, ...strengths.slice(0, MAX_STRENGTHS)],
+    unavailable: false,
+    more: Math.max(0, strengths.length - MAX_STRENGTHS),
+  };
 }

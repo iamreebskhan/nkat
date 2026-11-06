@@ -156,6 +156,38 @@ export function orgLocalMinute(at: Date | string, timeZone: string): string {
   return `${day} ${part("hour")}:${part("minute")} ${part("timeZoneName")}`;
 }
 
+/** One date-and-time formatter per zone, as for days above. */
+const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * An instant for a person to read, on the practice's clock with its zone:
+ * "Nov 5, 2026, 10:00 AM EST". For the times a record carries: who signed a
+ * note or an addendum, took down a referral, checked coverage, decided a
+ * denial. Read through toLocaleString they were on the browser's clock, so from
+ * Karachi a note signed in Ohio at 10 am read 8 pm. Throws as orgLocalDate does.
+ */
+export function orgDateTime(at: Date | string, timeZone: string): string {
+  if (typeof timeZone !== "string" || timeZone.trim() === "") {
+    throw new TypeError("orgDateTime needs the org's time zone; without one Intl would use the browser's.");
+  }
+  const instant = at instanceof Date ? at : new Date(at);
+  if (Number.isNaN(instant.getTime())) throw new RangeError(`Invalid instant: ${String(at)}`);
+  let f = dateTimeFormatters.get(timeZone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    });
+    dateTimeFormatters.set(timeZone, f);
+  }
+  return f.format(instant);
+}
+
 /** One wall-clock formatter per zone, seconds included, for the conversions below. */
 const clockFormatters = new Map<string, Intl.DateTimeFormat>();
 

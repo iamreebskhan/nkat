@@ -152,9 +152,24 @@ async function readPayerRates(
         payerRuleId: r.id,
         rateBasis: typeof r.value.rateBasis === "string" ? r.value.rateBasis : null,
         effectiveDate: r.effective_date,
+        ...modifierRatesOf(r.value.modifierRates),
       },
     ];
   });
+}
+
+/** value.modifierRates (B1 and B2 on Medicare's 2027 visit codes), in cents; nothing when absent. */
+function modifierRatesOf(raw: unknown): Pick<PayerRate, "modifierRates"> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: NonNullable<PayerRate["modifierRates"]> = {};
+  for (const m of ["B1", "B2"] as const) {
+    const v = (raw as Record<string, Record<string, unknown> | undefined>)[m];
+    const rateCents = v ? toCents(v.rate) : null;
+    if (v && rateCents !== null) {
+      out[m] = { rateCents, npPaRateCents: toCents(v.npPaRate), facilityRateCents: toCents(v.facilityRate) };
+    }
+  }
+  return Object.keys(out).length > 0 ? { modifierRates: out } : {};
 }
 
 /**
@@ -197,6 +212,7 @@ async function repriceSuperbill(
       credential: string | null;
       cpt: string[] | null;
       units: CodeUnits | null;
+      mods: string[] | null;
       billed: bigint | number;
       facility: string | null;
     }[]
@@ -204,7 +220,7 @@ async function repriceSuperbill(
     SELECT s.payer_id, to_char(s.date_of_service, 'YYYY-MM-DD') AS dos,
            COALESCE(p.insurance_state, p.state) AS coverage_state,
            s.pricing->>'tier' AS tier, cp.credential,
-           s.cpt_codes AS cpt, s.cpt_units AS units, s.billed_amount_cents AS billed,
+           s.cpt_codes AS cpt, s.cpt_units AS units, s.modifiers AS mods, s.billed_amount_cents AS billed,
            pos.facility_indicator AS facility
       FROM superbill s
       -- The bill's own org's patient and visit: both FKs are id-only, and the
@@ -232,6 +248,7 @@ async function repriceSuperbill(
     facility: c.facility === "facility",
     units: c.units ?? {},
     fees,
+    modifiers: c.mods ?? [],
   });
   const pricing: SuperbillPricing = { tier, lines: priced.lines };
   await tx.$executeRaw`
@@ -943,9 +960,14 @@ export async function updateSuperbill(args: {
 
     // Reprice when what the price depends on changed (audit R33): the codes,
     // their units (0106), the place of service, since a facility is priced at
-    // its own rate, or the plan, whose rates are the price (0120).
+    // its own rate, the plan, whose rates are the price (0120), or the
+    // modifiers, since B1 or B2 prices a 2027 visit at its own rate.
     const repriced =
-      args.patch.cptCodes || args.patch.cptUnits || args.patch.placeOfServiceCode || insuranceChanged.includes("plan")
+      args.patch.cptCodes ||
+      args.patch.cptUnits ||
+      args.patch.placeOfServiceCode ||
+      args.patch.modifiers ||
+      insuranceChanged.includes("plan")
         ? await repriceSuperbill(tx, args.orgId, args.id)
         : null;
 

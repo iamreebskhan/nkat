@@ -20,14 +20,23 @@ import {
 import {
   ScheduleVisitSchema,
   VISIT_STATUSES,
+  VISIT_WINDOW_LIMIT,
 } from "@/lib/features/visits/visit.types";
 
-const ListSchema = z.object({
-  patientId: z.string().uuid().optional(),
-  clinicianUserId: z.string().uuid().optional(),
-  status: z.enum(VISIT_STATUSES).optional(),
-  limit: z.coerce.number().int().min(1).max(200).optional(),
-});
+const ListSchema = z
+  .object({
+    patientId: z.string().uuid().optional(),
+    clinicianUserId: z.string().uuid().optional(),
+    status: z.enum(VISIT_STATUSES).optional(),
+    // A window: the schedule board's week, the route sheet's day. Read whole, up
+    // to VISIT_WINDOW_LIMIT; without one the list is the newest 200.
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+    limit: z.coerce.number().int().min(1).max(VISIT_WINDOW_LIMIT).optional(),
+  })
+  .refine((q) => !q.from || !q.to || new Date(q.from) < new Date(q.to), {
+    message: "The window's end must be after its start.",
+  });
 
 /**
  * How many visits match the list's filters — the size of the whole list, not
@@ -46,6 +55,8 @@ async function countVisits(args: {
   patientId?: string;
   status?: (typeof VISIT_STATUSES)[number];
   clinicianUserId?: string;
+  from?: string;
+  to?: string;
 }): Promise<number> {
   return withOrgContext(args.orgId, async (tx) => {
     const rows = await tx.$queryRaw<{ n: bigint }[]>`
@@ -55,6 +66,8 @@ async function countVisits(args: {
          AND (${args.patientId ?? null}::uuid IS NULL OR v.patient_id = ${args.patientId ?? null}::uuid)
          AND (${args.status ?? null}::text IS NULL OR v.status = ${args.status ?? null})
          AND (${args.clinicianUserId ?? null}::uuid IS NULL OR v.clinician_user_id = ${args.clinicianUserId ?? null}::uuid)
+         AND (${args.from ?? null}::timestamptz IS NULL OR COALESCE(v.start_time, v.scheduled_start) >= ${args.from ?? null}::timestamptz)
+         AND (${args.to ?? null}::timestamptz IS NULL OR COALESCE(v.start_time, v.scheduled_start) < ${args.to ?? null}::timestamptz)
     `;
     return Number(rows[0]?.n ?? 0);
   });
@@ -97,6 +110,8 @@ export async function GET(req: NextRequest): Promise<Response> {
     patientId: params.patientId,
     status: params.status,
     clinicianUserId,
+    from: params.from,
+    to: params.to,
     limit: params.limit,
   });
   // The board is who and when, not what was written: a booked visit's note is
@@ -113,6 +128,8 @@ export async function GET(req: NextRequest): Promise<Response> {
     patientId: params.patientId,
     status: params.status,
     clinicianUserId,
+    from: params.from,
+    to: params.to,
   });
   // One chart, opened by someone outside its care team, lists only their own
   // visits, and "on file" has to mean on file: the chart is told how many more
@@ -181,7 +198,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   try {
-    const r = await scheduleVisit({ orgId: session.orgId, payload: body });
+    const r = await scheduleVisit({ orgId: session.orgId, payload: body, actorUserId: session.userId });
     // Fire-and-forget push to Google so the nurse's external calendar
     // reflects the new visit. Failure here doesn't undo the Pallio row.
     const startIso = new Date(body.scheduledStart).toISOString();

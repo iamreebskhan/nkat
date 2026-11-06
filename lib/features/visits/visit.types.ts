@@ -65,6 +65,15 @@ export const VISIT_STATUSES = [
 ] as const;
 export type VisitStatus = (typeof VISIT_STATUSES)[number];
 
+/**
+ * The most a window of the visit list (`from`/`to`) is read in one go. Without
+ * a window the list is the newest 200 visits. The schedule board and the route
+ * sheet asked for that, newest first, so once a practice had more than 200
+ * visits booked ahead (a few repeating series do it) this week's visits fell
+ * off both, and the printed route sheet said there were none.
+ */
+export const VISIT_WINDOW_LIMIT = 1000;
+
 export const TELEHEALTH_MODALITIES = ["audio_video", "audio_only"] as const;
 export type TelehealthModality = (typeof TELEHEALTH_MODALITIES)[number];
 

@@ -22,9 +22,7 @@ import {
   type DocumentKind,
   type DocumentView,
 } from "@/lib/features/patient-documents/patient-document.types";
-
-const when = (iso: string) =>
-  new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 export function DocumentsCard({
   url,
@@ -47,6 +45,8 @@ export function DocumentsCard({
 }) {
   const [docs, setDocs] = useState<DocumentView[] | null>(null);
   const [failed, setFailed] = useState(false);
+  // Filed and removed on the practice's clock.
+  const when = usePracticeTime();
   // Bumped after a change, to read the list again.
   const [version, setVersion] = useState(0);
   const [kind, setKind] = useState<DocumentKind | "">("");

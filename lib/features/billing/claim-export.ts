@@ -14,6 +14,7 @@
  */
 import type { ReferringResult } from "@/lib/features/billing/claim-referring";
 import { formatCodes, normalizeUnits, unitsOf, type CodeUnits } from "@/lib/features/billing/code-units";
+import { lineModifiers } from "@/lib/features/billing/visit-complexity";
 
 export const EXPORTABLE_STATUSES = ["ready_to_submit", "submitted", "denied"] as const;
 
@@ -118,11 +119,12 @@ export function claimRows(c: ClaimForExport): string[][] {
   const codes = [...new Set(c.codes)];
   const dx = c.icd10.slice(0, 12);
   const pointer = "ABCD".slice(0, Math.min(4, dx.length));
-  const mods = c.modifiers.slice(0, 4);
+  // B1 and B2 on the visit's own line only (2027); the rest on every line, as before.
+  const modsFor = (code: string) => lineModifiers(code, c.modifiers).slice(0, 4);
   const a = (x: ExportAddress | null) => [x?.line1 ?? "", x?.line2 ?? "", x?.city ?? "", x?.state ?? "", x?.zip ?? ""];
   return codes.map((code, i) => [
     c.claimRef, c.superbillId, c.visitId, String(i + 1), c.dateOfService, c.placeOfService,
-    code, mods[0] ?? "", mods[1] ?? "", mods[2] ?? "", mods[3] ?? "", String(unitsOf(units, code)),
+    code, modsFor(code)[0] ?? "", modsFor(code)[1] ?? "", modsFor(code)[2] ?? "", modsFor(code)[3] ?? "", String(unitsOf(units, code)),
     dollars(c.chargeCents[code] ?? 0), pointer,
     ...Array.from({ length: 12 }, (_, j) => dx[j] ?? ""),
     c.patient.lastName, c.patient.firstName, c.patient.dob, claimSex(c.patient.sex), ...a(c.patient.address),

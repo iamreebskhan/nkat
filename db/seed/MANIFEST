@@ -201,3 +201,8 @@ payer-rules-aetna-frequency.sql
 # a telehealth visit. Global reference data; its source_document is seeded by
 # payer-rules-denial-attributes-2.sql above.
 payer-rules-documentation-elements.sql
+# The CY 2027 final rule's rules from 1 January 2027 (G2211 to modifiers B1/B2,
+# advance care planning by clinical staff). After payer-rules-cy2026-full-rule.sql,
+# whose G2211 rules it ends at 2027-01-01; its 2027 rates are in
+# payer-rules-fee-schedules-full.sql.
+payer-rules-cy2027-final-rule.sql

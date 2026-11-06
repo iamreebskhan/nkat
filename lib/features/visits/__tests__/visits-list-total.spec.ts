@@ -142,3 +142,30 @@ describe("GET /api/visits — total", () => {
     expect(d.data.total).toBe(0);
   });
 });
+
+describe("GET /api/visits — a window of dates (the schedule's week, the route sheet's day)", () => {
+  const FROM = "2026-11-02T05:00:00.000Z";
+  const TO = "2026-11-09T05:00:00.000Z";
+
+  it("hands the window to the list and to its count, and reads up to 1000 in it", async () => {
+    const d = await body(await GET(req(`?status=scheduled&from=${encodeURIComponent(FROM)}&to=${encodeURIComponent(TO)}&limit=1000`)));
+    expect(d.success).toBe(true);
+    const args = vi.mocked(listVisits).mock.calls[0]![0];
+    expect(args).toMatchObject({ status: "scheduled", from: FROM, to: TO, limit: 1000 });
+    expect(counts[0]!.values).toEqual(expect.arrayContaining([FROM, TO]));
+    expect(counts[0]!.sql).toContain("COALESCE(v.start_time, v.scheduled_start) >=");
+    expect(counts[0]!.sql).toContain("COALESCE(v.start_time, v.scheduled_start) <");
+  });
+
+  it("refuses a window that ends before it starts, and a limit above 1000", async () => {
+    expect((await GET(req(`?from=${encodeURIComponent(TO)}&to=${encodeURIComponent(FROM)}`))).status).toBe(422);
+    expect((await GET(req(`?from=${encodeURIComponent(FROM)}&to=${encodeURIComponent(TO)}&limit=1001`))).status).toBe(422);
+    expect(listVisits).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL: without a window the count binds no dates", async () => {
+    await GET(req("?status=scheduled&limit=200"));
+    expect(vi.mocked(listVisits).mock.calls[0]![0].from).toBeUndefined();
+    expect(counts[0]!.values).not.toContain(FROM);
+  });
+});

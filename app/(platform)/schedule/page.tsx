@@ -27,6 +27,9 @@ import { loadClinicianOptions } from "@/lib/features/schedule/clinician-options"
 import { usePracticeZone } from "@/lib/features/schedule/use-practice-zone";
 import { type VisitView } from "@/lib/features/visits/visit.types";
 
+/** The most visits one week is read with: GET /api/visits's window limit. */
+const WEEK_LIMIT = 1000;
+
 interface MemberOption  { userId: string; email: string; fullName: string | null }
 
 interface ExternalBusy { summary: string; start: string; end: string; userId: string | null }
@@ -44,6 +47,8 @@ export default function SchedulePage() {
   const [timeOff, setTimeOff] = useState<TimeOffEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // How many visits the week holds when more than one load returns.
+  const [capped, setCapped] = useState<number | null>(null);
   const [composing, setComposing] = useState(false);
   const [addingPto, setAddingPto] = useState(false);
   // The board runs on the practice's clock, wherever the person using it is: a
@@ -103,24 +108,36 @@ export default function SchedulePage() {
 
   async function reload() {
     setLoading(true);
+    // A load that worked clears the last one's failure; it used to stay on
+    // screen for good.
+    setError(null);
+    setCapped(null);
     try {
+      // The week's visits, all of them. This asked for the newest 200 booked
+      // visits, which with repeating series booked months ahead left this week
+      // out. The week's days are built on this computer's clock and the columns
+      // place each visit by the practice's day: two days either side cover any
+      // difference between the two clocks.
+      const from = encodeURIComponent(addDays(weekStart, -2).toISOString());
+      const to = encodeURIComponent(addDays(weekEnd, 2).toISOString());
       const [vr, cr] = await Promise.all([
-        fetch("/api/visits?status=scheduled&limit=200").then((r) => r.json()),
+        fetch(`/api/visits?status=scheduled&from=${from}&to=${to}&limit=${WEEK_LIMIT}`).then((r) => r.json()),
         fetch(
           `/api/schedule/context?from=${weekStart.toISOString()}&to=${weekEnd.toISOString()}`,
         ).then((r) => r.json()),
       ]);
       if (!vr.success) {
-        setError(vr.error ?? "Failed to load.");
+        setError(vr.error ?? "The week's visits could not be loaded.");
         return;
       }
       setVisits(vr.data.rows ?? []);
+      setCapped(vr.data.total > (vr.data.rows ?? []).length ? vr.data.total : null);
       if (cr.success) {
         setExternalBusy(cr.data.externalBusy ?? []);
         setTimeOff(cr.data.timeOff ?? []);
       }
     } catch {
-      setError("Network error.");
+      setError("Network error: the week's visits could not be loaded.");
     } finally {
       setLoading(false);
     }
@@ -260,7 +277,20 @@ export default function SchedulePage() {
       )}
 
       {loading && <p className="text-slate-500">Loading…</p>}
-      {error && <p role="alert" className="text-red-700">{error}</p>}
+      {error && (
+        <p role="alert" className="text-red-700">
+          {error} The week is not shown until it loads, so no day reads as free.{" "}
+          <button type="button" className="underline" onClick={() => void reload()}>
+            Try again
+          </button>
+        </p>
+      )}
+      {capped !== null && (
+        <p role="status" className="mb-2 text-sm text-amber-900">
+          {capped} visits are booked in and around this week, more than one load reads ({WEEK_LIMIT}): some
+          may be missing below.
+        </p>
+      )}
 
       {moving && (
         <div
@@ -280,6 +310,7 @@ export default function SchedulePage() {
         </div>
       )}
 
+      {!error && (
       <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
         {days.map((day) => {
           const dayIso = isoDay(day);
@@ -416,6 +447,7 @@ export default function SchedulePage() {
           );
         })}
       </div>
+      )}
     </div>
   );
 }

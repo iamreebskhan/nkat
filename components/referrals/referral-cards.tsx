@@ -25,6 +25,7 @@ import {
   type ReferralView,
   type TriageView,
 } from "@/lib/features/referrals/referral.types";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 export const ACUITY_LABEL = PATIENT_ACUITY_LABEL;
 
@@ -40,9 +41,6 @@ const HOSPICE_LABEL: Record<HospiceEligibility, string> = {
   no: "No",
   unsure: "Unsure",
 };
-
-const when = (iso: string) =>
-  new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -119,6 +117,8 @@ export function ReferralDetailsCard({
   type Form = ReturnType<typeof start>;
   const [editing, setEditing] = useState(false);
   const [f, setF] = useState<Form>(start);
+  // Times on the practice's clock, wherever intake is working from.
+  const when = usePracticeTime();
   const [payers, setPayers] = useState<PayerOption[]>([]);
   const [members, setMembers] = useState<Member[] | null>(null);
   const [issue, setIssue] = useState<{ path: string; message: string } | null>(null);
@@ -366,6 +366,7 @@ export function RequirementsCard({
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const when = usePracticeTime();
 
   const asInput = () => r.requirements.map((i) => ({ id: i.id, label: i.label, done: Boolean(i.doneAt) }));
 
@@ -491,6 +492,7 @@ export function RequirementsCard({
 // ---------------------------------------------------------------------------
 
 function TriageEntry({ t }: { t: TriageView }) {
+  const when = usePracticeTime();
   return (
     <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-2">

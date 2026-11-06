@@ -13,6 +13,11 @@ import {
   unitsOf,
   type CodeUnits,
 } from "@/lib/features/billing/code-units";
+import {
+  VISIT_COMPLEXITY_BASE_CODES,
+  complexityModifier,
+  visitComplexityWarnings,
+} from "@/lib/features/billing/visit-complexity";
 import { providerIdentityWarnings, type NpiSource } from "@/lib/features/team/clinician";
 import {
   ESTABLISHED_PATIENT_HOME_CODES,
@@ -80,6 +85,11 @@ export interface PayerRate {
   rateBasis: string | null;
   /** ISO date the rate took effect. */
   effectiveDate: string;
+  /**
+   * The visit's rates with modifier B1 or B2 (from 2027, Medicare's office and
+   * home visit codes: value.modifierRates). A line priced with one says so.
+   */
+  modifierRates?: Partial<Record<"B1" | "B2", { rateCents: number; npPaRateCents: number | null; facilityRateCents: number | null }>>;
 }
 
 export type PriceSource = "payer_fee_schedule" | "reference_table" | "unrated";
@@ -100,6 +110,8 @@ export interface PricedLine {
   payerRuleId: string | null;
   rateBasis: string | null;
   effectiveDate: string | null;
+  /** The modifier whose rate priced the line (B1 or B2 on a visit code, from 2027). */
+  modifier?: string;
   /**
    * The practice's own fee for ONE unit (0118, Mark Q4 default), when it has
    * one: the line then charges the fee, and rateCents is what the payer is
@@ -160,7 +172,13 @@ export function priceCodes(
   codes: string[],
   tier: ProviderTier,
   payerRates: PayerRate[] = [],
-  opts: { facility?: boolean; units?: CodeUnits | null; fees?: PracticeFee[] } = {},
+  opts: {
+    facility?: boolean;
+    units?: CodeUnits | null;
+    fees?: PracticeFee[];
+    /** The bill's modifiers: B1 or B2 prices the visit line at its own rate (2027). */
+    modifiers?: readonly string[];
+  } = {},
 ): {
   lines: PricedLine[];
   totalCents: number;
@@ -180,21 +198,27 @@ export function priceCodes(
   const feeWithoutRate: string[] = [];
   let totalCents = 0;
   let expectedCents: number | null = 0;
+  // B1 or B2 on the bill prices the visit line at the rate it carries (2027).
+  const complexity = complexityModifier(opts.modifiers ?? []);
   for (const code of new Set(codes)) {
     const units = unitsOf(perCode, code);
     const fee = feeByCode.get(code) ?? null;
     const pr = byCode.get(code);
     let line: Omit<PricedLine, "chargeCents" | "feeCents">;
     if (pr) {
+      const withModifier =
+        complexity && VISIT_COMPLEXITY_BASE_CODES.has(code) ? pr.modifierRates?.[complexity] : undefined;
+      const r = withModifier ?? pr;
       const cents =
-        opts.facility && pr.facilityRateCents !== null
-          ? pr.facilityRateCents
-          : tier === "NP_PA" && pr.npPaRateCents !== null
-            ? pr.npPaRateCents
-            : pr.rateCents;
+        opts.facility && r.facilityRateCents !== null
+          ? r.facilityRateCents
+          : tier === "NP_PA" && r.npPaRateCents !== null
+            ? r.npPaRateCents
+            : r.rateCents;
       line = {
         code, rateCents: cents, units, source: "payer_fee_schedule",
         payerRuleId: pr.payerRuleId, rateBasis: pr.rateBasis, effectiveDate: pr.effectiveDate,
+        ...(withModifier && complexity ? { modifier: complexity } : {}),
       };
     } else {
       const ref = estimateRateCents(code, tier);
@@ -226,7 +250,7 @@ export function describePriceSource(line: PricedLine): string {
   let rate: string;
   if (line.source === "payer_fee_schedule") {
     const basis = line.rateBasis ? (RATE_BASIS_LABEL[line.rateBasis] ?? line.rateBasis) : "fee schedule";
-    rate = `payer rate — ${basis}${line.effectiveDate ? `, effective ${line.effectiveDate}` : ""}`;
+    rate = `payer rate${line.modifier ? ` with modifier ${line.modifier}` : ""} — ${basis}${line.effectiveDate ? `, effective ${line.effectiveDate}` : ""}`;
   } else if (line.source === "reference_table") {
     rate = "Pallio's 2025 Medicare reference table — verify with the payer";
   } else {
@@ -336,6 +360,7 @@ export function buildSuperbill(input: BuildSuperbillInput): DraftSuperbill {
     facility: input.posFacility,
     units: cptUnits,
     fees: input.practiceFees,
+    modifiers: visit.modifiers,
   });
   // A line with the practice's fee is priced, rate or no rate (0118).
   const rated = priced.lines.filter((l) => l.source !== "unrated" || l.feeCents != null);
@@ -379,6 +404,8 @@ export function buildSuperbill(input: BuildSuperbillInput): DraftSuperbill {
   warnings.push(...providerIdentityWarnings(provider));
   // G0318 above Pallio's per-visit cap (0106).
   warnings.push(...unitWarnings(visit.cptCodesAssigned, cptUnits));
+  // G2211 after 2026, B1/B2 before 2027 or with no visit code to go on.
+  warnings.push(...visitComplexityWarnings(visit.cptCodesAssigned, visit.modifiers, visit.dos));
 
   return {
     visitId: visit.id,
@@ -420,6 +447,9 @@ export function savedSuperbillWarnings(sb: {
   billingNpi?: string | null;
   /** Units per code (0106); absent on bills saved before it. */
   cptUnits?: CodeUnits | null;
+  modifiers?: string[] | null;
+  /** 'YYYY-MM-DD', for G2211 and B1/B2 (2027). */
+  dateOfService?: string | null;
 }): string[] {
   const out: string[] = [];
   if (!sb.memberIdSnapshot) out.push(WARN_NO_MEMBER_ID);
@@ -433,6 +463,7 @@ export function savedSuperbillWarnings(sb: {
     }),
   );
   out.push(...unitWarnings(sb.cptCodes ?? [], sb.cptUnits));
+  if (sb.dateOfService) out.push(...visitComplexityWarnings(sb.cptCodes ?? [], sb.modifiers ?? [], sb.dateOfService));
   return out;
 }
 

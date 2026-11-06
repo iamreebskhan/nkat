@@ -341,7 +341,7 @@ describe("scheduleVisit — a telehealth visit type (audit R22)", () => {
 
   it("schedules a flagged type as telehealth even with the box unticked", async () => {
     typeIsTelehealth = true;
-    await scheduleVisit({ orgId: ORG, payload });
+    await scheduleVisit({ orgId: ORG, actorUserId: null, payload });
     expect(inserted()[6]).toBe(true);
     expect(inserted()[7]).toBe("audio_video");
   });
@@ -350,6 +350,7 @@ describe("scheduleVisit — a telehealth visit type (audit R22)", () => {
     typeIsTelehealth = true;
     await scheduleVisit({
       orgId: ORG,
+      actorUserId: null,
       payload: { ...payload, isTelehealth: true, telehealthModality: "audio_only" },
     });
     expect(inserted()[6]).toBe(true);
@@ -358,7 +359,7 @@ describe("scheduleVisit — a telehealth visit type (audit R22)", () => {
 
   it("CONTROL — an in-person type with the box unticked stays in person", async () => {
     typeIsTelehealth = false;
-    await scheduleVisit({ orgId: ORG, payload: { ...payload, visitType: "established_patient_home" } });
+    await scheduleVisit({ orgId: ORG, actorUserId: null, payload: { ...payload, visitType: "established_patient_home" } });
     expect(inserted()[6]).toBe(false);
     expect(inserted()[7]).toBeNull();
   });
@@ -367,6 +368,7 @@ describe("scheduleVisit — a telehealth visit type (audit R22)", () => {
     typeIsTelehealth = false;
     await scheduleVisit({
       orgId: ORG,
+      actorUserId: null,
       payload: { ...payload, visitType: "new_patient_home", isTelehealth: true },
     });
     expect(inserted()[6]).toBe(true);
@@ -374,7 +376,7 @@ describe("scheduleVisit — a telehealth visit type (audit R22)", () => {
 
   it("still refuses a slug that is not one of the org's active types", async () => {
     typeIsTelehealth = null;
-    await expect(scheduleVisit({ orgId: ORG, payload })).rejects.toThrow(
+    await expect(scheduleVisit({ orgId: ORG, actorUserId: null, payload })).rejects.toThrow(
       /not one of your visit types/,
     );
     expect(calls.some((c) => c.sql.includes("INSERT INTO visit"))).toBe(false);

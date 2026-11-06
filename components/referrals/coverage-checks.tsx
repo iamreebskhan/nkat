@@ -25,6 +25,7 @@ import {
   type VerificationResult,
   type VerificationView,
 } from "@/lib/features/referrals/referral.types";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 interface PayerOption {
   id: string;
@@ -39,9 +40,6 @@ export const RESULT_STYLE: Record<VerificationResult, string> = {
   pending: "bg-amber-50 text-amber-900 ring-amber-600/30",
 };
 
-const when = (iso: string) =>
-  new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-
 /** "covered from 2026-01-01, no end date", "covered 2026-01-01 to 2026-12-31", "covered until 2026-12-31". */
 const coveredText = (from: string | null, to: string | null) =>
   from && to ? `covered ${from} to ${to}` : from ? `covered from ${from}, no end date` : `covered until ${to}`;
@@ -53,6 +51,8 @@ function planText(s: EligibilitySummary): string {
 }
 
 export function CoverageCheckList({ checks, emptyText }: { checks: VerificationView[]; emptyText: string }) {
+  // When each check was made, on the practice's clock.
+  const when = usePracticeTime();
   if (checks.length === 0) return <p className="text-sm text-slate-500">{emptyText}</p>;
   return (
     <ul className="divide-y divide-slate-100 text-sm" aria-label="Coverage checks">

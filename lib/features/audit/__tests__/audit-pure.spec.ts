@@ -107,6 +107,16 @@ describe("summarizeAuditPayload", () => {
     expect(s.text).not.toContain("Singleton");
   });
 
+  it("a booked visit says so, links its visit, and prints nothing else from the row", () => {
+    expect(summarizeAuditPayload("visit_create", "visit", VISIT, { telehealth: false })).toEqual({
+      text: "Visit booked",
+      visitId: VISIT,
+    });
+    expect(summarizeAuditPayload("visit_create", "visit", VISIT, { telehealth: true }).text).toBe("Visit booked · telehealth");
+    const s = summarizeAuditPayload("visit_create", "visit", VISIT, { telehealth: "yes", at: "2026-09-30T13:30:00Z" });
+    expect(s.text).toBe("Visit booked");
+  });
+
   it("CONTROL — a reschedule row links its own visit, and only a real visit id", () => {
     expect(summarizeAuditPayload("visit_reschedule", "visit", VISIT, {}).visitId).toBe(VISIT);
     expect(summarizeAuditPayload("visit_reschedule", "visit", "not-a-uuid", {}).visitId).toBeNull();

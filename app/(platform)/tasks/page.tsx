@@ -25,10 +25,20 @@ export default function TasksPage() {
   const [view, setView] = useState<ViewKey>("mine");
   const [status, setStatus] = useState<"open" | "all">("open");
   const [discipline, setDiscipline] = useState<Discipline | "">("");
-  const [rows, setRows] = useState<TaskView[] | null>(null);
-  const [today, setToday] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  // Each answer is kept with the question it answers. A failed load used to
+  // set the list to empty, so the page said "0 tasks · Nothing assigned to
+  // you." over tasks it could not read; and a tab's answer could land under
+  // another tab after a quick switch.
+  const query = `${view}|${status}|${view === "unassigned" ? discipline : ""}|${version}`;
+  const [answer, setAnswer] = useState<
+    { query: string; rows: TaskView[]; today: string | null } | { query: string; error: string } | null
+  >(null);
+  const current = answer?.query === query ? answer : null;
+  const rows = current && "rows" in current ? current.rows : null;
+  const error = current && "error" in current ? current.error : null;
+  // Due days are the practice's; kept from the last answer for the form.
+  const [today, setToday] = useState<string | null>(null);
   const [me, setMe] = useState<string | null>(null);
   const [canEdit, setCanEdit] = useState(false);
   const [canSeePatients, setCanSeePatients] = useState(false);
@@ -49,6 +59,7 @@ export default function TasksPage() {
 
   useEffect(() => {
     let abandoned = false;
+    const asked = query;
     const q = new URLSearchParams({ scope: view, status });
     if (view === "unassigned" && discipline) q.set("discipline", discipline);
     fetch(`/api/tasks?${q}`)
@@ -56,21 +67,19 @@ export default function TasksPage() {
       .then((d) => {
         if (abandoned) return;
         if (!d.success) {
-          setError(d.error ?? "Could not load the tasks.");
-          setRows([]);
+          setAnswer({ query: asked, error: d.error ?? "The tasks could not be loaded." });
           return;
         }
-        setError(null);
-        setRows(d.data.rows);
+        setAnswer({ query: asked, rows: d.data.rows, today: d.data.today });
         setToday(d.data.today);
       })
       .catch(() => {
-        if (!abandoned) setError("Network error.");
+        if (!abandoned) setAnswer({ query: asked, error: "Network error: the tasks could not be loaded." });
       });
     return () => {
       abandoned = true;
     };
-  }, [view, status, discipline, version]);
+  }, [view, status, discipline, version, query]);
 
   return (
     <div className="px-8 py-8">
@@ -136,18 +145,22 @@ export default function TasksPage() {
         </label>
       </div>
 
-      {error && (
-        <p role="alert" className="mb-4 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </p>
-      )}
-
       <Card>
         <CardHeader>
-          <CardTitle>{rows === null ? "Loading…" : `${rows.length} task${rows.length === 1 ? "" : "s"}`}</CardTitle>
+          <CardTitle>
+            {error ? "Tasks not loaded" : rows === null ? "Loading…" : `${rows.length} task${rows.length === 1 ? "" : "s"}`}
+          </CardTitle>
           <CardDescription>Overdue first, then by due day.</CardDescription>
         </CardHeader>
         <CardContent>
+          {error && (
+            <div role="alert" className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}{" "}
+              <button type="button" className="underline" onClick={() => setVersion((v) => v + 1)}>
+                Try again
+              </button>
+            </div>
+          )}
           {rows !== null && (
             <TaskList
               tasks={rows}

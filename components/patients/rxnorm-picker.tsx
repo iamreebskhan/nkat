@@ -25,6 +25,8 @@ export function RxnormPicker({
   onClear: () => void;
 }) {
   const [rows, setRows] = useState<RxnormConcept[] | null>(null);
+  // Strengths RxNorm has past the ones listed.
+  const [more, setMore] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const typed = term.trim();
@@ -33,12 +35,14 @@ export function RxnormPicker({
     setBusy(true);
     setNote(null);
     setRows(null);
+    setMore(0);
     try {
       const d = await fetch(`/api/terminology/rxnorm?q=${encodeURIComponent(typed)}&use=${use}`).then((r) => r.json());
       if (!d.success) return setNote(d.error ?? "RxNorm could not be searched. It will save as typed.");
       if (d.data.unavailable) return setNote("RxNorm could not be reached. It will save as typed, and can be coded later.");
       if (d.data.rows.length === 0) return setNote("No match in RxNorm. It will save as typed.");
       setRows(d.data.rows);
+      setMore(typeof d.data.more === "number" ? d.data.more : 0);
     } catch {
       setNote("RxNorm could not be reached. It will save as typed, and can be coded later.");
     } finally {
@@ -84,6 +88,12 @@ export function RxnormPicker({
             </li>
           ))}
         </ul>
+      )}
+      {rows && more > 0 && (
+        <p role="status" className="mt-1 text-slate-600">
+          {more} more strength{more === 1 ? " is" : "s are"} not listed. Add the strength to the name (for example
+          &ldquo;{typed} 10 mg&rdquo;) to find it.
+        </p>
       )}
     </div>
   );

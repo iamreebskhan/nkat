@@ -8,6 +8,7 @@ import {
   documentStats,
   listSourceDocuments,
 } from "@/lib/features/documents/documents.service";
+import { countChunksWithoutVectors } from "@/lib/features/documents/embed-backfill.service";
 
 const Query = z.object({
   documentType: z.string().max(60).optional(),
@@ -20,9 +21,10 @@ export async function GET(req: NextRequest): Promise<Response> {
   if (session instanceof Response) return session;
   const params = parseSearchParams(new URL(req.url), Query);
   if (params instanceof Response) return params;
-  const [rows, stats] = await Promise.all([
+  const [rows, stats, withoutVectors] = await Promise.all([
     listSourceDocuments(params),
     documentStats(),
+    countChunksWithoutVectors(),
   ]);
-  return ok({ rows, stats });
+  return ok({ rows, stats: { ...stats, sectionsWithoutVectors: withoutVectors } });
 }

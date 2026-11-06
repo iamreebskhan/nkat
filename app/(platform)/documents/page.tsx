@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface SourceDoc {
@@ -27,6 +28,14 @@ interface Stats {
   total: number;
   pendingExtraction: number;
   withErrors: number;
+  /** Sections stored without a search vector: found by their words only. */
+  sectionsWithoutVectors: number;
+}
+
+interface BackfillResult {
+  embedded: number;
+  remaining: number;
+  stoppedBecause: string | null;
 }
 
 export default function DocumentsPage() {
@@ -34,6 +43,11 @@ export default function DocumentsPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Adding vectors to the sections without one spends the platform's OpenAI
+  // credit: a platform admin's button.
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [embedding, setEmbedding] = useState(false);
+  const [backfill, setBackfill] = useState<{ result: BackfillResult } | { error: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/documents")
@@ -48,7 +62,30 @@ export default function DocumentsPage() {
       })
       .catch(() => setError("Network error."))
       .finally(() => setLoading(false));
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => setIsPlatformAdmin(d?.data?.role === "platform_admin"))
+      .catch(() => {});
   }, []);
+
+  async function addVectors() {
+    setEmbedding(true);
+    setBackfill(null);
+    try {
+      const d = await fetch("/api/documents/embed-missing", { method: "POST" }).then((r) => r.json());
+      if (!d.success) {
+        setBackfill({ error: d.error ?? "The sections could not be embedded." });
+        return;
+      }
+      const result = d.data as BackfillResult;
+      setBackfill({ result });
+      setStats((s) => (s ? { ...s, sectionsWithoutVectors: result.remaining } : s));
+    } catch {
+      setBackfill({ error: "Network error: nothing was confirmed. Reload to see the count." });
+    } finally {
+      setEmbedding(false);
+    }
+  }
 
   return (
     <div className="px-8 py-8">
@@ -66,11 +103,48 @@ export default function DocumentsPage() {
       )}
 
       {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
           <KPI label="Total documents"      value={stats.total.toLocaleString()} />
           <KPI label="Awaiting extraction"  value={stats.pendingExtraction.toLocaleString()} />
           <KPI label="With extraction errors" value={stats.withErrors.toLocaleString()} />
+          <KPI label="Sections without search vectors" value={stats.sectionsWithoutVectors.toLocaleString()} />
         </div>
+      )}
+
+      {stats && (stats.sectionsWithoutVectors > 0 || backfill) && (
+        <Card className="mb-6">
+          <CardContent className="space-y-2 p-4 text-sm">
+            {stats.sectionsWithoutVectors > 0 && (
+              <p className="text-slate-700">
+                {stats.sectionsWithoutVectors.toLocaleString()} section
+                {stats.sectionsWithoutVectors === 1 ? " was" : "s were"} stored when OpenAI could not embed{" "}
+                {stats.sectionsWithoutVectors === 1 ? "it" : "them"}. Lookups find {stats.sectionsWithoutVectors === 1 ? "it" : "them"} by
+                their words only, not by meaning. The nightly job adds the vectors once OpenAI answers.
+              </p>
+            )}
+            {isPlatformAdmin && stats.sectionsWithoutVectors > 0 && (
+              <Button size="sm" variant="secondary" onClick={() => void addVectors()} disabled={embedding}>
+                {embedding ? "Adding vectors…" : "Add the vectors now"}
+              </Button>
+            )}
+            {backfill && "result" in backfill && (
+              <p role="status" className={backfill.result.stoppedBecause ? "text-amber-900" : "text-emerald-800"}>
+                {backfill.result.embedded > 0
+                  ? `Added vectors to ${backfill.result.embedded} section${backfill.result.embedded === 1 ? "" : "s"}. `
+                  : "No vectors were added. "}
+                {backfill.result.stoppedBecause ?? ""}
+                {backfill.result.remaining > 0
+                  ? ` ${backfill.result.remaining} still without one.`
+                  : " Every section now has one."}
+              </p>
+            )}
+            {backfill && "error" in backfill && (
+              <p role="alert" className="text-red-700">
+                {backfill.error}
+              </p>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       <Card>

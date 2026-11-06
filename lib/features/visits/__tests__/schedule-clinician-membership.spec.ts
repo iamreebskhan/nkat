@@ -127,7 +127,7 @@ describe("scheduleVisit — the clinician must be an active member of this org",
     ["a user id with no membership anywhere", NOBODY],
   ] as const) {
     it(`refuses ${label}, and writes no visit`, async () => {
-      await expect(scheduleVisit({ orgId: ORG, payload: payloadFor(userId) })).rejects.toThrow(
+      await expect(scheduleVisit({ orgId: ORG, actorUserId: null, payload: payloadFor(userId) })).rejects.toThrow(
         /is not an active member of this organization/,
       );
       expect(inserted()).toHaveLength(0);
@@ -135,7 +135,7 @@ describe("scheduleVisit — the clinician must be an active member of this org",
   }
 
   it("refuses with a 422 ValidationError naming the id and what to do instead", async () => {
-    const err = await scheduleVisit({ orgId: ORG, payload: payloadFor(REMOVED) }).catch(
+    const err = await scheduleVisit({ orgId: ORG, actorUserId: null, payload: payloadFor(REMOVED) }).catch(
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(ValidationError);
@@ -144,7 +144,7 @@ describe("scheduleVisit — the clinician must be an active member of this org",
   });
 
   it("asks org_member about THIS org and THIS clinician", async () => {
-    await scheduleVisit({ orgId: ORG, payload: payloadFor(ACTIVE) });
+    await scheduleVisit({ orgId: ORG, actorUserId: null, payload: payloadFor(ACTIVE) });
     const q = calls.find((c) => c.sql.includes("FROM org_member"));
     expect(q).toBeDefined();
     expect(q!.values[0]).toBe(ORG);
@@ -153,7 +153,7 @@ describe("scheduleVisit — the clinician must be an active member of this org",
   });
 
   it("CONTROL: an active member is booked normally", async () => {
-    const r = await scheduleVisit({ orgId: ORG, payload: payloadFor(ACTIVE) });
+    const r = await scheduleVisit({ orgId: ORG, actorUserId: null, payload: payloadFor(ACTIVE) });
     expect(r).toEqual({ id: VISIT });
     expect(inserted()).toHaveLength(1);
     expect(inserted()[0]!.values).toContain(ACTIVE);
@@ -164,6 +164,7 @@ describe("scheduleVisit — the clinician must be an active member of this org",
     // this particular user id being blacklisted.
     const r = await scheduleVisit({
       orgId: OTHER_ORG,
+      actorUserId: null,
       payload: payloadFor(STRANGER, OTHER_PATIENT),
     });
     expect(r).toEqual({ id: VISIT });
@@ -178,18 +179,55 @@ describe("scheduleVisit — the patient must be under care (0115)", () => {
     ["an archived chart", ARCHIVED, /archived\. Restore it/],
   ] as const) {
     it(`refuses ${label}, and writes no visit`, async () => {
-      await expect(scheduleVisit({ orgId: ORG, payload: payloadFor(ACTIVE, patientId) })).rejects.toThrow(message);
+      await expect(scheduleVisit({ orgId: ORG, actorUserId: null, payload: payloadFor(ACTIVE, patientId) })).rejects.toThrow(message);
       expect(inserted()).toHaveLength(0);
     });
   }
 
   it("still books the family's bereavement follow-up after a death, and nothing else then", async () => {
-    const r = await scheduleVisit({ orgId: ORG, payload: { ...payloadFor(ACTIVE, DIED), visitType: "bereavement_follow_up" } });
+    const r = await scheduleVisit({ orgId: ORG, actorUserId: null, payload: { ...payloadFor(ACTIVE, DIED), visitType: "bereavement_follow_up" } });
     expect(r).toEqual({ id: VISIT });
     // CONTROL: the bereavement type does not reopen a discharged patient.
     await expect(
-      scheduleVisit({ orgId: ORG, payload: { ...payloadFor(ACTIVE, DISCHARGED), visitType: "bereavement_follow_up" } }),
+      scheduleVisit({ orgId: ORG, actorUserId: null, payload: { ...payloadFor(ACTIVE, DISCHARGED), visitType: "bereavement_follow_up" } }),
     ).rejects.toThrow(/discharged/);
     expect(inserted()).toHaveLength(1);
+  });
+});
+
+describe("scheduleVisit — the booking is audited", () => {
+  /** Who booked it: the scheduler, not the clinician the visit is for. */
+  const HELEN = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const audits = () => calls.filter((c) => /^\s*INSERT INTO audit_log\b/.test(c.sql));
+
+  it("writes one visit_create row naming who booked it and the visit, never the time", async () => {
+    const r = await scheduleVisit({ orgId: ORG, actorUserId: HELEN, payload: payloadFor(ACTIVE) });
+    expect(audits()).toHaveLength(1);
+    // writeAudit binds org, user, action, target type, target id, payload, ip, agent.
+    const [org, user, action, targetType, targetId, payload] = audits()[0]!.values;
+    expect([org, user, action, targetType, targetId]).toEqual([ORG, HELEN, "visit_create", "visit", r.id]);
+    expect(JSON.parse(payload as string)).toEqual({ telehealth: false });
+    expect(payload).not.toContain("2026-09-20");
+    // After the visit exists, in the same transaction.
+    const order = calls.map((c) => (c.sql.includes("INSERT INTO visit") ? "visit" : /INSERT INTO audit_log/.test(c.sql) ? "audit" : null)).filter(Boolean);
+    expect(order).toEqual(["visit", "audit"]);
+  });
+
+  it("writes nothing when the booking is refused", async () => {
+    await expect(scheduleVisit({ orgId: ORG, actorUserId: HELEN, payload: payloadFor(REMOVED) })).rejects.toThrow();
+    expect(audits()).toHaveLength(0);
+  });
+
+  it("a failed audit write fails the booking (the transaction rolls the visit back)", async () => {
+    vi.mocked(withOrgContext).mockImplementationOnce(async (_orgId, fn) => {
+      const tx = fakeTx();
+      const failing = {
+        ...tx,
+        $executeRaw: (strings: TemplateStringsArray, ...values: unknown[]) =>
+          /INSERT INTO audit_log/.test(strings.join("")) ? Promise.reject(new Error("audit down")) : tx.$executeRaw(strings, ...values),
+      };
+      return (fn as (t: unknown) => Promise<unknown>)(failing);
+    });
+    await expect(scheduleVisit({ orgId: ORG, actorUserId: HELEN, payload: payloadFor(ACTIVE) })).rejects.toThrow("audit down");
   });
 });

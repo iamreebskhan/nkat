@@ -24,6 +24,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { lookupCarc, lookupRarc } from "@/lib/features/denials/denial-pure";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 import type {
   AiRecommendation,
   DenialView,
@@ -36,6 +37,8 @@ export default function DenialDetailPage({
 }) {
   const { id } = use(params);
   const [denial, setDenial] = useState<DenialView | null>(null);
+  // Decisions and outcomes are stamped on the practice's clock.
+  const atPractice = usePracticeTime();
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -385,7 +388,7 @@ export default function DenialDetailPage({
               {denial.aiAnalyzedAt && (
                 <>
                   {" · "}
-                  {new Date(denial.aiAnalyzedAt).toLocaleString()}
+                  {atPractice(denial.aiAnalyzedAt)}
                 </>
               )}
             </CardDescription>
@@ -461,7 +464,7 @@ export default function DenialDetailPage({
                 {denial.decisionAt && (
                   <span className="text-slate-500 tabular">
                     {" · "}
-                    {new Date(denial.decisionAt).toLocaleString()}
+                    {atPractice(denial.decisionAt)}
                   </span>
                 )}
               </p>
@@ -508,7 +511,7 @@ export default function DenialDetailPage({
                 {denial.outcomeAt && (
                   <span className="text-slate-500 tabular">
                     {" · "}
-                    {new Date(denial.outcomeAt).toLocaleString()}
+                    {atPractice(denial.outcomeAt)}
                   </span>
                 )}
                 {denial.outcomeAmountCents !== null && (

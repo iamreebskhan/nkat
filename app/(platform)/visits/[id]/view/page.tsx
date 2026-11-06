@@ -21,6 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { NotePreview } from "@/components/visits/note-preview";
 import { VisitAddenda } from "@/components/visits/visit-addenda";
 import { formatCodes } from "@/lib/features/billing/code-units";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 import type { VisitView } from "@/lib/features/visits/visit.types";
 
 const SIGNED = ["documented", "pending_billing", "billed"];
@@ -36,6 +37,8 @@ export default function VisitReadPage({ params }: { params: Promise<{ id: string
   // audit packet for whoever the packet's route lets export it.
   const [mayOpenBill, setMayOpenBill] = useState(false);
   const [mayExportPacket, setMayExportPacket] = useState(false);
+  // When it was signed, on the practice's clock as the note itself prints it.
+  const atPractice = usePracticeTime();
 
   useEffect(() => {
     let abandoned = false;
@@ -109,7 +112,7 @@ export default function VisitReadPage({ params }: { params: Promise<{ id: string
           </p>
           <p className="text-slate-500 mt-0.5 text-xs">
             {visit.signedAt
-              ? `Raised and signed by ${visit.signerName ?? "a former team member"}${visit.signerCredential ? `, ${visit.signerCredential}` : ""} on ${new Date(visit.signedAt).toLocaleString()}.`
+              ? `Raised and signed by ${visit.signerName ?? "a former team member"}${visit.signerCredential ? `, ${visit.signerCredential}` : ""} on ${atPractice(visit.signedAt)}.`
               : "Not signed."}{" "}
             A month of care management, billed from its time log: there is no visit note.
           </p>
@@ -162,7 +165,7 @@ export default function VisitReadPage({ params }: { params: Promise<{ id: string
         </p>
         <p className="text-slate-500 mt-0.5 text-xs">
           {signed && visit.signedAt
-            ? `Signed by ${visit.signerName ?? "a former team member"}${visit.signerCredential ? `, ${visit.signerCredential}` : ""} on ${new Date(visit.signedAt).toLocaleString()}.`
+            ? `Signed by ${visit.signerName ?? "a former team member"}${visit.signerCredential ? `, ${visit.signerCredential}` : ""} on ${atPractice(visit.signedAt)}.`
             : "Not signed yet: the note below may still change."}{" "}
           Read only.
         </p>

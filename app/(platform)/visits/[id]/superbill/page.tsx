@@ -33,6 +33,7 @@ import { EXPORTABLE_STATUSES } from "@/lib/features/billing/claim-export";
 import { unitWarnings, type CodeUnits } from "@/lib/features/billing/code-units";
 import type { PatientView } from "@/lib/features/patients/patient.types";
 import { claimRefFor } from "@/lib/features/remittances/claim-ref";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 import {
   describePriceSource,
   lineChargeCents,
@@ -1198,14 +1199,29 @@ const KIND_STYLE: Record<string, string> = {
  */
 function BillActivity({ superbillId }: { superbillId: string }) {
   const [rows, setRows] = useState<ActivityRow[] | null>(null);
+  // A history that could not be read says so; it used to vanish, which reads
+  // as a claim nobody has touched.
+  const [failed, setFailed] = useState<string | null>(null);
+  // Each change on the practice's clock.
+  const atPractice = usePracticeTime();
 
   useEffect(() => {
     fetch(`/api/superbills/${superbillId}/activity`)
       .then((r) => r.json())
-      .then((d) => setRows(d.success ? (d.data?.rows ?? []) : []))
-      .catch(() => setRows([]));
+      .then((d) => {
+        if (d.success) setRows(d.data?.rows ?? []);
+        else setFailed(`${d.error ?? "This bill's activity history could not be loaded."} Reload the page to try again.`);
+      })
+      .catch(() => setFailed("Network error: this bill's activity history could not be loaded. Reload the page to try again."));
   }, [superbillId]);
 
+  if (failed) {
+    return (
+      <p role="alert" className="mt-6 text-sm text-red-700">
+        {failed}
+      </p>
+    );
+  }
   if (!rows || rows.length === 0) return null;
 
   return (
@@ -1240,7 +1256,7 @@ function BillActivity({ superbillId }: { superbillId: string }) {
               </div>
               <div className="text-right shrink-0">
                 <p className="text-xs text-slate-500 tabular">
-                  {new Date(a.at).toLocaleString()}
+                  {atPractice(a.at)}
                 </p>
                 {a.actorName && <p className="text-xs text-slate-400">{a.actorName}</p>}
               </div>
