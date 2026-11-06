@@ -54,6 +54,7 @@ import {
 } from "@/lib/features/offline/offline-store";
 import { sendDrafts } from "@/lib/features/offline/offline-sync";
 import { MAX_PIN_FAILURES, pinProblem } from "@/lib/features/offline/offline-vault";
+import { orgDateTime } from "@/lib/features/org/org-date";
 import { VITALS_FIELDS, type VitalsFieldSpec } from "@/lib/features/visits/vitals-units";
 
 type View = { kind: "home" } | { kind: "patient"; id: string } | { kind: "visit"; id: string };
@@ -338,7 +339,8 @@ export default function OfflinePage() {
               {lock === "locked" || lock === "locked_out"
                 ? "A copy is saved on this device, locked."
                 : snap
-                  ? `${snap.user.name}'s caseload, saved ${new Date(snap.generatedAt).toLocaleString()}. Kept ${OFFLINE_MAX_AGE_HOURS} hours.`
+                  ? // On the practice's clock, which the copy carries; a copy saved before it did, on this device's, named.
+                    `${snap.user.name}'s caseload, saved ${orgDateTime(snap.generatedAt, snap.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone)}. Kept ${OFFLINE_MAX_AGE_HOURS} hours.`
                   : snap === null
                     ? "No copy is saved on this device."
                     : "Reading this device…"}

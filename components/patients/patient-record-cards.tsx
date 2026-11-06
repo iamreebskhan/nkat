@@ -25,6 +25,7 @@ import { checkCoveragePair } from "@/lib/features/patients/insurance-pure";
 import { UpdatePatientSchema, type PatientView, type UpdatePatient } from "@/lib/features/patients/patient.types";
 import { ethnicityText, languageText, raceText } from "@/lib/features/patients/uscdi";
 import type { VerificationView } from "@/lib/features/referrals/referral.types";
+import { usePracticeDate } from "@/lib/features/schedule/use-practice-zone";
 
 interface PayerOption {
   id: string;
@@ -875,6 +876,8 @@ export function ConsentsCard({
   const [error, setError] = useState<string | null>(null);
   const [editingSigner, setEditingSigner] = useState(false);
   const [signer, setSigner] = useState("");
+  // Each consent's day on the practice's calendar, the month in words.
+  const atPracticeDay = usePracticeDate();
 
   async function send(consents: NonNullable<UpdatePatient["consents"]>, what: ConsentKey | "signedBy") {
     setBusy(what);
@@ -903,7 +906,7 @@ export function ConsentsCard({
               <span className="text-slate-500">{label}</span>
               <span className="flex items-center gap-3">
                 <span className={at ? "tabular" : "text-amber-800"}>
-                  {at ? new Date(at).toLocaleDateString() : "Not recorded"}
+                  {at ? atPracticeDay(at) : "Not recorded"}
                 </span>
                 {canEdit && (
                   <button

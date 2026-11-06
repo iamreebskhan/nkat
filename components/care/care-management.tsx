@@ -32,6 +32,8 @@ import {
   type ChargeBasis,
   type SetProgress,
 } from "@/lib/features/care-coordination/care-management";
+import { orgDay } from "@/lib/features/org/org-date";
+import { usePracticeDate } from "@/lib/features/schedule/use-practice-zone";
 
 type Program = CareManagementMonthView["programs"][number];
 
@@ -191,6 +193,8 @@ function ProgramMonth({
   const [raising, setRaising] = useState(false);
   const [voidingId, setVoidingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The day a charge was raised, on the practice's calendar.
+  const atPracticeDay = usePracticeDate();
   const program = CARE_PROGRAM_SHORT[p.program];
   const qualifies = p.staff.reached.length > 0 || (p.qhp?.reached.length ?? 0) > 0;
   const { first, last } = monthBounds(view.month);
@@ -225,8 +229,8 @@ function ProgramMonth({
           <p>
             Charged {formatCodes(p.charge.codes, p.charge.units)} on{" "}
             {p.charge.basis === "staff" ? "clinical staff time" : "the practitioner's own time"}, date of service{" "}
-            {p.charge.dateOfService}. Raised by {p.charge.raisedByName ?? "a former team member"} on{" "}
-            {new Date(p.charge.raisedAt).toLocaleDateString()}. The month takes no more time.
+            {orgDay(p.charge.dateOfService)}. Raised by {p.charge.raisedByName ?? "a former team member"} on{" "}
+            {atPracticeDay(p.charge.raisedAt)}. The month takes no more time.
           </p>
           <p className="mt-1 text-xs">
             {canViewBill && p.charge.superbillId ? (

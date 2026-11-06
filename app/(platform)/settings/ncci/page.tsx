@@ -24,6 +24,7 @@ import {
   type PtpRow,
 } from "@/lib/features/billing/ncci-files";
 import type { NcciLoadView, NcciStatus } from "@/lib/features/billing/ncci-load.service";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 const PTP_PAGE =
   "https://www.cms.gov/medicare/coding-billing/national-correct-coding-initiative-ncci-edits/medicare-ncci-procedure-procedure-ptp-edits";
@@ -33,7 +34,6 @@ const MUE_PAGE =
 const BATCH = 4_000;
 
 const n = (x: number) => x.toLocaleString("en-US");
-const when = (iso: string) => new Date(iso).toLocaleString();
 
 interface Chosen {
   tables: NcciTable[];
@@ -50,6 +50,8 @@ async function post(url: string, body: unknown): Promise<{ success: boolean; dat
 
 export default function NcciPage() {
   const [status, setStatus] = useState<NcciStatus | null>(null);
+  // When each file was loaded, on the practice's clock.
+  const when = usePracticeTime();
   const [failed, setFailed] = useState<string | null>(null);
   const [reading, setReading] = useState<string | null>(null);
   const [chosen, setChosen] = useState<Chosen | null>(null);

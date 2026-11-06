@@ -37,15 +37,28 @@ export async function countChunksWithoutVectors(): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
+/** OpenAI's words for an account it will not serve until credit is added. */
+const NO_CREDIT_WORDS = /no credits remaining|exceeded your current quota/i;
+
 /**
  * Why a call to OpenAI failed, for the person who can fix it: the account's
  * credit or key, which is what a failure that outlasts the retries comes down
  * to. Never the request, which carried a document's text.
  */
 export function describeEmbedFailure(err: unknown): string {
-  const e = err as { status?: number; code?: string | null; error?: { code?: string | null } } | null;
+  const e = err as {
+    status?: number;
+    code?: string | null;
+    type?: string | null;
+    message?: string;
+    error?: { code?: string | null; type?: string | null };
+  } | null;
   const code = e?.code ?? e?.error?.code ?? null;
-  if (e?.status === 429 && code === "insufficient_quota") {
+  const type = e?.type ?? e?.error?.type ?? null;
+  // Out of credit, by OpenAI's code, its type, or its words: production's
+  // account answered "429 You have no credits remaining" (7 Nov 2026) without
+  // the insufficient_quota code, and read as a rate limit nobody adds credit for.
+  if (code === "insufficient_quota" || type === "insufficient_quota" || NO_CREDIT_WORDS.test(e?.message ?? "")) {
     return "OpenAI has no credit left on this account. Add credit, then run this again.";
   }
   if (e?.status === 401) return "OpenAI refused the API key (OPENAI_API_KEY). Check the key, then run this again.";

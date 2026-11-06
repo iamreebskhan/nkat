@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pager } from "@/components/ui/pager";
 import { EXPORTABLE_STATUSES } from "@/lib/features/billing/claim-export";
+import { usePracticeDate } from "@/lib/features/schedule/use-practice-zone";
 import {
   FURTHER_PAYMENT_LABEL,
   QUEUE_ACTIONS,
@@ -99,6 +100,8 @@ export default function SuperbillsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // The day a claim was sent to billing, on the practice's calendar.
+  const atPracticeDay = usePracticeDate();
   // Claims picked for export to the billing software (0118, Mark Q1 default),
   // offered to whoever holds the export grant the route enforces.
   const [canExport, setCanExport] = useState(false);
@@ -576,7 +579,7 @@ export default function SuperbillsPage() {
                         {statusLabel(s.status)}
                         {s.lastExportedAt && (
                           <span className="block text-slate-500">
-                            sent to billing {new Date(s.lastExportedAt).toLocaleDateString()}
+                            sent to billing {atPracticeDay(s.lastExportedAt)}
                           </span>
                         )}
                         {chStatus[s.id] && (

@@ -268,6 +268,7 @@ export async function getOfflineSnapshot(args: { orgId: string; userId: string; 
   const snapshot: OfflineSnapshot = {
     version: 1,
     generatedAt: (args.now ?? new Date()).toISOString(),
+    timeZone: base.tz,
     orgId: org,
     user: { id: args.userId, name: base.userName },
     practiceToday: base.today,

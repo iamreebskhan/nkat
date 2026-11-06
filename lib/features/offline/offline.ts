@@ -89,6 +89,11 @@ export interface OfflineVisit {
 export interface OfflineSnapshot {
   version: 1;
   generatedAt: string;
+  /**
+   * The practice's zone, so the page can say when the copy was saved on the
+   * practice's clock while offline. Copies saved before 7 Nov 2026 have none.
+   */
+  timeZone?: string;
   orgId: string;
   user: { id: string; name: string };
   practiceToday: string;

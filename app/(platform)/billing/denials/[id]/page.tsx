@@ -24,7 +24,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { lookupCarc, lookupRarc } from "@/lib/features/denials/denial-pure";
-import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
+import { usePracticeDate, usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 import type {
   AiRecommendation,
   DenialView,
@@ -39,6 +39,7 @@ export default function DenialDetailPage({
   const [denial, setDenial] = useState<DenialView | null>(null);
   // Decisions and outcomes are stamped on the practice's clock.
   const atPractice = usePracticeTime();
+  const atPracticeDay = usePracticeDate();
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -440,7 +441,7 @@ export default function DenialDetailPage({
               className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-900 ring-1 ring-inset ring-emerald-600/20"
             >
               This claim already went back to the payer on{" "}
-              {new Date(denial.claimResubmittedAt).toLocaleDateString()}, from another denial on it
+              {atPracticeDay(denial.claimResubmittedAt)}, from another denial on it
               or from the claims queue. A corrected claim covers every line, this one included: choose
               Refile and mark it refiled to record that, rather than sending the claim again.
             </p>

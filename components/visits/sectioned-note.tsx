@@ -25,6 +25,8 @@ import {
   noteMedicationLines,
   type ClinicalListsView,
 } from "@/lib/features/clinical/clinical-lists.types";
+import { orgDay } from "@/lib/features/org/org-date";
+import { usePracticeDate } from "@/lib/features/schedule/use-practice-zone";
 import {
   VITALS_FIELDS,
   type VitalsFieldSpec,
@@ -129,6 +131,9 @@ export function SectionedNote({
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [vitals, setVitals] = useState<Vitals | null>(null);
   const [carry, setCarry] = useState<CarrySource | null>(null);
+  // A source read without its practice day (before 0107) shows the instant's
+  // day on the practice's calendar.
+  const atPracticeDay = usePracticeDate();
   const [carrying, setCarrying] = useState(false);
   /** Sections typed into since their last successful save, keyed by section. */
   const pending = useRef(new Map<string, unknown>());
@@ -444,12 +449,11 @@ export function SectionedNote({
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-200">
           <p className="text-xs text-slate-700">
             Last signed visit{carry.visitTypeLabel ? ` · ${carry.visitTypeLabel}` : ""}
-            {/* The practice's day (visitDay, 0107); the instant in the viewer's
-                zone only for a source read without one. */}
+            {/* The practice's day (visitDay, 0107), the month in words. */}
             {carry.visitDay
-              ? ` · ${new Date(`${carry.visitDay}T00:00:00Z`).toLocaleDateString(undefined, { timeZone: "UTC" })}`
+              ? ` · ${orgDay(carry.visitDay)}`
               : carry.visitDate
-                ? ` · ${new Date(carry.visitDate).toLocaleDateString()}`
+                ? ` · ${atPracticeDay(carry.visitDate)}`
                 : ""}{" "}
             has{" "}
             {carry.sections.length} completed section{carry.sections.length === 1 ? "" : "s"}.

@@ -33,7 +33,7 @@ import { EXPORTABLE_STATUSES } from "@/lib/features/billing/claim-export";
 import { unitWarnings, type CodeUnits } from "@/lib/features/billing/code-units";
 import type { PatientView } from "@/lib/features/patients/patient.types";
 import { claimRefFor } from "@/lib/features/remittances/claim-ref";
-import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
+import { usePracticeDate, usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 import {
   describePriceSource,
   lineChargeCents,
@@ -212,6 +212,8 @@ export default function SuperbillPage({
   // and what a claim still needs from the billing provider.
   const [expectedCents, setExpectedCents] = useState<number | null>(null);
   const [lastExportedAt, setLastExportedAt] = useState<string | null>(null);
+  // Its day on the practice's calendar, the month in words.
+  const atPracticeDay = usePracticeDate();
   const [remittance, setRemittance] = useState<RemittanceSummary | null>(null);
   const [billingMissing, setBillingMissing] = useState<string[]>([]);
   const [canExportClaim, setCanExportClaim] = useState(false);
@@ -688,7 +690,7 @@ export default function SuperbillPage({
           {status && <span className="ml-1">· {statusLabel(status)}</span>}
           {/* Entered as box 26 on the claim, so the payer's 835 matches back (audit R10). */}
           {persistedId && <span className="ml-1" title="Enter this as the Patient account no. (CMS-1500 box 26) when you submit the claim.">· Claim ref <span className="font-mono">{claimRefFor(persistedId)}</span></span>}
-          {lastExportedAt && <span className="ml-1">· sent to billing {new Date(lastExportedAt).toLocaleDateString()}</span>}
+          {lastExportedAt && <span className="ml-1">· sent to billing {atPracticeDay(lastExportedAt)}</span>}
           {autosaveStatus === "saving" && <span className="ml-2 text-slate-500">· saving…</span>}
           {autosaveStatus === "saved" && <span className="ml-2 text-emerald-700">· autosaved ✓</span>}
           {autosaveStatus === "error" && <span className="ml-2 text-red-700">· autosave failed</span>}

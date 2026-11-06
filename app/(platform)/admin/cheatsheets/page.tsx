@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { usePracticeDate } from "@/lib/features/schedule/use-practice-zone";
 
 interface Template {
   id: string;
@@ -193,6 +194,8 @@ function TemplateTable({
   busy: string | null;
   actions: Action[];
 }) {
+  // The day each was created, on the practice's calendar.
+  const atPracticeDay = usePracticeDate();
   if (rows.length === 0) {
     return <p className="px-4 py-3 text-xs text-slate-500">None.</p>;
   }
@@ -216,7 +219,7 @@ function TemplateTable({
               {r.ruleCountAtCreation} → {r.ruleCountNow}
             </td>
             <td className="px-4 py-2 tabular text-xs text-slate-600">
-              {new Date(r.createdAt).toLocaleDateString()}
+              {atPracticeDay(r.createdAt)}
             </td>
             <td className="px-4 py-2 text-right">
               <div className="flex justify-end gap-2">

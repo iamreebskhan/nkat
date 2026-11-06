@@ -73,7 +73,7 @@ import {
   intakeTelehealthConsentFor,
   type PatientView,
 } from "@/lib/features/patients/patient.types";
-import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
+import { usePracticeDate, usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 type Doc = JSONContent | null;
 
@@ -128,6 +128,7 @@ export default function VisitDocumentPage({
   >(null);
   // A visit happens, and a note is signed, on the practice's clock.
   const atPractice = usePracticeTime();
+  const atPracticeDay = usePracticeDate();
 
   // Local form state
   const [doc, setDoc] = useState<Doc>(null);
@@ -1454,7 +1455,7 @@ export default function VisitDocumentPage({
                       {consentFromIntake && (
                         <span className="block mt-0.5 text-amber-800">
                           Consent on file from intake (
-                          {new Date(consentFromIntake).toLocaleDateString()})
+                          {atPracticeDay(consentFromIntake)})
                         </span>
                       )}
                     </span>

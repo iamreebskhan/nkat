@@ -14,6 +14,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { mentionQueryAt, suggestMentions, type Mentionable } from "@/lib/features/messaging/mentions";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 interface Message {
   id: string;
@@ -63,6 +64,8 @@ const EDIT_WINDOW_MS = 5 * 60 * 1000;
 
 export function ThreadPanel({ patientId, selfUserId }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
+  // Each message on the practice's clock, as the rest of the record.
+  const atPractice = usePracticeTime();
   const [body, setBody] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -227,7 +230,7 @@ export function ThreadPanel({ patientId, selfUserId }: Props) {
                 {m.authorUserId === selfUserId ? "You" : (m.authorName ?? "Former team member")}
               </span>
               <span className="flex items-center gap-2">
-                {new Date(m.createdAt).toLocaleString()}
+                {atPractice(m.createdAt)}
                 {m.editedAt && <span className="italic">(edited)</span>}
                 {editingId !== m.id && canEdit(m) && (
                   <button

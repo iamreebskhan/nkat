@@ -16,6 +16,7 @@ import { Bell } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { usePracticeDate } from "@/lib/features/schedule/use-practice-zone";
 import { cn } from "@/lib/utils";
 
 interface NotificationItem {
@@ -33,13 +34,13 @@ interface Feed {
 
 const DESKTOP = "(min-width: 768px)";
 
-/** "just now", "5 min ago", "3 h ago", else the day. */
-function ago(iso: string, now: number): string {
+/** "just now", "5 min ago", "3 h ago", else the day as `day` reads it. */
+function ago(iso: string, now: number, day: (iso: string) => string): string {
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.floor(s / 60)} min ago`;
   if (s < 86_400) return `${Math.floor(s / 3600)} h ago`;
-  return new Date(iso).toLocaleDateString();
+  return day(iso);
 }
 
 function markRead(id?: string) {
@@ -60,6 +61,8 @@ export function NotificationBell({ placement }: { placement: "desktop" | "mobile
   // Bumped on each opening, so the list opened is fetched then, not up to a
   // minute old.
   const [opened, setOpened] = useState(0);
+  // An older notification's day, on the practice's calendar.
+  const atPracticeDay = usePracticeDate();
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -182,7 +185,7 @@ export function NotificationBell({ placement }: { placement: "desktop" | "mobile
                     <span className="min-w-0">
                       <span className={cn("block text-sm", !n.readAt && "font-medium")}>{n.title}</span>
                       <time dateTime={n.createdAt} className="block text-xs text-slate-500">
-                        {ago(n.createdAt, now)}
+                        {ago(n.createdAt, now, atPracticeDay)}
                       </time>
                     </span>
                   </span>

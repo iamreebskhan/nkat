@@ -188,6 +188,30 @@ export function orgDateTime(at: Date | string, timeZone: string): string {
   return f.format(instant);
 }
 
+/** "Mar 12, 2026". A day has no clock, so it is read at UTC midnight in UTC. */
+const dayFormatter = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" });
+
+/**
+ * A calendar day ('YYYY-MM-DD') for a person to read: "Mar 12, 2026", the
+ * month in words. Read through toLocaleDateString a day was all numbers in the
+ * browser's order: 12 March read "12/03/2026" in Karachi, which a US reader
+ * takes for 3 December. Throws RangeError on anything but a real day.
+ */
+export function orgDay(day: string): string {
+  if (!isCalendarDay(day)) throw new RangeError(`Not a calendar day: ${day}`);
+  return dayFormatter.format(new Date(`${day}T00:00:00Z`));
+}
+
+/**
+ * The practice's day of an instant, for a person to read: "Mar 12, 2026". For
+ * the days a record carries (a consent given, a bill sent to billing, a claim
+ * resubmitted): the day where the practice is, not where the reader is. Throws
+ * as orgLocalDate does, so never a DATE column (see dateColumnIso).
+ */
+export function orgDate(at: Date | string, timeZone: string): string {
+  return orgDay(orgLocalDate(at, timeZone));
+}
+
 /** One wall-clock formatter per zone, seconds included, for the conversions below. */
 const clockFormatters = new Map<string, Intl.DateTimeFormat>();
 

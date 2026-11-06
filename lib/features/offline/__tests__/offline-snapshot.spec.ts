@@ -125,6 +125,8 @@ describe("getOfflineSnapshot", () => {
       recentVisits: [{ day: "2026-10-27", assessmentAndPlan: "Morphine IR PRN." }],
     });
     expect(s).toMatchObject({ user: { id: ME, name: "Helen Okafor" }, practiceToday: "2026-10-28", version: 1 });
+    // The practice's zone travels with the copy: offline, the page cannot ask for it.
+    expect(s.timeZone).toBe("America/New_York");
   });
 
   it("logs the copy as a PHI export, with every patient in it", async () => {

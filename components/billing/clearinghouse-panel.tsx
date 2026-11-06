@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EXPORTABLE_STATUSES } from "@/lib/features/billing/claim-export";
 import { claimRefFor } from "@/lib/features/remittances/claim-ref";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 import {
   connectionName,
@@ -50,6 +51,8 @@ export function ClearinghousePanel({
   onChanged: () => void;
 }) {
   const [perms, setPerms] = useState<{ export: boolean; edit: boolean }>({ export: false, edit: false });
+  // When the claim's file went out, on the practice's clock.
+  const atPractice = usePracticeTime();
   const [connections, setConnections] = useState<ConnectionChoice[]>([]);
   const [connectionId, setConnectionId] = useState("");
   /** undefined until the first answer: the card does not say "not sent" before it knows. */
@@ -165,7 +168,7 @@ export function ClearinghousePanel({
             <>
               <span className={rejected ? "text-red-700" : undefined}>{current.summary}</span>
               <span className="block text-xs text-slate-500">
-                {current.filename}, {new Date(current.sentAt).toLocaleString()}
+                {current.filename}, {atPractice(current.sentAt)}
               </span>
             </>
           ) : (

@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ConnectionView, TestStep } from "@/lib/features/clearinghouse/connection.service";
 import { CLEARINGHOUSE_VENDORS, VENDOR_PROFILES, type ClearinghouseVendor } from "@/lib/features/clearinghouse/vendors";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 
 import { ClearinghouseForm } from "./clearinghouse-form";
 import { PayerIdsEditor } from "./payer-ids-editor";
@@ -34,6 +35,8 @@ type Panel =
 
 export function ClearinghouseSection() {
   const [connections, setConnections] = useState<ConnectionView[] | null>(null);
+  // When each connection was last tested, on the practice's clock.
+  const atPractice = usePracticeTime();
   const [error, setError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -135,7 +138,7 @@ export function ClearinghouseSection() {
                         {c.lastTest && (
                           <span className={`block text-xs ${c.lastTest.ok ? "text-emerald-800" : "text-red-700"}`}>
                             {c.lastTest.ok ? <CheckCircle2 aria-hidden="true" className="mr-1 inline h-3 w-3" /> : <CircleAlert aria-hidden="true" className="mr-1 inline h-3 w-3" />}
-                            Tested {new Date(c.lastTest.at).toLocaleString()}: {c.lastTest.ok ? "passed" : "failed"}
+                            Tested {atPractice(c.lastTest.at)}: {c.lastTest.ok ? "passed" : "failed"}
                           </span>
                         )}
                         {c.hostKeySha256 && (

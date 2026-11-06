@@ -19,7 +19,9 @@ import {
   dateColumnIso,
   isCalendarDay,
   isPracticeTimeZone,
+  orgDate,
   orgDateTime,
+  orgDay,
   orgLocalDate,
   orgLocalMinute,
   orgToday,
@@ -146,6 +148,52 @@ describe("orgDateTime — a time a record carries, on the practice's clock", () 
   it("refuses a missing zone and an invalid instant", () => {
     expect(() => orgDateTime("2026-11-05T15:00:00Z", "")).toThrow(/time zone/);
     expect(() => orgDateTime("not a time", "America/New_York")).toThrow(RangeError);
+  });
+});
+
+describe("orgDay — a calendar day for a person to read", () => {
+  it.each([
+    // 12 March read "12/03/2026" in Karachi through toLocaleDateString: 3 December to a US reader.
+    ["2026-03-12", "Mar 12, 2026"],
+    ["2026-12-03", "Dec 3, 2026"],
+    ["2027-01-01", "Jan 1, 2027"],
+    ["2028-02-29", "Feb 29, 2028"],
+  ])("%s reads %s", (day, text) => {
+    expect(orgDay(day)).toBe(text);
+  });
+
+  it("is the day it is given: no zone moves it", () => {
+    // At UTC midnight a day is the evening before anywhere west of UTC.
+    expect(orgDay("2026-09-22")).toBe("Sep 22, 2026");
+  });
+
+  it("refuses anything but a real day", () => {
+    expect(() => orgDay("2026-02-30")).toThrow(RangeError);
+    expect(() => orgDay("2026-09-22T00:00:00Z")).toThrow(RangeError);
+    expect(() => orgDay("")).toThrow(RangeError);
+  });
+});
+
+describe("orgDate — the day a record carries, on the practice's calendar", () => {
+  it.each([
+    // A bill sent to billing at 9:30 pm in Ohio: already the next day in UTC and in Karachi.
+    ["2026-09-24T01:30:00Z", "America/New_York", "Sep 23, 2026"],
+    ["2026-11-05T15:00:00Z", "America/New_York", "Nov 5, 2026"],
+    // Either side of midnight in New York in winter.
+    ["2026-01-15T04:59:00Z", "America/New_York", "Jan 14, 2026"],
+    ["2026-01-15T05:00:00Z", "America/New_York", "Jan 15, 2026"],
+    ["2026-09-23T09:30:00Z", "Pacific/Honolulu", "Sep 22, 2026"],
+    // The fallback when the practice's clock cannot be read.
+    ["2026-09-24T01:30:00Z", "UTC", "Sep 24, 2026"],
+  ])("%s in %s is %s", (at, zone, text) => {
+    expect(orgDate(new Date(at), zone)).toBe(text);
+    expect(orgDate(at, zone)).toBe(text);
+  });
+
+  it("refuses a missing zone, an invalid instant, and a DATE column's bare day", () => {
+    expect(() => orgDate("2026-11-05T15:00:00Z", "")).toThrow(/time zone/);
+    expect(() => orgDate("not a time", "America/New_York")).toThrow(RangeError);
+    expect(() => orgDate("2026-09-22", "America/New_York")).toThrow(/already a calendar day/);
   });
 });
 

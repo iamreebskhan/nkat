@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import { fetchConnections, type ConnectionChoice } from "@/components/billing/clearinghouse-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { usePracticeTime } from "@/lib/features/schedule/use-practice-zone";
 import { statusLabel } from "@/lib/features/superbills/superbill-queue";
 
 interface SubmissionClaim {
@@ -79,6 +80,8 @@ const OUTCOME_LABEL: Record<ReceivedFile["outcome"], string> = {
 
 export default function ClearinghousePage() {
   const [connections, setConnections] = useState<ConnectionChoice[] | null>(null);
+  // Checks and files received, on the practice's clock.
+  const atPractice = usePracticeTime();
   const [submissions, setSubmissions] = useState<Submission[] | null>(null);
   const [files, setFiles] = useState<ReceivedFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -212,7 +215,7 @@ export default function ClearinghousePage() {
                     </span>
                     {c.lastPoll && (
                       <span className={`block text-xs ${c.lastPoll.ok ? "text-slate-500" : "text-red-700"}`}>
-                        Last checked {new Date(c.lastPoll.at).toLocaleString()}: {c.lastPoll.message}
+                        Last checked {atPractice(c.lastPoll.at)}: {c.lastPoll.message}
                       </span>
                     )}
                   </div>
@@ -328,7 +331,7 @@ export default function ClearinghousePage() {
                 <tbody className="divide-y divide-slate-100">
                   {files.map((f) => (
                     <tr key={f.id} className="align-top">
-                      <td className="px-4 py-2 tabular text-xs text-slate-600">{new Date(f.receivedAt).toLocaleString()}</td>
+                      <td className="px-4 py-2 tabular text-xs text-slate-600">{atPractice(f.receivedAt)}</td>
                       <td className="px-4 py-2 text-xs">
                         <span className="font-mono break-all">{f.remoteName ?? "—"}</span>
                         <span className="block text-slate-500">
@@ -373,12 +376,14 @@ function laterRejections(s: Submission): string {
 }
 
 function SubmissionRows({ s, open, onToggle }: { s: Submission; open: boolean; onToggle: () => void }) {
+  // When it was sent, on the practice's clock.
+  const atPractice = usePracticeTime();
   const failed = s.state === "send_failed" || s.ackState === "rejected";
   return (
     <>
       <tr className="align-top hover:bg-slate-50">
         <td className="px-4 py-2 tabular text-xs text-slate-600">
-          {new Date(s.createdAt).toLocaleString()}
+          {atPractice(s.createdAt)}
           {s.createdByName && <span className="block">{s.createdByName}</span>}
         </td>
         <td className="px-4 py-2 text-xs">

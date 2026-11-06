@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { orgDateTime } from "@/lib/features/org/org-date";
+import { orgDate, orgDateTime } from "@/lib/features/org/org-date";
 
 export interface PracticeZone {
   timeZone: string;
@@ -71,4 +71,14 @@ export function usePracticeTime(): (at: string | Date) => string {
   const { zone, failed } = usePracticeZoneStatus();
   const timeZone = zone?.timeZone ?? (failed ? "UTC" : null);
   return useCallback((at: string | Date) => (timeZone === null ? "…" : orgDateTime(at, timeZone)), [timeZone]);
+}
+
+/**
+ * The day a record carries, on the practice's calendar: "Mar 12, 2026". "…"
+ * while the clock is asked for; if it cannot be had, the day in UTC.
+ */
+export function usePracticeDate(): (at: string | Date) => string {
+  const { zone, failed } = usePracticeZoneStatus();
+  const timeZone = zone?.timeZone ?? (failed ? "UTC" : null);
+  return useCallback((at: string | Date) => (timeZone === null ? "…" : orgDate(at, timeZone)), [timeZone]);
 }

@@ -53,11 +53,27 @@ vi.mock("@/lib/ai/embedder", () => ({
 
 import { BACKFILL_LIMIT, describeEmbedFailure, embedMissingChunks } from "../embed-backfill.service";
 
-/** The OpenAI SDK's error for an account with no credit (4 Nov 2026). */
+/** The OpenAI SDK's error for an exhausted quota, as OpenAI documents it. */
 const NO_CREDIT = Object.assign(new Error("429 You exceeded your current quota, please check your plan and billing details."), {
   status: 429,
   code: "insufficient_quota",
 });
+
+/**
+ * What production's account answered on 7 Nov 2026 (its pm2 log): a 429 that
+ * says so in words, without the insufficient_quota code. Read by its code
+ * alone it was "limiting requests just now", which sends nobody to add credit.
+ */
+const PRODUCTION_NO_CREDIT = Object.assign(
+  new Error("429 You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/."),
+  { status: 429, code: null, type: null },
+);
+
+/** A real rate limit, in OpenAI's words: nothing to do with credit. */
+const RATE_LIMITED = Object.assign(
+  new Error("429 Rate limit reached for text-embedding-3-large in organization org-test on requests per min (RPM): Limit 3000, Used 3000, Requested 1. Please try again in 20ms."),
+  { status: 429, code: "rate_limit_exceeded", type: "requests" },
+);
 
 beforeEach(() => {
   db.queries = [];
@@ -115,6 +131,17 @@ describe("embedMissingChunks", () => {
     expect(db.breakglassReasons).toHaveLength(0);
   });
 
+  it("says the account has no credit when OpenAI says so only in words, as production's did", async () => {
+    ai.failAt = 0;
+    ai.failWith = PRODUCTION_NO_CREDIT;
+    const r = await embedMissingChunks();
+    expect(r).toEqual({
+      embedded: 0,
+      remaining: 3,
+      stoppedBecause: "OpenAI has no credit left on this account. Add credit, then run this again.",
+    });
+  });
+
   it("does nothing without a key, and says so", async () => {
     ai.configured = false;
     const r = await embedMissingChunks();
@@ -149,5 +176,16 @@ describe("describeEmbedFailure", () => {
     expect(describeEmbedFailure(Object.assign(new Error("429"), { status: 429, code: "rate_limit_exceeded" }))).toMatch(/limiting requests/);
     expect(describeEmbedFailure(Object.assign(new Error("500"), { status: 500 }))).toMatch(/HTTP 500/);
     expect(describeEmbedFailure(new Error("fetch failed"))).toMatch(/could not be reached/);
+  });
+
+  it("knows no credit by OpenAI's code, its type, or its words", () => {
+    expect(describeEmbedFailure(PRODUCTION_NO_CREDIT)).toMatch(/no credit/);
+    expect(describeEmbedFailure(Object.assign(new Error("429 quota"), { status: 429, code: null, type: "insufficient_quota" }))).toMatch(/no credit/);
+    // The words alone, from an error that lost its status on the way up.
+    expect(describeEmbedFailure(new Error("429 You have no credits remaining. Add credits to continue."))).toMatch(/no credit/);
+  });
+
+  it("CONTROL: a real rate limit is still a rate limit", () => {
+    expect(describeEmbedFailure(RATE_LIMITED)).toMatch(/limiting requests/);
   });
 });
